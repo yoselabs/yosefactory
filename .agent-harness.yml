@@ -1,0 +1,24 @@
+# AI Harness configuration
+# Detected stacks: python
+stacks: [python]
+
+# exclude:
+#   - _archive/
+#   - vendor/
+
+# python:
+#   coverage_threshold: 95
+#   line_length: 120
+
+# javascript:
+#   coverage_threshold: 80
+
+# docker:
+#   own_image_prefix: "ghcr.io/myorg/"
+
+# security:
+#   base_branch: origin/main
+#   ignore:
+#     - id: CVE-2025-XXXX
+#       reason: "No fix available, transitive dep"
+#       expires: 2026-06-01
