@@ -1,0 +1,106 @@
+"""Configuration for a2sdlc stages and projects."""
+
+from __future__ import annotations
+
+import logging
+import os
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+
+import yaml
+
+logger = logging.getLogger("a2sdlc.config")
+
+# ── Stage configuration ───────────────────────────────────────────────
+
+_DEFAULT_TOOLS: list[str] = [
+    "Bash",
+    "Read",
+    "Write",
+    "Edit",
+    "Glob",
+    "Grep",
+    "WebFetch",
+    "WebSearch",
+    "Agent",
+]
+
+
+@dataclass
+class StageConfig:
+    """Configuration for a single pipeline stage."""
+
+    name: str
+    model: str = "claude-sonnet-4-6"
+    max_turns: int = 25
+    timeout_minutes: int = 20
+    allowed_tools: list[str] = field(default_factory=lambda: list(_DEFAULT_TOOLS))
+
+
+STAGE_DEFAULTS: dict[str, StageConfig] = {
+    "prd": StageConfig(name="prd", max_turns=25, timeout_minutes=20),
+    "plan": StageConfig(name="plan", max_turns=35, timeout_minutes=30),
+    "implement": StageConfig(name="implement", max_turns=60, timeout_minutes=60),
+    "review": StageConfig(
+        name="review",
+        max_turns=25,
+        timeout_minutes=20,
+        allowed_tools=["Bash", "Read", "Glob", "Grep", "WebFetch", "WebSearch"],
+    ),
+    "ci-assess": StageConfig(name="ci-assess", max_turns=20, timeout_minutes=15),
+}
+
+# Env-var name → StageConfig field name + converter
+_ENV_MAP: dict[str, tuple[str, type]] = {
+    "MODEL": ("model", str),
+    "MAX_TURNS": ("max_turns", int),
+}
+
+
+def load_config(stage: str, **overrides: object) -> StageConfig:
+    """Build a StageConfig by merging defaults, env vars, and CLI overrides.
+
+    Priority: CLI arg > env var > stage default.
+    """
+    base = STAGE_DEFAULTS[stage]
+
+    # Layer env vars on top of defaults.
+    env_patches: dict[str, object] = {}
+    for env_key, (field_name, conv) in _ENV_MAP.items():
+        val = os.environ.get(env_key)
+        if val is not None:
+            env_patches[field_name] = conv(val)
+
+    # Layer CLI overrides on top of env.
+    merged = {**env_patches, **{k: v for k, v in overrides.items() if v is not None}}
+    return replace(base, **merged)
+
+
+# ── Project configuration ─────────────────────────────────────────────
+
+
+@dataclass
+class ProjectConfig:
+    """Per-repo settings read from .a2sdlc/project.yaml."""
+
+    tickets_adapter: str = "github-issues"
+    code_adapter: str = "github"
+    test_command: str = "make test"
+    jira_status_map: dict[str, str] = field(default_factory=dict)
+
+
+def load_project(project_root: Path) -> ProjectConfig:
+    """Load project config from *project_root*/.a2sdlc/project.yaml.
+
+    Returns defaults when the file is absent.
+    """
+    config_path = project_root / ".a2sdlc" / "project.yaml"
+    if not config_path.exists():
+        logger.info("No project config at %s — using defaults", config_path)
+        return ProjectConfig()
+
+    with config_path.open() as fh:
+        data: dict[str, object] = yaml.safe_load(fh) or {}
+
+    logger.info("Loaded project config from %s: %s", config_path, data)
+    return ProjectConfig(**data)  # type: ignore[arg-type]
