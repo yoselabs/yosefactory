@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from a2sdlc.adapters.base import CodeAdapter, TicketAdapter  # ty: ignore[unresolved-import]
+from a2sdlc.adapters.base import CodeAdapter, TicketAdapter
 
 
 def get_ticket_adapter(name: str, **kwargs) -> TicketAdapter:
