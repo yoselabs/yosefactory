@@ -7,7 +7,7 @@ from a2sdlc.adapters.base import CodeAdapter, TicketAdapter
 
 def get_ticket_adapter(name: str, **kwargs) -> TicketAdapter:
     if name == "github-issues":
-        from a2sdlc.adapters.github_tickets import GitHubTickets  # ty: ignore[unresolved-import]
+        from a2sdlc.adapters.github_tickets import GitHubTickets
 
         return GitHubTickets(repo=kwargs["repo"])
     elif name == "jira":
