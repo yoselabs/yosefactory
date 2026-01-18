@@ -5,25 +5,13 @@ from __future__ import annotations
 import json
 import logging
 import re
-import subprocess
 
+from a2sdlc.adapters._gh import gh
 from a2sdlc.adapters.base import TicketAdapter
 
 STATUS_LABELS = frozenset(
     {"needs-input", "prd-complete", "plan-complete", "implement-ready"}
 )
-
-
-def gh(args: list[str], input_text: str | None = None) -> str:
-    """Run a ``gh`` CLI command and return stdout. Raises on non-zero exit."""
-    result = subprocess.run(
-        ["gh"] + args,
-        capture_output=True,
-        text=True,
-        check=True,
-        input=input_text,
-    )
-    return result.stdout.strip()
 
 
 class GitHubTickets(TicketAdapter):
