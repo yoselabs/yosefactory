@@ -1,4 +1,4 @@
-from a2sdlc.cli import main  # ty: ignore[unresolved-import]
+from a2sdlc.cli import main
 
 if __name__ == "__main__":
     main()
