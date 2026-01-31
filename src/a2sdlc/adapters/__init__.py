@@ -11,7 +11,7 @@ def get_ticket_adapter(name: str, **kwargs) -> TicketAdapter:
 
         return GitHubTickets(repo=kwargs["repo"])
     elif name == "jira":
-        from a2sdlc.adapters.jira_tickets import JiraTickets  # ty: ignore[unresolved-import]
+        from a2sdlc.adapters.jira_tickets import JiraTickets
 
         return JiraTickets(
             url=os.environ["JIRA_URL"],
