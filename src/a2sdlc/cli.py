@@ -270,6 +270,7 @@ def orchestrate(args: argparse.Namespace) -> None:
         tickets=tickets,
         code=code,
         supervised=args.supervised,
+        comment_id=comment_id,
     )
 
     # 14. Log completion.

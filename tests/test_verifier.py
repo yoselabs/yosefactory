@@ -91,12 +91,10 @@ class TestVerifyAndAct:
         output = "## Questions\n1. What is the scope?\n2. Who owns it?"
         result = self._make_result(True, output)
 
-        verify_and_act("prd", result, "PROJ-1", tickets, code)
+        verify_and_act("prd", result, "PROJ-1", tickets, code, comment_id="c123")
 
         tickets.update_comment.assert_called_once()
-        call_body = tickets.update_comment.call_args[1].get(
-            "body", tickets.update_comment.call_args[0][2]
-        )
+        call_body = tickets.update_comment.call_args[0][2]
         assert "❓" in call_body
 
         tickets.transition.assert_called_once_with("PROJ-1", "needs-input")
@@ -108,7 +106,7 @@ class TestVerifyAndAct:
         output = "## [A2SDLC:PRD]\nThe full PRD document."
         result = self._make_result(True, output)
 
-        verify_and_act("prd", result, "PROJ-1", tickets, code)
+        verify_and_act("prd", result, "PROJ-1", tickets, code, comment_id="c123")
 
         tickets.update_comment.assert_called_once()
         call_body = tickets.update_comment.call_args[0][2]
@@ -123,7 +121,9 @@ class TestVerifyAndAct:
         output = "## [A2SDLC:PRD]\nThe full PRD document."
         result = self._make_result(True, output)
 
-        verify_and_act("prd", result, "PROJ-1", tickets, code, supervised=True)
+        verify_and_act(
+            "prd", result, "PROJ-1", tickets, code, supervised=True, comment_id="c123"
+        )
 
         tickets.update_comment.assert_called_once()
         tickets.transition.assert_called_once_with("PROJ-1", "prd-complete")
@@ -158,7 +158,7 @@ class TestVerifyAndAct:
         output = "## [A2SDLC:PLAN]\nStep 1: Do the thing."
         result = self._make_result(True, output)
 
-        verify_and_act("plan", result, "PROJ-1", tickets, code)
+        verify_and_act("plan", result, "PROJ-1", tickets, code, comment_id="c456")
 
         tickets.update_comment.assert_called_once()
         call_body = tickets.update_comment.call_args[0][2]
@@ -173,6 +173,8 @@ class TestVerifyAndAct:
         output = "## [A2SDLC:PLAN]\nStep 1: Do the thing."
         result = self._make_result(True, output)
 
-        verify_and_act("plan", result, "PROJ-1", tickets, code, supervised=True)
+        verify_and_act(
+            "plan", result, "PROJ-1", tickets, code, supervised=True, comment_id="c456"
+        )
 
         tickets.trigger_next.assert_not_called()

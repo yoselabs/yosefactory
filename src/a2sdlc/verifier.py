@@ -41,14 +41,19 @@ def verify_and_act(
     tickets: TicketAdapter,
     code: CodeAdapter,
     supervised: bool = False,
+    comment_id: str = "",
 ) -> None:
     """Post-condition checks and deterministic actions per stage."""
     if not result.get("success"):
         error = result.get("error", "unknown")
-        tickets.create_comment(
-            ticket_key,
-            f"🚨 Error in **{stage}** stage: `{error}`",
-        )
+        if comment_id:
+            tickets.update_comment(
+                ticket_key, comment_id, f"🚨 Error in **{stage}** stage: `{error}`"
+            )
+        else:
+            tickets.create_comment(
+                ticket_key, f"🚨 Error in **{stage}** stage: `{error}`"
+            )
         return
 
     output = str(result.get("output", ""))
@@ -56,9 +61,9 @@ def verify_and_act(
     logger.info("Stage %s markers: %s", stage, markers)
 
     if stage == "prd":
-        _verify_prd(output, markers, ticket_key, tickets, supervised)
+        _verify_prd(output, markers, ticket_key, tickets, supervised, comment_id)
     elif stage == "plan":
-        _verify_plan(output, markers, ticket_key, tickets, supervised)
+        _verify_plan(output, markers, ticket_key, tickets, supervised, comment_id)
     else:
         logger.info("verify_and_act not yet implemented for stage %s", stage)
 
@@ -69,23 +74,22 @@ def _verify_prd(
     ticket_key: str,
     tickets: TicketAdapter,
     supervised: bool,
+    comment_id: str = "",
 ) -> None:
+    def _update(body: str) -> None:
+        if comment_id:
+            tickets.update_comment(ticket_key, comment_id, body)
+        else:
+            tickets.create_comment(ticket_key, body)
+
     if markers["has_questions"]:
         questions = extract_artifact(output, "Questions")
-        tickets.update_comment(
-            ticket_key,
-            "latest",
-            f"❓ PRD Agent needs clarification\n\n{questions}",
-        )
+        _update(f"❓ PRD Agent needs clarification\n\n{questions}")
         tickets.transition(ticket_key, "needs-input")
         logger.info("PRD has questions, transitioned %s to needs-input", ticket_key)
     elif markers["has_prd"]:
         prd = extract_artifact(output, "PRD")
-        tickets.update_comment(
-            ticket_key,
-            "latest",
-            f"✅ PRD Complete\n\n{prd}",
-        )
+        _update(f"✅ PRD Complete\n\n{prd}")
         tickets.transition(ticket_key, "prd-complete")
         logger.info("PRD complete, transitioned %s to prd-complete", ticket_key)
         if not supervised:
@@ -105,14 +109,17 @@ def _verify_plan(
     ticket_key: str,
     tickets: TicketAdapter,
     supervised: bool,
+    comment_id: str = "",
 ) -> None:
+    def _update(body: str) -> None:
+        if comment_id:
+            tickets.update_comment(ticket_key, comment_id, body)
+        else:
+            tickets.create_comment(ticket_key, body)
+
     if markers["has_plan"]:
         plan = extract_artifact(output, "PLAN")
-        tickets.update_comment(
-            ticket_key,
-            "latest",
-            f"✅ Plan Complete\n\n{plan}",
-        )
+        _update(f"✅ Plan Complete\n\n{plan}")
         tickets.transition(ticket_key, "plan-complete")
         logger.info("Plan complete, transitioned %s to plan-complete", ticket_key)
         if not supervised:
