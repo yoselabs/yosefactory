@@ -103,4 +103,17 @@ def load_project(project_root: Path) -> ProjectConfig:
         data: dict[str, object] = yaml.safe_load(fh) or {}
 
     logger.info("Loaded project config from %s: %s", config_path, data)
-    return ProjectConfig(**data)  # type: ignore[arg-type]
+    adapters = data.get("adapters", {})
+    testing = data.get("testing", {})
+    return ProjectConfig(
+        tickets_adapter=adapters.get("tickets", "github-issues")
+        if isinstance(adapters, dict)
+        else "github-issues",
+        code_adapter=adapters.get("code", "github")
+        if isinstance(adapters, dict)
+        else "github",
+        test_command=testing.get("command", "make test")
+        if isinstance(testing, dict)
+        else "make test",
+        jira_status_map=data.get("jira_status_map", {}),
+    )

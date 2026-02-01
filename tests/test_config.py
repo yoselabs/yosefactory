@@ -78,9 +78,8 @@ class TestProjectConfig:
         config_file.write_text(
             yaml.dump(
                 {
-                    "tickets_adapter": "jira",
-                    "code_adapter": "gitlab",
-                    "test_command": "pytest -x",
+                    "adapters": {"tickets": "jira", "code": "gitlab"},
+                    "testing": {"command": "pytest -x"},
                     "jira_status_map": {"todo": "To Do", "done": "Done"},
                 }
             )
