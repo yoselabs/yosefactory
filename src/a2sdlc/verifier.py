@@ -60,12 +60,27 @@ def verify_and_act(
     markers = check_markers(output)
     logger.info("Stage %s markers: %s", stage, markers)
 
+    def _update_comment(body: str) -> None:
+        if comment_id:
+            tickets.update_comment(ticket_key, comment_id, body)
+        else:
+            tickets.create_comment(ticket_key, body)
+
     if stage == "prd":
         _verify_prd(output, markers, ticket_key, tickets, supervised, comment_id)
     elif stage == "plan":
         _verify_plan(output, markers, ticket_key, tickets, supervised, comment_id)
+    elif stage == "implement":
+        _update_comment(f"✅ **Implementation** complete.\n\n{output[:2000]}")
+        logger.info("Implementation complete for %s", ticket_key)
+    elif stage == "review":
+        _update_comment(f"✅ **Review** complete.\n\n{output[:2000]}")
+        logger.info("Review complete for %s", ticket_key)
+    elif stage == "ci-assess":
+        _update_comment(f"🔧 **CI Assessment** complete.\n\n{output[:2000]}")
+        logger.info("CI assessment complete for %s", ticket_key)
     else:
-        logger.info("verify_and_act not yet implemented for stage %s", stage)
+        logger.info("verify_and_act: unknown stage %s", stage)
 
 
 def _verify_prd(
