@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -38,16 +39,14 @@ class StageConfig:
 
 
 STAGE_DEFAULTS: dict[str, StageConfig] = {
-    "prd": StageConfig(name="prd", max_turns=25, timeout_minutes=20),
-    "plan": StageConfig(name="plan", max_turns=35, timeout_minutes=30),
-    "implement": StageConfig(name="implement", max_turns=60, timeout_minutes=60),
+    "spec": StageConfig(name="spec", max_turns=35, timeout_minutes=30),
+    "implement": StageConfig(name="implement", max_turns=120, timeout_minutes=60),
     "review": StageConfig(
         name="review",
         max_turns=25,
         timeout_minutes=20,
         allowed_tools=["Bash", "Read", "Glob", "Grep", "WebFetch", "WebSearch"],
     ),
-    "ci-assess": StageConfig(name="ci-assess", max_turns=20, timeout_minutes=15),
 }
 
 # Env-var name → StageConfig field name + converter
@@ -76,6 +75,14 @@ def load_config(stage: str, **overrides: object) -> StageConfig:
     return replace(base, **merged)
 
 
+# ── Session helpers ──────────────────────────────────────────────────
+
+
+def get_session_id(ticket_key: str, agent: str) -> str:
+    """Deterministic UUID from ticket key + agent name."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"a2sdlc:{ticket_key}:{agent}"))
+
+
 # ── Project configuration ─────────────────────────────────────────────
 
 
@@ -87,7 +94,6 @@ class ProjectConfig:
     code_adapter: str = "github"
     test_command: str = "make test"
     auto_merge: bool = False
-    human_review_before_merge: bool = True
     jira_status_map: dict[str, str] = field(default_factory=dict)
 
 
@@ -120,6 +126,5 @@ def load_project(project_root: Path) -> ProjectConfig:
         if isinstance(testing, dict)
         else "make test",
         auto_merge=bool(pipeline.get("auto_merge", False)),
-        human_review_before_merge=bool(pipeline.get("human_review_before_merge", True)),
         jira_status_map=data.get("jira_status_map", {}),
     )

@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import glob
-import json
 import logging
 import os
 import shutil
@@ -21,11 +19,7 @@ from a2sdlc.verifier import verify_and_act
 
 logger = logging.getLogger("a2sdlc.cli")
 
-_STAGES = ("prd", "plan", "implement", "review", "ci-assess", "auto")
-
-# Directories for inter-process communication files.
-_ENV_DIR = "/tmp"
-_PROGRESS_DIR = "/tmp"
+_STAGES = ("spec", "implement", "review", "auto")
 
 
 # ── Logging ──────────────────────────────────────────────────────────
@@ -156,7 +150,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     run_parser.add_argument("--key", required=True, help="Ticket key (e.g. PROJ-42)")
     run_parser.add_argument("--pr", type=int, default=None, help="PR number")
-    run_parser.add_argument("--run-id", default=None, help="CI run ID")
     run_parser.add_argument("--model", default=None, help="Override model")
     run_parser.add_argument(
         "--max-turns", type=int, default=None, help="Override max turns"
@@ -168,12 +161,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--dry-run", action="store_true", help="Print prompt and config, do not run"
     )
 
+    # merge subcommand
+    merge_parser = sub.add_parser("merge", help="Squash-merge a PR and clean up")
+    merge_parser.add_argument("--key", required=True, help="Ticket key")
+    merge_parser.add_argument("--pr", type=int, required=True, help="PR number")
+
     # cleanup subcommand
     cleanup_parser = sub.add_parser("cleanup", help="Clean up session files")
     cleanup_parser.add_argument("--key", required=True, help="Ticket key to clean up")
-
-    # progress-update subcommand
-    sub.add_parser("progress-update", help="Update progress (called by hooks)")
 
     return parser.parse_args(argv)
 
@@ -200,7 +195,7 @@ def orchestrate(args: argparse.Namespace) -> None:
     stage = args.stage
     if args.source == "jira" and stage == "auto":
         status = tickets.get_status(args.key)
-        stage = project.jira_status_map.get(status, "prd")
+        stage = project.jira_status_map.get(status, "spec")
         logger.info("Auto-mapped Jira status %r to stage %r", status, stage)
 
     # 5. Load stage config with overrides.
@@ -232,19 +227,7 @@ def orchestrate(args: argparse.Namespace) -> None:
         f"⏳ **{stage}** stage started…",
     )
 
-    # 10. Write hook env file.
-    env_data = {
-        "comment_id": comment_id,
-        "ticket_key": args.key,
-        "stage": stage,
-        "source": args.source,
-        "repo": repo,
-        "tickets_adapter": project.tickets_adapter,
-    }
-    env_file = Path(_ENV_DIR) / f"a2sdlc-env-{args.key}.json"
-    env_file.write_text(json.dumps(env_data))
-
-    # 11. Call run_claude.
+    # 10. Call run_claude.
     result = run_claude(
         user_prompt=ticket_context,
         system_prompt=system_prompt,
@@ -278,54 +261,12 @@ def orchestrate(args: argparse.Namespace) -> None:
     logger.info("Orchestration complete for %s/%s", args.key, stage)
 
 
-# ── Progress update (hook) ───────────────────────────────────────────
-
-
-def _progress_update() -> None:
-    """Called by Claude Code PostToolUse hook.
-
-    All errors silently caught — hook failures must never break the agent.
-    """
-    try:
-        env_files = glob.glob(f"{_ENV_DIR}/a2sdlc-env-*.json")
-        if not env_files:
-            return
-
-        env_data = json.loads(Path(env_files[0]).read_text())
-        key = env_data["ticket_key"]
-
-        progress_file = Path(f"{_PROGRESS_DIR}/a2sdlc-progress-{key}")
-        counter = 0
-        if progress_file.exists():
-            counter = int(progress_file.read_text().strip() or "0")
-        counter += 1
-        progress_file.write_text(str(counter))
-
-        # Update comment every 2 tool calls.
-        if counter % 2 == 0:
-            adapter = get_ticket_adapter(
-                env_data["tickets_adapter"], repo=env_data["repo"]
-            )
-            stage = env_data["stage"]
-            adapter.update_comment(
-                env_data["ticket_key"],
-                env_data["comment_id"],
-                f"⏳ **{stage}** stage in progress… ({counter} tool calls)",
-            )
-    except Exception:  # noqa: BLE001
-        pass
-
-
 # ── Main ─────────────────────────────────────────────────────────────
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Dispatch to orchestrate, cleanup, or progress-update."""
+    """Dispatch to orchestrate or cleanup."""
     args = parse_args(argv)
-
-    if args.command == "progress-update":
-        _progress_update()
-        return
 
     if args.command == "cleanup":
         project_root = find_project_root()

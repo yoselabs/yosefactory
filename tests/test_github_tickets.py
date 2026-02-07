@@ -39,9 +39,9 @@ class TestGitHubTickets:
     @patch("a2sdlc.adapters.github_tickets.gh")
     def test_get_status_with_label(self, mock_gh) -> None:
         mock_gh.return_value = json.dumps(
-            {"labels": [{"name": "bug"}, {"name": "prd-complete"}]}
+            {"labels": [{"name": "bug"}, {"name": "needs-input"}]}
         )
-        assert self.adapter.get_status("42") == "prd-complete"
+        assert self.adapter.get_status("42") == "needs-input"
 
     @patch("a2sdlc.adapters.github_tickets.gh")
     def test_get_status_no_status_label(self, mock_gh) -> None:
@@ -60,7 +60,7 @@ class TestGitHubTickets:
 
     @patch("a2sdlc.adapters.github_tickets.gh")
     def test_transition_adds_label(self, mock_gh) -> None:
-        self.adapter.transition("42", "prd-complete")
+        self.adapter.transition("42", "needs-input")
         mock_gh.assert_called_once_with(
             [
                 "issue",
@@ -69,7 +69,7 @@ class TestGitHubTickets:
                 "--repo",
                 "owner/repo",
                 "--add-label",
-                "prd-complete",
+                "needs-input",
             ]
         )
 

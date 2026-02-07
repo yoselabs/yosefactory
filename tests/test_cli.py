@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from a2sdlc.cli import (
-    _progress_update,
     assemble_system_prompt,
     find_project_root,
     main,
@@ -58,8 +56,6 @@ class TestParseArgs:
                 "PROJ-42",
                 "--pr",
                 "7",
-                "--run-id",
-                "abc-123",
                 "--model",
                 "claude-opus-4",
                 "--max-turns",
@@ -73,7 +69,6 @@ class TestParseArgs:
         assert args.source == "github-issues"
         assert args.key == "PROJ-42"
         assert args.pr == 7
-        assert args.run_id == "abc-123"
         assert args.model == "claude-opus-4"
         assert args.max_turns == 50
         assert args.supervised is True
@@ -83,10 +78,6 @@ class TestParseArgs:
         args = parse_args(["cleanup", "--key", "PROJ-99"])
         assert args.command == "cleanup"
         assert args.key == "PROJ-99"
-
-    def test_parse_args_progress_update(self) -> None:
-        args = parse_args(["progress-update"])
-        assert args.command == "progress-update"
 
 
 # ── assemble_system_prompt ───────────────────────────────────────────
@@ -151,53 +142,6 @@ class TestSetupLogging:
         assert len(log_files) == 1
 
 
-# ── _progress_update ─────────────────────────────────────────────────
-
-
-@pytest.mark.unit
-class TestProgressUpdate:
-    def test_progress_update_increments_counter(self, tmp_path: Path) -> None:
-        env_file = tmp_path / "a2sdlc-env-PROJ-1.json"
-        env_file.write_text(
-            json.dumps(
-                {
-                    "comment_id": "c-123",
-                    "ticket_key": "PROJ-1",
-                    "stage": "implement",
-                    "source": "github-issues",
-                    "repo": "owner/repo",
-                    "tickets_adapter": "github-issues",
-                }
-            )
-        )
-
-        with (
-            patch("a2sdlc.cli.glob.glob", return_value=[str(env_file)]),
-            patch("a2sdlc.cli.get_ticket_adapter") as mock_adapter_fn,
-        ):
-            with (
-                patch("a2sdlc.cli._PROGRESS_DIR", str(tmp_path)),
-                patch("a2sdlc.cli._ENV_DIR", str(tmp_path)),
-            ):
-                mock_adapter = MagicMock()
-                mock_adapter_fn.return_value = mock_adapter
-
-                _progress_update()
-
-                # First call: counter=1, no update (only every 2)
-                mock_adapter.update_comment.assert_not_called()
-
-                _progress_update()
-
-                # Second call: counter=2, should update
-                mock_adapter.update_comment.assert_called_once()
-
-    def test_progress_update_no_env_file(self) -> None:
-        """Should not raise when no env file exists."""
-        with patch("a2sdlc.cli.glob.glob", return_value=[]):
-            _progress_update()  # Should not raise
-
-
 # ── main ─────────────────────────────────────────────────────────────
 
 
@@ -221,4 +165,4 @@ class TestMain:
         ):
             mock_parse.return_value = MagicMock(command="run")
             # Should not raise
-            main(["run", "prd", "--source", "github-issues", "--key", "T-1"])
+            main(["run", "implement", "--source", "github-issues", "--key", "T-1"])

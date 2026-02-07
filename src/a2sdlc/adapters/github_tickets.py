@@ -10,7 +10,7 @@ from a2sdlc.adapters._gh import gh
 from a2sdlc.adapters.base import TicketAdapter
 
 STATUS_LABELS = frozenset(
-    {"needs-input", "prd-complete", "plan-complete", "implement-ready"}
+    {"needs-input", "blocked", "needs-fix", "agent-pr", "supervised", "proceed"}
 )
 
 

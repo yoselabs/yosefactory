@@ -11,6 +11,7 @@ from a2sdlc.config import (
     STAGE_DEFAULTS,
     ProjectConfig,
     StageConfig,
+    get_session_id,
     load_config,
     load_project,
 )
@@ -22,18 +23,23 @@ from a2sdlc.config import (
 @pytest.mark.unit
 class TestStageDefaults:
     def test_stage_defaults_exist(self) -> None:
-        expected = {"prd", "plan", "implement", "review", "ci-assess"}
+        expected = {"spec", "implement", "review"}
         assert set(STAGE_DEFAULTS.keys()) == expected
         for cfg in STAGE_DEFAULTS.values():
             assert isinstance(cfg, StageConfig)
 
-    def test_prd_defaults(self) -> None:
-        cfg = STAGE_DEFAULTS["prd"]
+    def test_spec_defaults(self) -> None:
+        cfg = STAGE_DEFAULTS["spec"]
         assert cfg.model == "claude-sonnet-4-6"
-        assert cfg.max_turns == 25
-        assert cfg.timeout_minutes == 20
+        assert cfg.max_turns == 35
+        assert cfg.timeout_minutes == 30
         assert "Bash" in cfg.allowed_tools
         assert "Agent" in cfg.allowed_tools
+
+    def test_implement_defaults(self) -> None:
+        cfg = STAGE_DEFAULTS["implement"]
+        assert cfg.max_turns == 120
+        assert cfg.timeout_minutes == 60
 
 
 # ── load_config overrides ─────────────────────────────────────────────
@@ -42,22 +48,42 @@ class TestStageDefaults:
 @pytest.mark.unit
 class TestLoadConfig:
     def test_override_model(self) -> None:
-        cfg = load_config("prd", model="claude-opus-4")
+        cfg = load_config("spec", model="claude-opus-4")
         assert cfg.model == "claude-opus-4"
-        # Other fields stay at defaults.
-        assert cfg.max_turns == 25
+        assert cfg.max_turns == 35
 
     def test_override_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("MODEL", "claude-haiku-4")
         monkeypatch.setenv("MAX_TURNS", "99")
-        cfg = load_config("plan")
+        cfg = load_config("spec")
         assert cfg.model == "claude-haiku-4"
         assert cfg.max_turns == 99
 
     def test_cli_beats_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("MODEL", "from-env")
-        cfg = load_config("prd", model="from-cli")
+        cfg = load_config("spec", model="from-cli")
         assert cfg.model == "from-cli"
+
+
+# ── get_session_id ───────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestGetSessionId:
+    def test_deterministic(self) -> None:
+        sid1 = get_session_id("PROJ-42", "spec")
+        sid2 = get_session_id("PROJ-42", "spec")
+        assert sid1 == sid2
+
+    def test_different_keys(self) -> None:
+        sid1 = get_session_id("PROJ-1", "spec")
+        sid2 = get_session_id("PROJ-2", "spec")
+        assert sid1 != sid2
+
+    def test_different_agents(self) -> None:
+        sid1 = get_session_id("PROJ-1", "spec")
+        sid2 = get_session_id("PROJ-1", "implement")
+        assert sid1 != sid2
 
 
 # ── ProjectConfig ─────────────────────────────────────────────────────
