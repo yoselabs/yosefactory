@@ -1,8 +1,9 @@
-"""CLI entry point — orchestrate, progress updates, prompt assembly."""
+"""CLI entry point — orchestrate, prompt assembly, merge."""
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import os
 import shutil
@@ -14,7 +15,7 @@ from importlib.resources import files as pkg_files
 
 from a2sdlc.adapters import get_code_adapter, get_ticket_adapter
 from a2sdlc.config import load_config, load_project
-from a2sdlc.runner import run_claude
+from a2sdlc.runner import run_stage
 from a2sdlc.verifier import verify_and_act
 
 logger = logging.getLogger("a2sdlc.cli")
@@ -176,7 +177,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 # ── Orchestration ────────────────────────────────────────────────────
 
 
-def orchestrate(args: argparse.Namespace) -> None:
+async def orchestrate(args: argparse.Namespace) -> None:
     """Main orchestration flow for the ``run`` subcommand."""
     # 1. Find project root, load project config.
     project_root = find_project_root()
@@ -227,22 +228,31 @@ def orchestrate(args: argparse.Namespace) -> None:
         f"⏳ **{stage}** stage started…",
     )
 
-    # 10. Call run_claude.
-    result = run_claude(
+    # 10. Progress callback — updates the comment in-process.
+    def on_progress(text: str) -> None:
+        try:
+            tickets.update_comment(args.key, comment_id, text)
+        except Exception:  # noqa: BLE001
+            logger.debug("Failed to update progress comment", exc_info=True)
+
+    # 11. Run the stage via SDK.
+    result = await run_stage(
         user_prompt=ticket_context,
         system_prompt=system_prompt,
         config=config,
         ticket_key=args.key,
-        agent=stage,
+        stage=stage,
         project_root=str(project_root),
+        on_progress=on_progress,
     )
 
     # 12. Log result summary.
     logger.info(
-        "Run complete: success=%s error=%s output_len=%d",
-        result.get("success"),
-        result.get("error"),
-        len(str(result.get("output", ""))),
+        "Run complete: success=%s error=%s cost=$%.4f output_len=%d",
+        result.success,
+        result.error,
+        result.total_cost_usd,
+        len(result.output),
     )
 
     # 13. Call verify_and_act.
@@ -252,20 +262,40 @@ def orchestrate(args: argparse.Namespace) -> None:
         ticket_key=args.key,
         tickets=tickets,
         code=code,
-        supervised=args.supervised,
-        comment_id=comment_id,
         project=project,
+        comment_id=comment_id,
     )
 
     # 14. Log completion.
     logger.info("Orchestration complete for %s/%s", args.key, stage)
 
 
+# ── Merge ────────────────────────────────────────────────────────────
+
+
+def do_merge(args: argparse.Namespace) -> None:
+    """Squash-merge a PR and clean up."""
+    project_root = find_project_root()
+    project = load_project(project_root)
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    code = get_code_adapter(project.code_adapter, repo=repo)
+
+    logger.info("Merging PR #%d for %s", args.pr, args.key)
+    code.merge_pr(args.pr)
+    logger.info("Merged PR #%d", args.pr)
+
+    # Clean up session files.
+    session_dir = project_root / ".a2sdlc" / "sessions" / args.key
+    if session_dir.exists():
+        shutil.rmtree(session_dir)
+        logger.info("Cleaned up sessions for %s", args.key)
+
+
 # ── Main ─────────────────────────────────────────────────────────────
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Dispatch to orchestrate or cleanup."""
+    """Dispatch to orchestrate, merge, or cleanup."""
     args = parse_args(argv)
 
     if args.command == "cleanup":
@@ -276,8 +306,12 @@ def main(argv: list[str] | None = None) -> None:
             logger.info("Cleaned up sessions for %s", args.key)
         return
 
+    if args.command == "merge":
+        do_merge(args)
+        return
+
     # args.command == "run"
     try:
-        orchestrate(args)
+        asyncio.run(orchestrate(args))
     except KeyboardInterrupt:
         logger.info("Interrupted by user")

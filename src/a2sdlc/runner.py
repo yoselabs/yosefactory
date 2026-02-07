@@ -1,236 +1,196 @@
-"""Runner — Claude CLI wrapper with session management."""
+"""Runner — Claude Agent SDK wrapper with streaming progress."""
 
 from __future__ import annotations
 
-import json
 import logging
-import shutil
-import subprocess
-import tempfile
-import uuid
-from pathlib import Path
+import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
 
-from a2sdlc.config import StageConfig
+from rich.console import Console
+
+from a2sdlc.config import StageConfig, get_session_id
 
 logger = logging.getLogger("a2sdlc.runner")
 
-
-# ── Session helpers ──────────────────────────────────────────────────
-
-
-def get_session_id(ticket_key: str, agent: str) -> str:
-    """Deterministic UUID from ticket key + agent name."""
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"a2sdlc:{ticket_key}:{agent}"))
+console = Console(force_terminal=True, force_interactive=False)
 
 
-def get_session_path(session_id: str, cwd: str) -> Path:
-    """Where Claude stores session JSONL."""
-    escaped = cwd.replace("/", "-").lstrip("-")
-    return Path.home() / ".claude" / "projects" / escaped / f"{session_id}.jsonl"
+@dataclass
+class RunResult:
+    """Normalized result from a stage execution."""
+
+    success: bool
+    output: str = ""
+    error: str | None = None
+    session_id: str = ""
+    total_cost_usd: float = 0.0
+    duration_ms: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    num_turns: int = 0
+    tool_log: list[str] = field(default_factory=list)
 
 
-def _project_session_dir(ticket_key: str, agent: str, project_root: str) -> Path:
-    return Path(project_root) / ".a2sdlc" / "sessions" / ticket_key / agent
+def format_cost(result: RunResult) -> str:
+    """Format cost/usage footer for ticket comments."""
+    duration_s = result.duration_ms / 1000
+    return (
+        f"---\n"
+        f"Tokens: {result.input_tokens:,} in / {result.output_tokens:,} out"
+        f" | Cost: ${result.total_cost_usd:.2f}"
+        f" | Duration: {duration_s:.0f}s"
+    )
 
 
-def save_session(ticket_key: str, agent: str, cwd: str, project_root: str) -> None:
-    """Copy session JSONL from Claude's storage to project sessions dir."""
-    session_id = get_session_id(ticket_key, agent)
-    src = get_session_path(session_id, cwd)
-    if not src.exists():
-        logger.debug("No session file to save at %s", src)
-        return
-
-    dest_dir = _project_session_dir(ticket_key, agent, project_root)
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / f"{session_id}.jsonl"
-    shutil.copy2(str(src), str(dest))
-    logger.info("Saved session %s → %s", src, dest)
+# ── Progress tracking ───────────────────────────────────────────────
 
 
-def restore_session(ticket_key: str, agent: str, cwd: str, project_root: str) -> bool:
-    """Copy session from project sessions dir to Claude's storage.
+def format_progress(stage: str, tool_log: list[str], start_time: float) -> str:
+    """Build a progress comment body from tool log."""
+    elapsed = time.time() - start_time
+    elapsed_str = f"{elapsed:.0f}s"
+    total = len(tool_log)
 
-    Returns True if restored, False if no session found.
-    """
-    session_id = get_session_id(ticket_key, agent)
-    src_dir = _project_session_dir(ticket_key, agent, project_root)
-    src = src_dir / f"{session_id}.jsonl"
-    if not src.exists():
-        logger.debug("No saved session at %s", src)
-        return False
-
-    dest = get_session_path(session_id, cwd)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(str(src), str(dest))
-    logger.info("Restored session %s → %s", src, dest)
-    return True
+    lines = [f"⏳ **{stage}** in progress...\n"]
+    if total > 10:
+        lines.append(f"... and {total - 10} earlier actions\n")
+    for tool in tool_log[-10:]:
+        lines.append(f"- {tool}")
+    lines.append(f"\nTools: {total} | {elapsed_str} elapsed")
+    return "\n".join(lines)
 
 
-# ── Command building ─────────────────────────────────────────────────
+# ── Main runner ─────────────────────────────────────────────────────
 
 
-def build_claude_cmd(
-    ticket_key: str,
-    agent: str,
-    config: StageConfig,
-    system_prompt_file: str,
-    is_resume: bool = False,
-) -> list[str]:
-    """Build the ``claude -p`` command list."""
-    sid = get_session_id(ticket_key, agent)
-    cmd = [
-        "claude",
-        "-p",
-        "--output-format",
-        "json",
-        "--model",
-        config.model,
-        "--max-turns",
-        str(config.max_turns),
-        "--permission-mode",
-        "bypassPermissions",
-        "--append-system-prompt-file",
-        system_prompt_file,
-        "--allowedTools",
-        ",".join(config.allowed_tools),
-    ]
-    if is_resume:
-        cmd.extend(["--resume", sid])
-    else:
-        cmd.extend(["--session-id", sid])
-    return cmd
-
-
-# ── Result parsing ───────────────────────────────────────────────────
-
-_SUBTYPE_ERROR_MAP: dict[str, str] = {
-    "error_max_turns": "max_turns",
-    "error_max_budget_usd": "budget",
-}
-
-
-def parse_result(raw_stdout: str) -> dict[str, object]:
-    """Parse Claude's JSON output into a normalized result dict."""
-    try:
-        data = json.loads(raw_stdout)
-    except (json.JSONDecodeError, TypeError):
-        logger.error("Failed to parse Claude output as JSON: %.200s", raw_stdout)
-        return {
-            "success": False,
-            "output": "",
-            "error": "json_parse",
-            "session_id": "",
-            "raw": {},
-        }
-
-    subtype = data.get("subtype", "")
-    result_text = data.get("result")
-    session_id = data.get("session_id", "")
-
-    error = _SUBTYPE_ERROR_MAP.get(subtype)
-    success = subtype == "success" and result_text is not None
-
-    return {
-        "success": success,
-        "output": result_text or "",
-        "error": error,
-        "session_id": session_id,
-        "raw": data,
-    }
-
-
-# ── Main orchestrator ────────────────────────────────────────────────
-
-
-def run_claude(
+async def run_stage(
     user_prompt: str,
     system_prompt: str,
     config: StageConfig,
     ticket_key: str,
-    agent: str,
+    stage: str,
     project_root: str,
-) -> dict[str, object]:
-    """Run Claude CLI with session management.
+    is_resume: bool = False,
+    on_progress: Callable[[str], None] | None = None,
+) -> RunResult:
+    """Run a pipeline stage using the Claude Agent SDK.
 
-    1. Restore session (if exists)
-    2. Write system prompt to temp file
-    3. Build command
-    4. Run subprocess with stdin=user_prompt, cwd=project_root
-    5. Parse result
-    6. Save session (always, even on failure)
-    7. Clean up temp file
-    8. Return parsed result
+    Streams events in real-time, tracks tool calls for progress,
+    and returns a normalized result.
     """
-    cwd = project_root
-    is_resume = restore_session(ticket_key, agent, cwd, project_root)
+    from claude_agent_sdk import (  # noqa: PLC0415
+        AssistantMessage,
+        ClaudeAgentOptions,
+        ResultMessage,
+        query,
+    )
 
-    sid = get_session_id(ticket_key, agent)
+    sid = get_session_id(ticket_key, stage)
     logger.info(
-        "Running Claude: ticket=%s agent=%s session=%s resume=%s",
+        "Running stage: ticket=%s stage=%s session=%s resume=%s",
         ticket_key,
-        agent,
+        stage,
         sid,
         is_resume,
     )
 
-    # Write system prompt to a temp file.
-    result: dict[str, object] = {}
-    tmp_file = None
+    options = ClaudeAgentOptions(
+        system_prompt=system_prompt,
+        permission_mode="bypassPermissions",
+        allowed_tools=config.allowed_tools,
+        max_turns=config.max_turns,
+        model=config.model,
+        cwd=project_root,
+    )
+    if is_resume:
+        options.resume = sid
+    else:
+        options.session_id = sid
+
+    tool_log: list[str] = []
+    start_time = time.time()
+    last_progress_update = 0.0
+    result_msg: ResultMessage | None = None
+
     try:
-        tmp_file = tempfile.NamedTemporaryFile(
-            mode="w",
-            suffix=".md",
-            prefix="a2sdlc-sysprompt-",
-            delete=False,
+        async for msg in query(prompt=user_prompt, options=options):
+            if isinstance(msg, AssistantMessage):
+                _handle_assistant_message(msg, tool_log)
+
+                # Throttled progress update
+                if on_progress and tool_log:
+                    now = time.time()
+                    if now - last_progress_update >= 5:
+                        on_progress(format_progress(stage, tool_log, start_time))
+                        last_progress_update = now
+
+            elif isinstance(msg, ResultMessage):
+                result_msg = msg
+    except Exception:
+        logger.exception("SDK error during stage %s", stage)
+        return RunResult(
+            success=False,
+            error="sdk_error",
+            session_id=sid,
+            tool_log=tool_log,
         )
-        tmp_file.write(system_prompt)
-        tmp_file.close()
 
-        cmd = build_claude_cmd(
-            ticket_key, agent, config, tmp_file.name, is_resume=is_resume
+    if result_msg is None:
+        return RunResult(
+            success=False,
+            error="no_result",
+            session_id=sid,
+            tool_log=tool_log,
         )
-        logger.info("Command: %s", _redact_cmd(cmd))
 
-        timeout_seconds = config.timeout_minutes * 60
+    # Extract usage data.
+    usage = result_msg.usage or {}
+    input_tokens = getattr(usage, "input_tokens", 0) or 0
+    output_tokens = getattr(usage, "output_tokens", 0) or 0
 
-        try:
-            proc = subprocess.run(
-                cmd,
-                input=user_prompt,
-                capture_output=True,
-                text=True,
-                cwd=project_root,
-                timeout=timeout_seconds,
-            )
-            result = parse_result(proc.stdout)
-            logger.info(
-                "Claude finished: success=%s error=%s output_len=%d",
-                result["success"],
-                result["error"],
-                len(str(result["output"])),
-            )
-        except subprocess.TimeoutExpired:
-            logger.error("Claude timed out after %d minutes", config.timeout_minutes)
-            result = {
-                "success": False,
-                "output": "",
-                "error": "timeout",
-                "session_id": sid,
-                "raw": {},
-            }
-    finally:
-        # Always save session (partial sessions are valuable).
-        save_session(ticket_key, agent, cwd, project_root)
+    success = getattr(result_msg, "subtype", "") == "success"
 
-        # Clean up temp file.
-        if tmp_file is not None:
-            Path(tmp_file.name).unlink(missing_ok=True)
+    run_result = RunResult(
+        success=success,
+        output=getattr(result_msg, "result", "") or "",
+        error=None if success else getattr(result_msg, "subtype", "unknown"),
+        session_id=getattr(result_msg, "session_id", sid) or sid,
+        total_cost_usd=getattr(result_msg, "total_cost_usd", 0) or 0,
+        duration_ms=getattr(result_msg, "duration_ms", 0) or 0,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        num_turns=getattr(result_msg, "num_turns", 0) or 0,
+        tool_log=tool_log,
+    )
 
-    return result
+    logger.info(
+        "Stage complete: success=%s cost=$%.4f turns=%d tools=%d output_len=%d",
+        run_result.success,
+        run_result.total_cost_usd,
+        run_result.num_turns,
+        len(tool_log),
+        len(run_result.output),
+    )
+    return run_result
 
 
-def _redact_cmd(cmd: list[str]) -> list[str]:
-    """Return a copy of the command with sensitive values redacted."""
-    # Currently nothing to redact, but future-proofed for tokens/keys.
-    return list(cmd)
+def _handle_assistant_message(msg: object, tool_log: list[str]) -> None:
+    """Extract tool call names from an AssistantMessage and log them."""
+    message = getattr(msg, "message", None)
+    if message is None:
+        return
+    content = getattr(message, "content", None)
+    if not content:
+        return
+    for block in content:
+        block_type = getattr(block, "type", None)
+        if block_type == "tool_use":
+            name = getattr(block, "name", "unknown")
+            tool_log.append(name)
+            console.log(f"[cyan]Tool:[/cyan] {name}")
+        elif block_type == "text":
+            text = getattr(block, "text", "")
+            if text:
+                preview = text[:120].replace("\n", " ")
+                console.log(f"[dim]{preview}[/dim]")

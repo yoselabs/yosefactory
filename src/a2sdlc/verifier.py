@@ -1,167 +1,191 @@
-"""Verifier — extract artifacts, check markers, post-condition enforcement."""
+"""Verifier — Pydantic-based post-condition checks and stage routing."""
 
 from __future__ import annotations
 
+import json
 import logging
-import re
+from datetime import datetime, timezone
+from pathlib import Path
 
 from a2sdlc.adapters.base import CodeAdapter, TicketAdapter
 from a2sdlc.config import ProjectConfig
+from a2sdlc.models import StageStatus, extract_result, strip_status_block
+from a2sdlc.runner import RunResult, format_cost
 
 logger = logging.getLogger("a2sdlc.verifier")
-
-# Markers that use the A2SDLC: prefix.
-_A2SDLC_MARKERS = {"PRD", "PLAN", "REVIEW"}
-
-
-def extract_artifact(output: str, marker: str) -> str:
-    """Extract content between a marker heading and the next ``##`` heading or end of string."""
-    if marker in _A2SDLC_MARKERS:
-        pattern = rf"##\s*\[?A2SDLC:{re.escape(marker)}\]?\s*\n(.*?)(?=\n##\s|\Z)"
-    else:
-        pattern = rf"##\s*{re.escape(marker)}\s*\n(.*?)(?=\n##\s|\Z)"
-
-    match = re.search(pattern, output, re.DOTALL)
-    return match.group(1).strip() if match else ""
-
-
-def check_markers(output: str) -> dict[str, bool]:
-    """Check which markers are present in the output."""
-    return {
-        "has_prd": bool(re.search(r"##\s*\[A2SDLC:PRD\]", output)),
-        "has_questions": bool(re.search(r"##\s*Questions", output)),
-        "has_plan": bool(re.search(r"##\s*\[A2SDLC:PLAN\]", output)),
-        "has_review": bool(re.search(r"##\s*\[A2SDLC:REVIEW\]", output)),
-    }
 
 
 def verify_and_act(
     stage: str,
-    result: dict,
+    result: RunResult,
     ticket_key: str,
     tickets: TicketAdapter,
     code: CodeAdapter,
-    supervised: bool = False,
+    project: ProjectConfig,
     comment_id: str = "",
-    project: ProjectConfig | None = None,
 ) -> None:
     """Post-condition checks and deterministic actions per stage."""
-    if not result.get("success"):
-        error = result.get("error", "unknown")
-        if comment_id:
-            tickets.update_comment(
-                ticket_key, comment_id, f"🚨 Error in **{stage}** stage: `{error}`"
-            )
-        else:
-            tickets.create_comment(
-                ticket_key, f"🚨 Error in **{stage}** stage: `{error}`"
-            )
+    cost_footer = format_cost(result)
+
+    if not result.success:
+        _post(
+            tickets,
+            ticket_key,
+            comment_id,
+            f"🚨 Error in **{stage}** stage: `{result.error}`\n\n{cost_footer}",
+        )
         return
 
-    output = str(result.get("output", ""))
-    markers = check_markers(output)
-    logger.info("Stage %s markers: %s", stage, markers)
+    stage_result = extract_result(result.output)
+    comment_body = strip_status_block(result.output)
 
-    def _update_comment(body: str) -> None:
-        if comment_id:
-            tickets.update_comment(ticket_key, comment_id, body)
-        else:
-            tickets.create_comment(ticket_key, body)
-
-    if stage == "prd":
-        _verify_prd(output, markers, ticket_key, tickets, supervised, comment_id)
-    elif stage == "plan":
-        _verify_plan(output, markers, ticket_key, tickets, supervised, comment_id)
-    elif stage == "implement":
-        _update_comment(f"✅ **Implementation** complete.\n\n{output[:2000]}")
-        logger.info("Implementation complete for %s", ticket_key)
-    elif stage == "review":
-        _update_comment(f"✅ **Review** complete.\n\n{output[:2000]}")
-        logger.info("Review complete for %s", ticket_key)
-        if project and project.auto_merge and not supervised:
-            try:
-                pr_number = int(ticket_key)
-                logger.info("Auto-merge enabled, merging PR #%d", pr_number)
-                code.merge_pr(pr_number)
-                _update_comment(
-                    f"✅ **Review** complete — PR auto-merged.\n\n{output[:2000]}"
-                )
-            except (ValueError, TypeError):
-                logger.warning(
-                    "Auto-merge skipped: ticket_key %r is not a PR number",
-                    ticket_key,
-                )
-    elif stage == "ci-assess":
-        _update_comment(f"🔧 **CI Assessment** complete.\n\n{output[:2000]}")
-        logger.info("CI assessment complete for %s", ticket_key)
-    else:
-        logger.info("verify_and_act: unknown stage %s", stage)
-
-
-def _verify_prd(
-    output: str,
-    markers: dict[str, bool],
-    ticket_key: str,
-    tickets: TicketAdapter,
-    supervised: bool,
-    comment_id: str = "",
-) -> None:
-    def _update(body: str) -> None:
-        if comment_id:
-            tickets.update_comment(ticket_key, comment_id, body)
-        else:
-            tickets.create_comment(ticket_key, body)
-
-    if markers["has_questions"]:
-        questions = extract_artifact(output, "Questions")
-        _update(
-            f"❓ PRD Agent needs clarification\n\n{questions}"
-            "\n\n<!-- a2sdlc-stage: prd -->"
-        )
-        tickets.transition(ticket_key, "needs-input")
-        logger.info("PRD has questions, transitioned %s to needs-input", ticket_key)
-    elif markers["has_prd"]:
-        prd = extract_artifact(output, "PRD")
-        _update(f"✅ PRD Complete\n\n{prd}")
-        tickets.transition(ticket_key, "prd-complete")
-        logger.info("PRD complete, transitioned %s to prd-complete", ticket_key)
-        if not supervised:
-            tickets.trigger_next("prd-approved", {"key": ticket_key})
-    else:
-        truncated = output[:2000]
-        tickets.create_comment(
+    if stage_result is None:
+        _post(
+            tickets,
             ticket_key,
-            f"⚠️ Warning: PRD stage produced no recognized markers.\n\n```\n{truncated}\n```",
+            comment_id,
+            f"⚠️ No status block in **{stage}** output.\n\n{comment_body[:2000]}\n\n{cost_footer}",
         )
-        logger.warning("PRD stage output has no recognized markers for %s", ticket_key)
+        return
+
+    logger.info("Stage %s status: %s", stage, stage_result.status)
+
+    match (stage, stage_result.status):
+        case ("spec", StageStatus.COMPLETE):
+            _handle_spec_complete(
+                tickets, ticket_key, comment_id, comment_body, cost_footer
+            )
+        case ("spec", StageStatus.QUESTIONS):
+            _handle_questions(
+                tickets, ticket_key, comment_id, comment_body, cost_footer
+            )
+        case ("implement", StageStatus.COMPLETE):
+            _handle_implement_complete(
+                tickets, ticket_key, comment_id, comment_body, cost_footer
+            )
+        case ("implement", StageStatus.QUESTIONS):
+            _handle_questions(
+                tickets, ticket_key, comment_id, comment_body, cost_footer
+            )
+        case ("review", StageStatus.APPROVED):
+            _handle_review_approved(
+                tickets,
+                code,
+                ticket_key,
+                comment_id,
+                comment_body,
+                cost_footer,
+                project,
+            )
+        case ("review", StageStatus.CHANGES_REQUESTED):
+            _handle_review_changes(
+                tickets, ticket_key, comment_id, comment_body, cost_footer
+            )
+        case _:
+            _post(
+                tickets,
+                ticket_key,
+                comment_id,
+                f"⚠️ Unexpected ({stage}, {stage_result.status})\n\n{cost_footer}",
+            )
 
 
-def _verify_plan(
-    output: str,
-    markers: dict[str, bool],
-    ticket_key: str,
+# ── Handlers ─────────────────────────────────────────────────────────
+
+
+def _handle_spec_complete(
     tickets: TicketAdapter,
-    supervised: bool,
-    comment_id: str = "",
+    ticket_key: str,
+    comment_id: str,
+    comment_body: str,
+    cost_footer: str,
 ) -> None:
-    def _update(body: str) -> None:
-        if comment_id:
-            tickets.update_comment(ticket_key, comment_id, body)
-        else:
-            tickets.create_comment(ticket_key, body)
+    _write_state("spec", "complete")
+    _post(tickets, ticket_key, comment_id, f"{comment_body}\n\n{cost_footer}")
+    logger.info("Spec complete for %s", ticket_key)
 
-    if markers["has_questions"]:
-        questions = extract_artifact(output, "Questions")
-        _update(
-            f"❓ Plan Agent needs clarification\n\n{questions}"
-            "\n\n<!-- a2sdlc-stage: plan -->"
-        )
-        tickets.transition(ticket_key, "needs-input")
-        logger.info("Plan has questions, transitioned %s to needs-input", ticket_key)
-    elif markers["has_plan"]:
-        plan = extract_artifact(output, "PLAN")
-        _update(f"✅ Plan Complete\n\n{plan}")
-        tickets.transition(ticket_key, "plan-complete")
-        logger.info("Plan complete, transitioned %s to plan-complete", ticket_key)
-        if not supervised:
-            tickets.trigger_next("plan-approved", {"key": ticket_key})
+
+def _handle_questions(
+    tickets: TicketAdapter,
+    ticket_key: str,
+    comment_id: str,
+    comment_body: str,
+    cost_footer: str,
+) -> None:
+    _post(tickets, ticket_key, comment_id, f"{comment_body}\n\n{cost_footer}")
+    tickets.transition(ticket_key, "needs-input")
+    logger.info("Questions posted, transitioned %s to needs-input", ticket_key)
+
+
+def _handle_implement_complete(
+    tickets: TicketAdapter,
+    ticket_key: str,
+    comment_id: str,
+    comment_body: str,
+    cost_footer: str,
+) -> None:
+    _write_state("implement", "complete")
+    _post(tickets, ticket_key, comment_id, f"{comment_body}\n\n{cost_footer}")
+    logger.info("Implementation complete for %s", ticket_key)
+
+
+def _handle_review_approved(
+    tickets: TicketAdapter,
+    code: CodeAdapter,
+    ticket_key: str,
+    comment_id: str,
+    comment_body: str,
+    cost_footer: str,
+    project: ProjectConfig,
+) -> None:
+    _post(tickets, ticket_key, comment_id, f"{comment_body}\n\n{cost_footer}")
+    logger.info("Review approved for %s", ticket_key)
+    if project.auto_merge:
+        try:
+            pr_number = int(ticket_key)
+            logger.info("Auto-merge enabled, merging PR #%d", pr_number)
+            code.merge_pr(pr_number)
+        except (ValueError, TypeError):
+            logger.warning(
+                "Auto-merge skipped: ticket_key %r is not a PR number", ticket_key
+            )
+
+
+def _handle_review_changes(
+    tickets: TicketAdapter,
+    ticket_key: str,
+    comment_id: str,
+    comment_body: str,
+    cost_footer: str,
+) -> None:
+    _post(tickets, ticket_key, comment_id, f"{comment_body}\n\n{cost_footer}")
+    tickets.transition(ticket_key, "needs-fix")
+    logger.info("Review requested changes for %s, added needs-fix", ticket_key)
+
+
+# ── Helpers ──────────────────────────────────────────────────────────
+
+
+def _post(
+    tickets: TicketAdapter,
+    ticket_key: str,
+    comment_id: str,
+    body: str,
+) -> None:
+    if comment_id:
+        tickets.update_comment(ticket_key, comment_id, body)
+    else:
+        tickets.create_comment(ticket_key, body)
+
+
+def _write_state(stage: str, status: str) -> None:
+    """Write .a2sdlc/state.json on the current branch."""
+    state = {
+        "stage": stage,
+        "status": status,
+        "last_updated": datetime.now(timezone.utc).isoformat(),
+    }
+    state_path = Path(".a2sdlc/state.json")
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(state, indent=2))
+    logger.info("Wrote state: %s", state)
