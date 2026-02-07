@@ -6,6 +6,7 @@ import logging
 import re
 
 from a2sdlc.adapters.base import CodeAdapter, TicketAdapter
+from a2sdlc.config import ProjectConfig
 
 logger = logging.getLogger("a2sdlc.verifier")
 
@@ -42,6 +43,7 @@ def verify_and_act(
     code: CodeAdapter,
     supervised: bool = False,
     comment_id: str = "",
+    project: ProjectConfig | None = None,
 ) -> None:
     """Post-condition checks and deterministic actions per stage."""
     if not result.get("success"):
@@ -76,6 +78,19 @@ def verify_and_act(
     elif stage == "review":
         _update_comment(f"✅ **Review** complete.\n\n{output[:2000]}")
         logger.info("Review complete for %s", ticket_key)
+        if project and project.auto_merge and not supervised:
+            try:
+                pr_number = int(ticket_key)
+                logger.info("Auto-merge enabled, merging PR #%d", pr_number)
+                code.merge_pr(pr_number)
+                _update_comment(
+                    f"✅ **Review** complete — PR auto-merged.\n\n{output[:2000]}"
+                )
+            except (ValueError, TypeError):
+                logger.warning(
+                    "Auto-merge skipped: ticket_key %r is not a PR number",
+                    ticket_key,
+                )
     elif stage == "ci-assess":
         _update_comment(f"🔧 **CI Assessment** complete.\n\n{output[:2000]}")
         logger.info("CI assessment complete for %s", ticket_key)
@@ -99,7 +114,10 @@ def _verify_prd(
 
     if markers["has_questions"]:
         questions = extract_artifact(output, "Questions")
-        _update(f"❓ PRD Agent needs clarification\n\n{questions}")
+        _update(
+            f"❓ PRD Agent needs clarification\n\n{questions}"
+            "\n\n<!-- a2sdlc-stage: prd -->"
+        )
         tickets.transition(ticket_key, "needs-input")
         logger.info("PRD has questions, transitioned %s to needs-input", ticket_key)
     elif markers["has_prd"]:
@@ -132,7 +150,15 @@ def _verify_plan(
         else:
             tickets.create_comment(ticket_key, body)
 
-    if markers["has_plan"]:
+    if markers["has_questions"]:
+        questions = extract_artifact(output, "Questions")
+        _update(
+            f"❓ Plan Agent needs clarification\n\n{questions}"
+            "\n\n<!-- a2sdlc-stage: plan -->"
+        )
+        tickets.transition(ticket_key, "needs-input")
+        logger.info("Plan has questions, transitioned %s to needs-input", ticket_key)
+    elif markers["has_plan"]:
         plan = extract_artifact(output, "PLAN")
         _update(f"✅ Plan Complete\n\n{plan}")
         tickets.transition(ticket_key, "plan-complete")

@@ -86,6 +86,8 @@ class ProjectConfig:
     tickets_adapter: str = "github-issues"
     code_adapter: str = "github"
     test_command: str = "make test"
+    auto_merge: bool = False
+    human_review_before_merge: bool = True
     jira_status_map: dict[str, str] = field(default_factory=dict)
 
 
@@ -105,6 +107,8 @@ def load_project(project_root: Path) -> ProjectConfig:
     logger.info("Loaded project config from %s: %s", config_path, data)
     adapters = data.get("adapters", {})
     testing = data.get("testing", {})
+    pipeline = data.get("pipeline", {})
+    pipeline = pipeline if isinstance(pipeline, dict) else {}
     return ProjectConfig(
         tickets_adapter=adapters.get("tickets", "github-issues")
         if isinstance(adapters, dict)
@@ -115,5 +119,7 @@ def load_project(project_root: Path) -> ProjectConfig:
         test_command=testing.get("command", "make test")
         if isinstance(testing, dict)
         else "make test",
+        auto_merge=bool(pipeline.get("auto_merge", False)),
+        human_review_before_merge=bool(pipeline.get("human_review_before_merge", True)),
         jira_status_map=data.get("jira_status_map", {}),
     )
