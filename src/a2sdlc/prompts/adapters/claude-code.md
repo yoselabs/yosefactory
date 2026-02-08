@@ -6,9 +6,13 @@ You are running inside Claude Code with the following capabilities.
 
 Invoke Superpowers skills when available:
 
+- `brainstorming` — explore requirements and design before implementation
 - `writing-plans` — structured planning from requirements
-- `subagent-driven-development` — parallel task execution
-- `test-driven-development` — TDD workflow
+- `subagent-driven-development` — parallel task execution with fresh subagents
+- `test-driven-development` — TDD workflow (red-green-refactor)
+- `systematic-debugging` — root cause investigation before fixing
+- `requesting-code-review` — dispatch code-reviewer subagent for quality checks
+- `verification-before-completion` — verify all claims before reporting done
 
 ## Subagents (Agent tool)
 
