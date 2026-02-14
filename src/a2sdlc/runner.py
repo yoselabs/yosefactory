@@ -144,10 +144,14 @@ async def run_stage(
             tool_log=tool_log,
         )
 
-    # Extract usage data.
+    # Extract usage data — usage may be a dict or an object.
     usage = result_msg.usage or {}
-    input_tokens = getattr(usage, "input_tokens", 0) or 0
-    output_tokens = getattr(usage, "output_tokens", 0) or 0
+    if isinstance(usage, dict):
+        input_tokens = usage.get("input_tokens", 0) or 0
+        output_tokens = usage.get("output_tokens", 0) or 0
+    else:
+        input_tokens = getattr(usage, "input_tokens", 0) or 0
+        output_tokens = getattr(usage, "output_tokens", 0) or 0
 
     success = getattr(result_msg, "subtype", "") == "success"
 
