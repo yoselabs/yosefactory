@@ -7,6 +7,12 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from claude_agent_sdk.types import (
+    AssistantMessage,
+    ResultMessage,
+    TextBlock,
+    ToolUseBlock,
+)
 from rich.console import Console
 
 from a2sdlc.config import StageConfig, get_session_id
@@ -79,12 +85,7 @@ async def run_stage(
     Streams events in real-time, tracks tool calls for progress,
     and returns a normalized result.
     """
-    from claude_agent_sdk import (  # noqa: PLC0415
-        AssistantMessage,
-        ClaudeAgentOptions,
-        ResultMessage,
-        query,
-    )
+    from claude_agent_sdk import ClaudeAgentOptions, query  # noqa: PLC0415
 
     sid = get_session_id(ticket_key, stage)
     logger.info(
@@ -181,20 +182,23 @@ async def run_stage(
 
 def _handle_assistant_message(msg: object, tool_log: list[str]) -> None:
     """Extract tool call names from an AssistantMessage and log them."""
-    message = getattr(msg, "message", None)
-    if message is None:
-        return
-    content = getattr(message, "content", None)
+    # SDK puts content directly on AssistantMessage, not on msg.message.
+    content = getattr(msg, "content", None)
     if not content:
         return
     for block in content:
-        block_type = getattr(block, "type", None)
-        if block_type == "tool_use":
-            name = getattr(block, "name", "unknown")
+        if isinstance(block, ToolUseBlock):
+            name = block.name or "unknown"
             tool_log.append(name)
+            # GH Actions collapsible group
+            print(f"::group::Tool: {name}")  # noqa: T201
             console.log(f"[cyan]Tool:[/cyan] {name}")
-        elif block_type == "text":
-            text = getattr(block, "text", "")
-            if text:
-                preview = text[:120].replace("\n", " ")
+            inp = block.input
+            if isinstance(inp, dict):
+                for k, v in inp.items():
+                    console.log(f"  [dim]{k}:[/dim] {str(v)[:100]}")
+            print("::endgroup::")  # noqa: T201
+        elif isinstance(block, TextBlock):
+            if block.text:
+                preview = block.text[:200].replace("\n", " ")
                 console.log(f"[dim]{preview}[/dim]")
