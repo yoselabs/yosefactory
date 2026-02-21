@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import StrEnum
 
 from pydantic import BaseModel
@@ -28,6 +29,19 @@ class BranchState(BaseModel):
     stage: str
     status: str
     last_updated: str
+
+
+@dataclass
+class StageAction:
+    """Deterministic action produced by the routing logic.
+
+    Pure data — no side effects. Executed separately by ``execute_action``.
+    """
+
+    comment: str
+    transition_to: str | None = None
+    write_state: tuple[str, str] | None = None  # (stage, status)
+    merge_pr: int | None = None
 
 
 def extract_result(output: str) -> StageResult | None:
