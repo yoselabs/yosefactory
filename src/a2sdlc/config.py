@@ -38,17 +38,6 @@ class StageConfig:
     allowed_tools: list[str] = field(default_factory=lambda: list(_DEFAULT_TOOLS))
 
 
-STAGE_DEFAULTS: dict[str, StageConfig] = {
-    "spec": StageConfig(name="spec", max_turns=35, timeout_minutes=30),
-    "implement": StageConfig(name="implement", max_turns=120, timeout_minutes=60),
-    "review": StageConfig(
-        name="review",
-        max_turns=25,
-        timeout_minutes=20,
-        allowed_tools=["Bash", "Read", "Glob", "Grep", "WebFetch", "WebSearch"],
-    ),
-}
-
 # Env-var name → StageConfig field name + converter
 _ENV_MAP: dict[str, tuple[str, type]] = {
     "MODEL": ("model", str),
@@ -57,11 +46,15 @@ _ENV_MAP: dict[str, tuple[str, type]] = {
 
 
 def load_config(stage: str, **overrides: object) -> StageConfig:
-    """Build a StageConfig by merging defaults, env vars, and CLI overrides.
+    """Build a StageConfig by merging stage defaults, env vars, and CLI overrides.
 
+    Stage defaults come from the stage module (e.g., stages/spec.py).
     Priority: CLI arg > env var > stage default.
     """
-    base = STAGE_DEFAULTS[stage]
+    from a2sdlc.stages import get_stage  # noqa: PLC0415
+
+    stage_obj = get_stage(stage)
+    base = stage_obj.config
 
     # Layer env vars on top of defaults.
     env_patches: dict[str, object] = {}

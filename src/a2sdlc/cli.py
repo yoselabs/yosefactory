@@ -18,9 +18,11 @@ from a2sdlc.config import load_config, load_project
 from a2sdlc.runner import run_stage
 from a2sdlc.verifier import verify_and_act
 
+from a2sdlc.stages import STAGES as _STAGE_REGISTRY
+
 logger = logging.getLogger("a2sdlc.cli")
 
-_STAGES = ("spec", "implement", "review", "auto")
+_STAGES = tuple(_STAGE_REGISTRY.keys()) + ("auto",)
 
 
 # ── Logging ──────────────────────────────────────────────────────────
