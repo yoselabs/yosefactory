@@ -60,7 +60,7 @@ class TestParseArgs:
                 "claude-opus-4",
                 "--max-turns",
                 "50",
-                "--supervised",
+                "--resume",
                 "--dry-run",
             ]
         )
@@ -71,7 +71,7 @@ class TestParseArgs:
         assert args.pr == 7
         assert args.model == "claude-opus-4"
         assert args.max_turns == 50
-        assert args.supervised is True
+        assert args.resume is True
         assert args.dry_run is True
 
     def test_parse_args_cleanup(self) -> None:

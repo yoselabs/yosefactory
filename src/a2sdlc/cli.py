@@ -16,9 +16,8 @@ from importlib.resources import files as pkg_files
 from a2sdlc.adapters import get_code_adapter, get_ticket_adapter
 from a2sdlc.config import load_config, load_project
 from a2sdlc.runner import run_stage
-from a2sdlc.verifier import verify_and_act
-
 from a2sdlc.stages import STAGES as _STAGE_REGISTRY
+from a2sdlc.verifier import verify_and_act
 
 logger = logging.getLogger("a2sdlc.cli")
 
@@ -28,7 +27,7 @@ _STAGES = tuple(_STAGE_REGISTRY.keys()) + ("auto",)
 # ── Logging ──────────────────────────────────────────────────────────
 
 
-def setup_logging(ticket_key: str, agent: str, project_root: Path) -> None:
+def setup_logging(ticket_key: str, stage: str, project_root: Path) -> None:
     """Configure structured JSON logging to stderr + file."""
     formatter = logging.Formatter(
         '{"ts":"%(asctime)s","level":"%(levelname)s","module":"%(name)s","msg":"%(message)s"}'
@@ -47,7 +46,7 @@ def setup_logging(ticket_key: str, agent: str, project_root: Path) -> None:
     log_dir = project_root / ".a2sdlc" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    log_file = log_dir / f"{ticket_key}-{agent}-{ts}.log"
+    log_file = log_dir / f"{ticket_key}-{stage}-{ts}.log"
     file_handler = logging.FileHandler(str(log_file))
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formatter)
@@ -158,7 +157,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--max-turns", type=int, default=None, help="Override max turns"
     )
     run_parser.add_argument(
-        "--supervised", action="store_true", help="Enable supervised mode"
+        "--resume", action="store_true", help="Resume existing session"
     )
     run_parser.add_argument(
         "--dry-run", action="store_true", help="Print prompt and config, do not run"
@@ -209,8 +208,11 @@ async def orchestrate(args: argparse.Namespace) -> None:
         overrides["max_turns"] = args.max_turns
     config = load_config(stage, **overrides)
 
-    # 6. Fetch ticket context.
-    ticket_context = tickets.fetch(args.key)
+    # 6. Fetch ticket context (for review, include PR context).
+    if stage == "review" and args.pr is not None:
+        ticket_context = code.get_pr_context(args.pr)
+    else:
+        ticket_context = tickets.fetch(args.key)
 
     # 7. Assemble system prompt.
     a2sdlc_dir = project_root / ".a2sdlc"
@@ -235,7 +237,7 @@ async def orchestrate(args: argparse.Namespace) -> None:
         try:
             tickets.update_comment(args.key, comment_id, text)
         except Exception:  # noqa: BLE001
-            logger.debug("Failed to update progress comment", exc_info=True)
+            logger.warning("Failed to update progress comment", exc_info=True)
 
     # 11. Run the stage via SDK.
     result = await run_stage(
@@ -245,6 +247,7 @@ async def orchestrate(args: argparse.Namespace) -> None:
         ticket_key=args.key,
         stage=stage,
         project_root=str(project_root),
+        is_resume=args.resume,
         on_progress=on_progress,
     )
 
@@ -266,6 +269,7 @@ async def orchestrate(args: argparse.Namespace) -> None:
         code=code,
         project=project,
         comment_id=comment_id,
+        pr_number=args.pr,
     )
 
     # 14. Log completion.

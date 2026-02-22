@@ -6,29 +6,7 @@ import time
 
 import pytest
 
-from a2sdlc.config import get_session_id
 from a2sdlc.runner import RunResult, format_cost, format_progress
-
-
-# ── get_session_id (moved to config) ─────────────────────────────────
-
-
-@pytest.mark.unit
-class TestGetSessionId:
-    def test_deterministic(self) -> None:
-        sid1 = get_session_id("PROJ-42", "spec")
-        sid2 = get_session_id("PROJ-42", "spec")
-        assert sid1 == sid2
-
-    def test_different_keys(self) -> None:
-        sid1 = get_session_id("PROJ-1", "spec")
-        sid2 = get_session_id("PROJ-2", "spec")
-        assert sid1 != sid2
-
-    def test_different_agents(self) -> None:
-        sid1 = get_session_id("PROJ-1", "spec")
-        sid2 = get_session_id("PROJ-1", "implement")
-        assert sid1 != sid2
 
 
 # ── format_cost ──────────────────────────────────────────────────────

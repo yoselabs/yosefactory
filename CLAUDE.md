@@ -1,6 +1,6 @@
 # a2sdlc — Agent-to-SDLC
 
-AI agent pipeline engine. Routes ticket board events to specialized agents (PRD, Plan, Implement, Review, CI-Assess) via Claude Code CLI. Adapters handle Jira and GitHub I/O. Agent focuses purely on code work.
+AI agent pipeline engine. Routes ticket board events through stages (Spec, Implement, Review, Merge) using the Claude Agent SDK. Each stage is a self-contained module in `src/a2sdlc/stages/`. Adapters handle Jira and GitHub I/O. The agent focuses purely on code work — the engine manages orchestration, progress tracking, and post-condition routing.
 
 ## Dev Commands
 

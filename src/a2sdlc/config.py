@@ -14,18 +14,6 @@ logger = logging.getLogger("a2sdlc.config")
 
 # ── Stage configuration ───────────────────────────────────────────────
 
-_DEFAULT_TOOLS: list[str] = [
-    "Bash",
-    "Read",
-    "Write",
-    "Edit",
-    "Glob",
-    "Grep",
-    "WebFetch",
-    "WebSearch",
-    "Agent",
-]
-
 
 @dataclass
 class StageConfig:
@@ -34,8 +22,8 @@ class StageConfig:
     name: str
     model: str = "claude-sonnet-4-6"
     max_turns: int = 25
-    timeout_minutes: int = 20
-    allowed_tools: list[str] = field(default_factory=lambda: list(_DEFAULT_TOOLS))
+    timeout_minutes: int = 60
+    allowed_tools: list[str] = field(default_factory=list)
 
 
 # Env-var name → StageConfig field name + converter
@@ -71,9 +59,9 @@ def load_config(stage: str, **overrides: object) -> StageConfig:
 # ── Session helpers ──────────────────────────────────────────────────
 
 
-def get_session_id(ticket_key: str, agent: str) -> str:
-    """Deterministic UUID from ticket key + agent name."""
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"a2sdlc:{ticket_key}:{agent}"))
+def get_session_id(ticket_key: str, stage: str) -> str:
+    """Deterministic UUID from ticket key + stage name."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"a2sdlc:{ticket_key}:{stage}"))
 
 
 # ── Project configuration ─────────────────────────────────────────────

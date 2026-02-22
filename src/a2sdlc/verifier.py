@@ -23,7 +23,7 @@ def resolve_action(
     stage_name: str,
     result: RunResult,
     project: ProjectConfig,
-    ticket_key: str = "",
+    pr_number: int | None = None,
 ) -> StageAction:
     """Determine what action to take based on stage + result.
 
@@ -61,11 +61,7 @@ def resolve_action(
     kwargs: dict[str, object] = {}
     if stage_name == "review":
         kwargs["auto_merge"] = project.auto_merge
-        if project.auto_merge:
-            try:
-                kwargs["pr_number"] = int(ticket_key)
-            except (ValueError, TypeError):
-                pass
+        kwargs["pr_number"] = pr_number
 
     return stage.resolve(stage_result.status, comment_body, cost_footer, **kwargs)
 
@@ -109,9 +105,10 @@ def verify_and_act(
     code: CodeAdapter,
     project: ProjectConfig,
     comment_id: str = "",
+    pr_number: int | None = None,
 ) -> None:
     """Resolve action from result, then execute it."""
-    action = resolve_action(stage, result, project, ticket_key)
+    action = resolve_action(stage, result, project, pr_number)
     logger.info("Stage %s action: %s", stage, action)
     execute_action(action, ticket_key, tickets, code, comment_id)
 

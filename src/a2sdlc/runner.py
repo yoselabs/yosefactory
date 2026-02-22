@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Callable
@@ -114,25 +115,42 @@ async def run_stage(
     last_progress_update = 0.0
     result_msg: ResultMessage | None = None
 
+    timeout_seconds = config.timeout_minutes * 60
+
     try:
-        async for msg in query(prompt=user_prompt, options=options):
-            if isinstance(msg, AssistantMessage):
-                _handle_assistant_message(msg, tool_log)
 
-                # Throttled progress update
-                if on_progress and tool_log:
-                    now = time.time()
-                    if now - last_progress_update >= 5:
-                        on_progress(format_progress(stage, tool_log, start_time))
-                        last_progress_update = now
+        async def _stream() -> None:
+            nonlocal result_msg, last_progress_update
+            async for msg in query(prompt=user_prompt, options=options):
+                if isinstance(msg, AssistantMessage):
+                    _handle_assistant_message(msg, tool_log)
 
-            elif isinstance(msg, ResultMessage):
-                result_msg = msg
-    except Exception:
+                    # Throttled progress update
+                    if on_progress and tool_log:
+                        now = time.time()
+                        if now - last_progress_update >= 5:
+                            on_progress(format_progress(stage, tool_log, start_time))
+                            last_progress_update = now
+
+                elif isinstance(msg, ResultMessage):
+                    result_msg = msg
+
+        await asyncio.wait_for(_stream(), timeout=timeout_seconds)
+    except TimeoutError:
+        logger.error(
+            "Stage %s timed out after %d minutes", stage, config.timeout_minutes
+        )
+        return RunResult(
+            success=False,
+            error=f"timeout ({config.timeout_minutes}min)",
+            session_id=sid,
+            tool_log=tool_log,
+        )
+    except Exception as exc:
         logger.exception("SDK error during stage %s", stage)
         return RunResult(
             success=False,
-            error="sdk_error",
+            error=f"sdk_error: {type(exc).__name__}: {exc}",
             session_id=sid,
             tool_log=tool_log,
         )
