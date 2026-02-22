@@ -1,4 +1,4 @@
-"""Stage registry — discover and load stage definitions."""
+"""Stage registry — auto-built from stage classes."""
 
 from __future__ import annotations
 
@@ -11,12 +11,10 @@ from a2sdlc.stages.spec import SpecStage
 
 AnyStage = Union[SpecStage, ImplementStage, ReviewStage, MergeStage]
 
-STAGES: dict[str, type[AnyStage]] = {
-    "spec": SpecStage,
-    "implement": ImplementStage,
-    "review": ReviewStage,
-    "merge": MergeStage,
-}
+_ALL_STAGES: list[type[AnyStage]] = [SpecStage, ImplementStage, ReviewStage, MergeStage]
+
+# Auto-built from each class's .name attribute — no magic strings.
+STAGES: dict[str, type[AnyStage]] = {cls.name: cls for cls in _ALL_STAGES}
 
 
 def get_stage(name: str) -> AnyStage:
