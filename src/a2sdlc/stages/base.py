@@ -21,7 +21,7 @@ class Stage(Protocol):
     uses_ai: bool
 
     def resolve(
-        self, status: StageStatus, comment_body: str, cost_footer: str
+        self, status: StageStatus, comment_body: str, cost_footer: str, **kwargs: object
     ) -> StageAction:
         """Given a status from the agent, return the action to take."""
         ...

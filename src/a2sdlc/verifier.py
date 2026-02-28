@@ -89,6 +89,11 @@ def execute_action(
     if action.write_state:
         _write_state(*action.write_state)
 
+    if action.post_review is not None:
+        pr, body, event = action.post_review
+        logger.info("Posting PR review on #%d: %s", pr, event)
+        code.post_review(pr, body, event)
+
     if action.merge_pr is not None:
         logger.info("Auto-merging PR #%d", action.merge_pr)
         code.merge_pr(action.merge_pr)

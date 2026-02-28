@@ -45,9 +45,10 @@ class TestReviewResolve:
     def test_approved_no_merge(self) -> None:
         stage = ReviewStage()
         action = stage.resolve(
-            StageStatus.APPROVED, "LGTM", "---\ncost", auto_merge=False
+            StageStatus.APPROVED, "LGTM", "---\ncost", auto_merge=False, pr_number=42
         )
         assert action.merge_pr is None
+        assert action.post_review == (42, "LGTM", "APPROVE")
 
     def test_approved_auto_merge(self) -> None:
         stage = ReviewStage()
@@ -55,13 +56,26 @@ class TestReviewResolve:
             StageStatus.APPROVED, "LGTM", "---\ncost", auto_merge=True, pr_number=42
         )
         assert action.merge_pr == 42
+        assert action.post_review == (42, "LGTM", "APPROVE")
+
+    def test_approved_no_pr_number(self) -> None:
+        stage = ReviewStage()
+        action = stage.resolve(
+            StageStatus.APPROVED, "LGTM", "---\ncost", auto_merge=True
+        )
+        assert action.merge_pr is None
+        assert action.post_review is None
 
     def test_changes_requested(self) -> None:
         stage = ReviewStage()
         action = stage.resolve(
-            StageStatus.CHANGES_REQUESTED, "Fix SQL injection", "---\ncost"
+            StageStatus.CHANGES_REQUESTED,
+            "Fix SQL injection",
+            "---\ncost",
+            pr_number=42,
         )
         assert action.transition_to == "needs-fix"
+        assert action.post_review == (42, "Fix SQL injection", "REQUEST_CHANGES")
 
     def test_valid_statuses(self) -> None:
         stage = ReviewStage()

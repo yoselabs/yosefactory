@@ -26,17 +26,21 @@ class ReviewStage:
     ) -> StageAction:
         auto_merge = bool(kwargs.get("auto_merge", False))
         raw_pr = kwargs.get("pr_number")
-        merge_pr: int | None = None
-        if auto_merge and raw_pr is not None:
-            merge_pr = int(str(raw_pr))
+        pr_number: int | None = None
+        if raw_pr is not None and isinstance(raw_pr, int):
+            pr_number = raw_pr
         if status == StageStatus.APPROVED:
             return StageAction(
                 comment=f"{comment_body}\n\n{cost_footer}",
-                merge_pr=merge_pr,
+                post_review=(pr_number, comment_body, "APPROVE") if pr_number else None,
+                merge_pr=pr_number if auto_merge else None,
             )
         if status == StageStatus.CHANGES_REQUESTED:
             return StageAction(
                 comment=f"{comment_body}\n\n{cost_footer}",
+                post_review=(pr_number, comment_body, "REQUEST_CHANGES")
+                if pr_number
+                else None,
                 transition_to="needs-fix",
             )
         return StageAction(

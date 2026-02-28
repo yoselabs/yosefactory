@@ -151,6 +151,25 @@ class TestExecuteAction:
         execute_action(action, "42", tickets, code)
         code.merge_pr.assert_not_called()
 
+    def test_post_review(self) -> None:
+        tickets = MagicMock()
+        code = MagicMock()
+        action = StageAction(comment="LGTM", post_review=(42, "LGTM", "APPROVE"))
+        execute_action(action, "42", tickets, code)
+        code.post_review.assert_called_once_with(42, "LGTM", "APPROVE")
+
+    def test_post_review_with_changes(self) -> None:
+        tickets = MagicMock()
+        code = MagicMock()
+        action = StageAction(
+            comment="Fix it",
+            post_review=(42, "Fix it", "REQUEST_CHANGES"),
+            transition_to="needs-fix",
+        )
+        execute_action(action, "42", tickets, code)
+        code.post_review.assert_called_once_with(42, "Fix it", "REQUEST_CHANGES")
+        tickets.transition.assert_called_once_with("42", "needs-fix")
+
 
 # ── verify_and_act (integration of resolve + execute) ────────────────
 

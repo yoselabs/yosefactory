@@ -42,6 +42,9 @@ class StageAction:
     transition_to: str | None = None
     write_state: tuple[str, str] | None = None  # (stage, status)
     merge_pr: int | None = None
+    post_review: tuple[int, str, str] | None = (
+        None  # (pr, body, event: APPROVE|REQUEST_CHANGES)
+    )
 
 
 def extract_result(output: str) -> StageResult | None:
