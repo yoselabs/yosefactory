@@ -201,13 +201,24 @@ class TestVerifyAndAct:
             "c1",
             pr_number=42,
         )
+        code.post_review.assert_called_once_with(42, "Good.", "APPROVE")
         code.merge_pr.assert_called_once_with(42)
 
     def test_review_approved_no_auto_merge(self) -> None:
         tickets = MagicMock()
         code = MagicMock()
         output = 'Good.\n\n```a2sdlc\n{"status": "approved"}\n```'
-        verify_and_act("review", _result(output), "42", tickets, code, _project(), "c1")
+        verify_and_act(
+            "review",
+            _result(output),
+            "42",
+            tickets,
+            code,
+            _project(),
+            "c1",
+            pr_number=42,
+        )
+        code.post_review.assert_called_once_with(42, "Good.", "APPROVE")
         code.merge_pr.assert_not_called()
 
     def test_review_approved_no_pr_number(self) -> None:
@@ -223,4 +234,5 @@ class TestVerifyAndAct:
             _project(auto_merge=True),
             "c1",
         )
-        code.merge_pr.assert_not_called()  # no pr_number passed
+        code.post_review.assert_not_called()
+        code.merge_pr.assert_not_called()
