@@ -75,6 +75,7 @@ def execute_action(
     tickets: TicketAdapter,
     code: CodeAdapter,
     comment_id: str = "",
+    project_root: Path | None = None,
 ) -> None:
     """Apply a StageAction — post comments, set labels, merge PRs."""
     if comment_id:
@@ -87,7 +88,8 @@ def execute_action(
         logger.info("Transitioned %s to %s", ticket_key, action.transition_to)
 
     if action.write_state:
-        _write_state(*action.write_state)
+        root = project_root if project_root is not None else Path.cwd()
+        _write_state(*action.write_state, root)
 
     if action.post_review is not None:
         pr, body, event = action.post_review
@@ -111,24 +113,25 @@ def verify_and_act(
     project: ProjectConfig,
     comment_id: str = "",
     pr_number: int | None = None,
+    project_root: Path | None = None,
 ) -> None:
     """Resolve action from result, then execute it."""
     action = resolve_action(stage, result, project, pr_number)
     logger.info("Stage %s action: %s", stage, action)
-    execute_action(action, ticket_key, tickets, code, comment_id)
+    execute_action(action, ticket_key, tickets, code, comment_id, project_root)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
-def _write_state(stage: str, status: str) -> None:
+def _write_state(stage: str, status: str, project_root: Path) -> None:
     """Write .a2sdlc/state.json on the current branch."""
     state = {
         "stage": stage,
         "status": status,
         "last_updated": datetime.now(timezone.utc).isoformat(),
     }
-    state_path = Path(".a2sdlc/state.json")
+    state_path = project_root / ".a2sdlc" / "state.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps(state, indent=2))
     logger.info("Wrote state: %s", state)

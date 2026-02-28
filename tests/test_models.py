@@ -6,6 +6,7 @@ import pytest
 
 from a2sdlc.models import (
     BranchState,
+    StageName,
     StageResult,
     StageStatus,
     extract_result,
@@ -53,12 +54,14 @@ class TestStageResult:
 class TestBranchState:
     def test_roundtrip(self) -> None:
         state = BranchState(
-            stage="spec", status="complete", last_updated="2026-04-05T12:00:00Z"
+            stage=StageName.SPEC,
+            status=StageStatus.COMPLETE,
+            last_updated="2026-04-05T12:00:00Z",
         )
         dumped = state.model_dump_json()
         restored = BranchState.model_validate_json(dumped)
-        assert restored.stage == "spec"
-        assert restored.status == "complete"
+        assert restored.stage == StageName.SPEC
+        assert restored.status == StageStatus.COMPLETE
 
 
 @pytest.mark.unit

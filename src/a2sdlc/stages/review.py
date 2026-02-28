@@ -3,13 +3,26 @@
 from __future__ import annotations
 
 from a2sdlc.config import StageConfig
-from a2sdlc.models import StageAction, StageStatus
+from a2sdlc.models import Gate, StageAction, StageName, StageStatus, Transition
 
 
 class ReviewStage:
-    name = "review"
+    name = StageName.REVIEW
     uses_ai = True
     valid_statuses = frozenset({StageStatus.APPROVED, StageStatus.CHANGES_REQUESTED})
+    transitions: dict[StageStatus, Transition] = {
+        StageStatus.APPROVED: Transition(
+            next=StageName.MERGE,
+            gate=Gate.AUTO_MERGE,
+            label="stage:done",
+            jira_status="Done",
+        ),
+        StageStatus.CHANGES_REQUESTED: Transition(
+            next=StageName.IMPLEMENT,
+            label="stage:implement",
+            jira_status="In Progress",
+        ),
+    }
     config = StageConfig(
         name="review",
         max_turns=25,

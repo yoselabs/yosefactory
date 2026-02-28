@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from a2sdlc.config import StageConfig
-from a2sdlc.models import StageAction, StageStatus
+from a2sdlc.models import StageAction, StageName, StageStatus, Transition
 
 
 class Stage(Protocol):
@@ -15,9 +15,10 @@ class Stage(Protocol):
     type check. Any object with these attributes/methods qualifies.
     """
 
-    name: str
+    name: StageName
     config: StageConfig
     valid_statuses: frozenset[StageStatus]
+    transitions: dict[StageStatus, Transition]
     uses_ai: bool
 
     def resolve(

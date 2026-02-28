@@ -270,6 +270,7 @@ async def orchestrate(args: argparse.Namespace) -> None:
         project=project,
         comment_id=comment_id,
         pr_number=args.pr,
+        project_root=project_root,
     )
 
     # 14. Log completion.

@@ -67,6 +67,18 @@ def get_session_id(ticket_key: str, stage: str) -> str:
 # ── Project configuration ─────────────────────────────────────────────
 
 
+@dataclass(frozen=True)
+class PipelineFlags:
+    """Boolean flags controlling pipeline autonomy.
+
+    Set via project.yaml defaults, overridden by issue labels or CLI flags.
+    """
+
+    auto_spec: bool = False  # true = skip Q&A, agent self-answers
+    auto_proceed: bool = True  # true = spec→implement without approval
+    auto_merge: bool = False  # true = merge after review passes
+
+
 @dataclass
 class ProjectConfig:
     """Per-repo settings read from .a2sdlc/project.yaml."""
@@ -75,7 +87,16 @@ class ProjectConfig:
     code_adapter: str = "github"
     test_command: str = "make test"
     auto_merge: bool = False
+    default_base: str = "main"
     jira_status_map: dict[str, str] = field(default_factory=dict)
+
+    def pipeline_flags(self, **overrides: bool) -> PipelineFlags:
+        """Build PipelineFlags from project defaults + overrides."""
+        return PipelineFlags(
+            auto_spec=overrides.get("auto_spec", False),
+            auto_proceed=overrides.get("auto_proceed", True),
+            auto_merge=overrides.get("auto_merge", self.auto_merge),
+        )
 
 
 def load_project(project_root: Path) -> ProjectConfig:
@@ -107,5 +128,6 @@ def load_project(project_root: Path) -> ProjectConfig:
         if isinstance(testing, dict)
         else "make test",
         auto_merge=bool(pipeline.get("auto_merge", False)),
+        default_base=str(pipeline.get("default_base", "main")),
         jira_status_map=data.get("jira_status_map", {}),
     )

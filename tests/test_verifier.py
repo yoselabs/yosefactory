@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 from a2sdlc.config import ProjectConfig
-from a2sdlc.models import StageAction
+from a2sdlc.models import StageAction, StageName, StageStatus
 from a2sdlc.runner import RunResult
 from a2sdlc.verifier import execute_action, resolve_action, verify_and_act
 
@@ -151,6 +153,20 @@ class TestExecuteAction:
         execute_action(action, "42", tickets, code)
         code.merge_pr.assert_not_called()
 
+    def test_write_state(self, tmp_path: Path) -> None:
+        tickets = MagicMock()
+        code = MagicMock()
+        action = StageAction(
+            comment="Done", write_state=(StageName.SPEC, StageStatus.COMPLETE)
+        )
+        execute_action(action, "PROJ-1", tickets, code, project_root=tmp_path)
+        state_file = tmp_path / ".a2sdlc" / "state.json"
+        assert state_file.exists()
+        data = json.loads(state_file.read_text())
+        assert data["stage"] == "spec"
+        assert data["status"] == "complete"
+        assert "last_updated" in data
+
     def test_post_review(self) -> None:
         tickets = MagicMock()
         code = MagicMock()
@@ -176,16 +192,26 @@ class TestExecuteAction:
 
 @pytest.mark.unit
 class TestVerifyAndAct:
-    def test_spec_complete_flow(self) -> None:
+    def test_spec_complete_flow(self, tmp_path: Path) -> None:
         tickets = MagicMock()
         code = MagicMock()
         output = 'Spec done.\n\n```a2sdlc\n{"status": "complete"}\n```'
         verify_and_act(
-            "spec", _result(output), "PROJ-1", tickets, code, _project(), "c1"
+            "spec",
+            _result(output),
+            "PROJ-1",
+            tickets,
+            code,
+            _project(),
+            "c1",
+            project_root=tmp_path,
         )
         tickets.update_comment.assert_called_once()
         body = tickets.update_comment.call_args[0][2]
         assert "Spec done." in body
+        # Verify state was written to project_root.
+        state_file = tmp_path / ".a2sdlc" / "state.json"
+        assert state_file.exists()
 
     def test_review_approved_auto_merge(self) -> None:
         tickets = MagicMock()

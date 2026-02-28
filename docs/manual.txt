@@ -1,0 +1,181 @@
+a2sdlc — Manual
+================
+
+a2sdlc is an agentic SDLC pipeline. You create a ticket, the agent writes a
+spec, implements it, reviews it, and optionally merges it. Three boolean flags
+control how much autonomy the agent has.
+
+
+FLAGS
+-----
+
+  auto_spec       Default: false                              [PLANNED]
+                  false = agent asks you questions (Q&A rounds) before writing
+                          the spec. Uses brainstorming to explore requirements.
+                  true  = agent makes its best judgment. No questions asked.
+                          Good for well-defined tickets.
+
+  auto_proceed    Default: true                               [PLANNED]
+                  true  = after spec is complete, implementation starts
+                          automatically. No human approval needed.
+                  false = agent writes the spec and stops. You review it,
+                          then add the "proceed" label when ready.
+
+  auto_merge      Default: false                              [IMPLEMENTED]
+                  false = after review passes, PR waits for your approval.
+                  true  = after review passes, PR is squash-merged automatically.
+
+
+WHERE TO SET THEM
+-----------------
+
+Project defaults go in .a2sdlc/project.yaml:
+
+    pipeline:
+      auto_spec: false
+      auto_proceed: true
+      auto_merge: false
+    testing:
+      command: make test           # how to run tests (default: make test)
+
+Per-ticket overrides use issue labels (override project defaults):
+
+    auto-spec       sets auto_spec=true for this ticket       [PLANNED]
+    auto-merge      sets auto_merge=true for this ticket      [PLANNED]
+    spec-only       sets auto_proceed=false for this ticket   [PLANNED]
+
+Labels are read by the CI workflow and passed as CLI flags to the engine.
+The "agent" label starts the pipeline. Combine it with override labels.
+
+
+USE CASES
+---------
+
+UC1: Full autonomy
+  You want: ticket in, code merged, no human in the loop.
+  Labels: agent, auto-spec, auto-merge
+  Config: auto_spec=true, auto_proceed=true, auto_merge=true
+  Flow:  TICKET -> SPEC (self-answer) -> IMPLEMENT -> REVIEW -> MERGE
+
+UC2: Interactive spec, auto rest
+  You want: discuss requirements with the agent, then hands-off.
+  Labels: agent, auto-merge
+  Config: auto_spec=false, auto_proceed=true, auto_merge=true
+  Flow:  TICKET -> SPEC (Q&A rounds) -> IMPLEMENT -> REVIEW -> MERGE
+  Notes: Agent asks questions via issue comments. You reply. When spec is
+         complete, implementation starts automatically.
+
+UC3: Interactive spec, manual merge
+  You want: discuss requirements, review the PR yourself before merge.
+  Labels: agent
+  Config: auto_spec=false, auto_proceed=true, auto_merge=false
+  Flow:  TICKET -> SPEC (Q&A rounds) -> IMPLEMENT -> REVIEW -> [wait] -> MERGE
+  Notes: After review passes, you inspect the PR and merge manually.
+
+UC4: Spec only / full manual gates
+  You want: use the agent as a brainstorming partner. No code until you say so.
+  Labels: agent, spec-only
+  Config: auto_spec=false, auto_proceed=false, auto_merge=false
+  Flow:  TICKET -> SPEC (Q&A rounds) -> [stop]
+  Notes: Agent writes a spec and stops. You can come back later, add the
+         "proceed" label, and implementation starts. After review, you merge
+         manually. This is also the "full manual gates" workflow — you approve
+         at every step.
+
+UC5: Auto spec, manual merge
+  You want: fast spec, review the PR yourself.
+  Labels: agent, auto-spec
+  Config: auto_spec=true, auto_proceed=true, auto_merge=false
+  Flow:  TICKET -> SPEC (self-answer) -> IMPLEMENT -> REVIEW -> [wait] -> MERGE
+
+
+STAGES
+------
+
+  SPEC        Writes requirements + implementation plan.
+              In interactive mode: asks questions, waits for answers.
+              In auto mode: makes best guesses, produces spec immediately.
+              Output: spec document (by convention: docs/superpowers/specs/).
+
+  IMPLEMENT   Writes code, creates PR, runs tests.
+              Follows the spec from SPEC stage.
+              Uses TDD and subagent-driven development.
+              Output: pull request with passing tests.
+
+  REVIEW      Reviews the PR for correctness, security, quality.
+              Posts a GitHub PR review (APPROVE or REQUEST_CHANGES).
+              If changes requested: adds "needs-fix" label, the agent re-runs
+              the IMPLEMENT stage on the same branch, then REVIEW runs again.
+              This cycle repeats until the review passes.
+              Output: PR review.
+
+  MERGE       Squash-merges the PR and cleans up session files.
+              Deterministic, no AI involved.
+              Output: merged code on main.
+
+
+Q&A FLOW (interactive spec)
+---------------------------
+
+  1. Agent reads ticket, starts brainstorming.
+  2. Agent posts questions as an issue comment, adds "needs-input" label.
+  3. You reply with answers in a comment.
+  4. Agent resumes the session with your answers.
+  5. Repeat until spec is complete.
+  6. Agent posts the spec and removes "needs-input" label.
+
+
+LABELS REFERENCE
+----------------
+
+  Human-controlled (you add these):
+
+    agent           Start the pipeline. Required.
+    auto-spec       Skip Q&A, agent self-answers. Optional.         [PLANNED]
+    auto-merge      Merge automatically after review. Optional.     [PLANNED]
+    spec-only       Stop after spec, wait for "proceed". Optional.  [PLANNED]
+    proceed         Resume: move from spec to implement.
+
+  Agent-managed (do not add manually):
+
+    needs-input     Agent is waiting for your answers.
+    needs-fix       Review requested changes, agent is re-implementing.
+    agent-pr        PR is ready for agent review.
+    blocked         Merge conflict or unrecoverable error. Investigate manually.
+
+
+TICKET ADAPTERS
+---------------
+
+  github-issues   Tickets are GitHub issues. Default.
+  jira            Tickets are Jira issues. Requires jira_status_map config.
+
+Set in .a2sdlc/project.yaml:
+
+    adapters:
+      tickets: github-issues    # or: jira
+      code: github
+
+    # Required for Jira adapter — maps Jira statuses to pipeline stages:
+    jira_status_map:
+      "To Do": spec
+      "Spec Complete": implement
+      "In Review": review
+
+
+NOT YET IMPLEMENTED
+-------------------
+
+  Flags:
+  - auto_spec flag + auto-spec label override
+  - auto_proceed flag + spec-only label override
+  - auto-merge label override (project-level auto_merge works)
+
+  Features:
+  - Deploy stage (post-merge deployment trigger)
+  - Staleness revalidation (recheck spec after long delay before implement)
+  - Review-to-spec loop (review rejection goes back to spec, not just implement)
+  - Security review stage (SAST + AI interpretation)
+  - Multiple reviewers / approval quorum
+  - Cost budgets per ticket
+  - Ticket batching (consolidate similar tickets into one spec)

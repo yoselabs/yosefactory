@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from a2sdlc.config import StageConfig
-from a2sdlc.models import StageAction, StageStatus
+from a2sdlc.models import StageAction, StageName, StageStatus, Transition
 
 _DEFAULT_TOOLS = [
     "Bash",
@@ -19,9 +19,20 @@ _DEFAULT_TOOLS = [
 
 
 class ImplementStage:
-    name = "implement"
+    name = StageName.IMPLEMENT
     uses_ai = True
     valid_statuses = frozenset({StageStatus.COMPLETE, StageStatus.QUESTIONS})
+    transitions: dict[StageStatus, Transition] = {
+        StageStatus.COMPLETE: Transition(
+            next=StageName.REVIEW,
+            label="stage:review",
+            jira_status="In Review",
+        ),
+        StageStatus.QUESTIONS: Transition(
+            next=None,
+            label="needs-input",
+        ),
+    }
     config = StageConfig(
         name="implement",
         max_turns=120,
@@ -39,7 +50,7 @@ class ImplementStage:
         if status == StageStatus.COMPLETE:
             return StageAction(
                 comment=f"{comment_body}\n\n{cost_footer}",
-                write_state=("implement", "complete"),
+                write_state=(StageName.IMPLEMENT, StageStatus.COMPLETE),
             )
         if status == StageStatus.QUESTIONS:
             return StageAction(
