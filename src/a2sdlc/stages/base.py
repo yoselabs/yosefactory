@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from a2sdlc.config import StageConfig
-from a2sdlc.models import StageAction, StageName, StageStatus, Transition
+from a2sdlc.models import StageName, StageStatus, Transition
 
 
 class Stage(Protocol):
@@ -20,9 +20,3 @@ class Stage(Protocol):
     valid_statuses: frozenset[StageStatus]
     transitions: dict[StageStatus, Transition]
     uses_ai: bool
-
-    def resolve(
-        self, status: StageStatus, comment_body: str, cost_footer: str, **kwargs: object
-    ) -> StageAction:
-        """Given a status from the agent, return the action to take."""
-        ...

@@ -24,6 +24,8 @@ class StageConfig:
     max_turns: int = 25
     timeout_minutes: int = 60
     allowed_tools: list[str] = field(default_factory=list)
+    code_reviews: int = 0
+    max_review_cycles: int = 2
 
 
 # Env-var name → StageConfig field name + converter

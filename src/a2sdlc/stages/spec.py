@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from a2sdlc.config import StageConfig
-from a2sdlc.models import Gate, StageAction, StageName, StageStatus, Transition
+from a2sdlc.models import Gate, StageName, StageStatus, Transition
 
 _DEFAULT_TOOLS = [
     "Bash",
@@ -26,12 +26,9 @@ class SpecStage:
         StageStatus.COMPLETE: Transition(
             next=StageName.IMPLEMENT,
             gate=Gate.AUTO_PROCEED,
-            label="stage:implement",
-            jira_status="In Progress",
         ),
         StageStatus.QUESTIONS: Transition(
             next=None,
-            label="needs-input",
         ),
     }
     config = StageConfig(
@@ -40,24 +37,3 @@ class SpecStage:
         timeout_minutes=30,
         allowed_tools=list(_DEFAULT_TOOLS),
     )
-
-    def resolve(
-        self,
-        status: StageStatus,
-        comment_body: str,
-        cost_footer: str,
-        **kwargs: object,
-    ) -> StageAction:
-        if status == StageStatus.COMPLETE:
-            return StageAction(
-                comment=f"{comment_body}\n\n{cost_footer}",
-                write_state=(StageName.SPEC, StageStatus.COMPLETE),
-            )
-        if status == StageStatus.QUESTIONS:
-            return StageAction(
-                comment=f"{comment_body}\n\n{cost_footer}",
-                transition_to="needs-input",
-            )
-        return StageAction(
-            comment=f"⚠️ Unexpected status {status} for spec\n\n{cost_footer}",
-        )

@@ -50,8 +50,6 @@ class Transition:
 
     next: StageName | None
     gate: Gate | None = None
-    label: str = ""  # stage:X label to set on the issue
-    jira_status: str = ""  # Jira status to transition to
 
 
 # ── Structured output ─────────────────────────────────────────────
@@ -68,23 +66,9 @@ class BranchState(BaseModel):
 
     stage: StageName
     status: StageStatus
+    base_branch: str = "main"
+    review_cycles: int = 0
     last_updated: str
-
-
-@dataclass
-class StageAction:
-    """Deterministic action produced by the routing logic.
-
-    Pure data — no side effects. Executed separately by ``execute_action``.
-    """
-
-    comment: str
-    transition_to: str | None = None
-    write_state: tuple[StageName, StageStatus] | None = None
-    merge_pr: int | None = None
-    post_review: tuple[int, str, str] | None = (
-        None  # (pr, body, event: APPROVE|REQUEST_CHANGES)
-    )
 
 
 def extract_result(output: str) -> StageResult | None:

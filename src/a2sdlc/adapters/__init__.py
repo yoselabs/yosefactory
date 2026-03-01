@@ -12,8 +12,4 @@ def get_ticket_adapter(name: str, **kwargs: str) -> TicketAdapter:
 
 
 def get_code_adapter(name: str, **kwargs: str) -> CodeAdapter:
-    if name == "github":
-        from a2sdlc.adapters.github_code import GitHubCode
-
-        return GitHubCode(repo=kwargs["repo"])
     raise ValueError(f"Unknown code adapter: {name}")

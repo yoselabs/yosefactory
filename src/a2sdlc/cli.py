@@ -17,7 +17,6 @@ from a2sdlc.adapters import get_code_adapter, get_ticket_adapter
 from a2sdlc.config import load_config, load_project
 from a2sdlc.runner import run_stage
 from a2sdlc.stages import STAGES as _STAGE_REGISTRY
-from a2sdlc.verifier import verify_and_act
 
 logger = logging.getLogger("a2sdlc.cli")
 
@@ -260,18 +259,7 @@ async def orchestrate(args: argparse.Namespace) -> None:
         len(result.output),
     )
 
-    # 13. Call verify_and_act.
-    verify_and_act(
-        stage=stage,
-        result=result,
-        ticket_key=args.key,
-        tickets=tickets,
-        code=code,
-        project=project,
-        comment_id=comment_id,
-        pr_number=args.pr,
-        project_root=project_root,
-    )
+    # TODO: dispatch handles this
 
     # 14. Log completion.
     logger.info("Orchestration complete for %s/%s", args.key, stage)
