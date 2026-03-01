@@ -8,11 +8,12 @@ version = "0.1.0"
 description = "Agent-to-SDLC — AI agent pipeline engine for automated software development"
 requires-python = ">=3.12"
 dependencies = [
-    "jira>=3.10",
     "pyyaml>=6.0",
     "claude-agent-sdk>=0.1.50",
     "pydantic>=2.0",
     "rich>=14.0",
+    "PyGithub>=2.6",
+    "gitpython>=3.1",
 ]
 
 [project.scripts]
