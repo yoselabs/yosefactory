@@ -7,14 +7,13 @@ import logging
 import re
 
 from a2sdlc.adapters._gh import gh
-from a2sdlc.adapters.base import TicketAdapter
 
 STATUS_LABELS = frozenset(
     {"needs-input", "blocked", "needs-fix", "agent-pr", "supervised", "proceed"}
 )
 
 
-class GitHubTickets(TicketAdapter):
+class GitHubTickets:
     """TicketAdapter backed by GitHub Issues via the ``gh`` CLI."""
 
     def __init__(self, repo: str) -> None:

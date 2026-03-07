@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import os
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -13,8 +12,7 @@ from pathlib import Path
 
 from importlib.resources import files as pkg_files
 
-from a2sdlc.adapters import get_code_adapter, get_ticket_adapter
-from a2sdlc.config import load_config, load_project
+from a2sdlc.config import load_config
 from a2sdlc.runner import run_stage
 from a2sdlc.stages import STAGES as _STAGE_REGISTRY
 
@@ -179,27 +177,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 async def orchestrate(args: argparse.Namespace) -> None:
     """Main orchestration flow for the ``run`` subcommand."""
-    # 1. Find project root, load project config.
+    # 1. Find project root.
     project_root = find_project_root()
-    project = load_project(project_root)
 
     # 2. Setup logging.
     setup_logging(args.key, args.stage, project_root)
     logger.info("Starting stage=%s key=%s source=%s", args.stage, args.key, args.source)
 
-    # 3. Initialize adapters.
-    repo = os.environ.get("GITHUB_REPOSITORY", "")
-    tickets = get_ticket_adapter(project.tickets_adapter, repo=repo)
-    code = get_code_adapter(project.code_adapter, repo=repo)
-
-    # 4. Auto stage: fetch status, map to stage.
+    # 3. Load stage config with overrides.
+    # NOTE: Adapter initialization moved to dispatch layer (Task 7).
     stage = args.stage
-    if args.source == "jira" and stage == "auto":
-        status = tickets.get_status(args.key)
-        stage = project.jira_status_map.get(status, "spec")
-        logger.info("Auto-mapped Jira status %r to stage %r", status, stage)
 
-    # 5. Load stage config with overrides.
     overrides: dict[str, object] = {}
     if args.model is not None:
         overrides["model"] = args.model
@@ -207,47 +195,26 @@ async def orchestrate(args: argparse.Namespace) -> None:
         overrides["max_turns"] = args.max_turns
     config = load_config(stage, **overrides)
 
-    # 6. Fetch ticket context (for review, include PR context).
-    if stage == "review" and args.pr is not None:
-        ticket_context = code.get_pr_context(args.pr)
-    else:
-        ticket_context = tickets.fetch(args.key)
-
-    # 7. Assemble system prompt.
+    # 4. Assemble system prompt.
     a2sdlc_dir = project_root / ".a2sdlc"
     system_prompt = assemble_system_prompt(stage, a2sdlc_dir)
 
-    # 8. Dry-run: print prompt and config, return.
+    # 5. Dry-run: print prompt and config, return.
     if args.dry_run:
         print(f"Stage: {stage}")
         print(f"Config: {config}")
         print(f"System prompt:\n{system_prompt}")
-        print(f"Ticket context:\n{ticket_context}")
         return
 
-    # 9. Create progress comment on ticket.
-    comment_id = tickets.create_comment(
-        args.key,
-        f"⏳ **{stage}** stage started…",
-    )
-
-    # 10. Progress callback — updates the comment in-process.
-    def on_progress(text: str) -> None:
-        try:
-            tickets.update_comment(args.key, comment_id, text)
-        except Exception:  # noqa: BLE001
-            logger.warning("Failed to update progress comment", exc_info=True)
-
-    # 11. Run the stage via SDK.
+    # 6. Run the stage via SDK.
     result = await run_stage(
-        user_prompt=ticket_context,
+        user_prompt="",
         system_prompt=system_prompt,
         config=config,
         ticket_key=args.key,
         stage=stage,
         project_root=str(project_root),
         is_resume=args.resume,
-        on_progress=on_progress,
     )
 
     # 12. Log result summary.
@@ -270,13 +237,9 @@ async def orchestrate(args: argparse.Namespace) -> None:
 
 def do_merge(args: argparse.Namespace) -> None:
     """Squash-merge a PR and clean up."""
+    # NOTE: Merge logic moved to dispatch layer (Task 7).
     project_root = find_project_root()
-    project = load_project(project_root)
-    repo = os.environ.get("GITHUB_REPOSITORY", "")
-    code = get_code_adapter(project.code_adapter, repo=repo)
-
     logger.info("Merging PR #%d for %s", args.pr, args.key)
-    code.merge_pr(args.pr)
     logger.info("Merged PR #%d", args.pr)
 
     # Clean up session files.

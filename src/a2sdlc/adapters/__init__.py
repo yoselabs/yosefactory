@@ -1,15 +1,12 @@
+"""Adapter registry."""
+
 from __future__ import annotations
 
-from a2sdlc.adapters.base import CodeAdapter, TicketAdapter
+from a2sdlc.adapters.protocols import (
+    DispatchInput,
+    GitAdapter,
+    StageRunner,
+    TicketAdapter,
+)
 
-
-def get_ticket_adapter(name: str, **kwargs: str) -> TicketAdapter:
-    if name == "github-issues":
-        from a2sdlc.adapters.github_tickets import GitHubTickets
-
-        return GitHubTickets(repo=kwargs["repo"])
-    raise ValueError(f"Unknown ticket adapter: {name}")
-
-
-def get_code_adapter(name: str, **kwargs: str) -> CodeAdapter:
-    raise ValueError(f"Unknown code adapter: {name}")
+__all__ = ["DispatchInput", "GitAdapter", "StageRunner", "TicketAdapter"]
