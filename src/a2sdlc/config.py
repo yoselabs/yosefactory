@@ -40,6 +40,10 @@ def load_config(stage: str, **overrides: object) -> StageConfig:
 
     Stage defaults come from the stage module (e.g., stages/spec.py).
     Priority: CLI arg > env var > stage default.
+
+    .. deprecated::
+        Use ``load_stage_config`` with a ``ProjectConfig`` instead.
+        This function is kept for backward compatibility with the CLI.
     """
     from a2sdlc.stages import get_stage  # noqa: PLC0415
 
@@ -66,14 +70,14 @@ def get_session_id(ticket_key: str, stage: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"a2sdlc:{ticket_key}:{stage}"))
 
 
-# ── Project configuration ─────────────────────────────────────────────
+# ── Pipeline flags ────────────────────────────────────────────────────
 
 
 @dataclass(frozen=True)
 class PipelineFlags:
     """Boolean flags controlling pipeline autonomy.
 
-    Set via project.yaml defaults, overridden by issue labels or CLI flags.
+    Set via project config defaults, overridden by issue labels or CLI flags.
     """
 
     auto_spec: bool = False  # true = skip Q&A, agent self-answers
@@ -81,55 +85,120 @@ class PipelineFlags:
     auto_merge: bool = False  # true = merge after review passes
 
 
+# Label → (flag_name, value) mapping
+_LABEL_FLAG_MAP: dict[str, tuple[str, bool]] = {
+    "auto-spec": ("auto_spec", True),
+    "auto-merge": ("auto_merge", True),
+    "spec-only": ("auto_proceed", False),
+}
+
+
+def resolve_flags(defaults: PipelineFlags, labels: list[str]) -> PipelineFlags:
+    """Build a new PipelineFlags from defaults + label overrides.
+
+    Labels matching ``_LABEL_FLAG_MAP`` set the corresponding flag value.
+    Unknown labels are silently ignored.
+    """
+    patches: dict[str, bool] = {}
+    for label in labels:
+        if label in _LABEL_FLAG_MAP:
+            flag_name, value = _LABEL_FLAG_MAP[label]
+            patches[flag_name] = value
+    if not patches:
+        return defaults
+    return replace(defaults, **patches)
+
+
+# ── Project configuration ─────────────────────────────────────────────
+
+
 @dataclass
 class ProjectConfig:
-    """Per-repo settings read from .a2sdlc/project.yaml."""
+    """Per-repo settings read from ``a2sdlc.yaml`` at the project root."""
 
-    tickets_adapter: str = "github-issues"
-    code_adapter: str = "github"
-    test_command: str = "make test"
+    adapter: str = "github"
+    auto_spec: bool = False
+    auto_proceed: bool = True
     auto_merge: bool = False
     default_base: str = "main"
-    jira_status_map: dict[str, str] = field(default_factory=dict)
+    test_command: str = "make test"
+    stage_overrides: dict[str, dict[str, object]] = field(default_factory=dict)
 
-    def pipeline_flags(self, **overrides: bool) -> PipelineFlags:
-        """Build PipelineFlags from project defaults + overrides."""
+    def pipeline_flags(self) -> PipelineFlags:
+        """Build PipelineFlags from project config."""
         return PipelineFlags(
-            auto_spec=overrides.get("auto_spec", False),
-            auto_proceed=overrides.get("auto_proceed", True),
-            auto_merge=overrides.get("auto_merge", self.auto_merge),
+            auto_spec=self.auto_spec,
+            auto_proceed=self.auto_proceed,
+            auto_merge=self.auto_merge,
         )
 
 
-def load_project(project_root: Path) -> ProjectConfig:
-    """Load project config from *project_root*/.a2sdlc/project.yaml.
+def load_config_file(project_root: Path) -> ProjectConfig:
+    """Load project config from ``project_root/a2sdlc.yaml``.
 
     Returns defaults when the file is absent.
     """
-    config_path = project_root / ".a2sdlc" / "project.yaml"
+    config_path = project_root / "a2sdlc.yaml"
     if not config_path.exists():
-        logger.info("No project config at %s — using defaults", config_path)
+        logger.info("No config at %s — using defaults", config_path)
         return ProjectConfig()
 
     with config_path.open() as fh:
         data: dict[str, object] = yaml.safe_load(fh) or {}
 
-    logger.info("Loaded project config from %s: %s", config_path, data)
-    adapters = data.get("adapters", {})
-    testing = data.get("testing", {})
+    logger.info("Loaded config from %s", config_path)
+
     pipeline = data.get("pipeline", {})
     pipeline = pipeline if isinstance(pipeline, dict) else {}
+
+    stages_raw = data.get("stages", {})
+    stage_overrides: dict[str, dict[str, object]] = {}
+    if isinstance(stages_raw, dict):
+        for stage_name, stage_data in stages_raw.items():
+            if isinstance(stage_data, dict):
+                stage_overrides[str(stage_name)] = stage_data
+
     return ProjectConfig(
-        tickets_adapter=adapters.get("tickets", "github-issues")
-        if isinstance(adapters, dict)
-        else "github-issues",
-        code_adapter=adapters.get("code", "github")
-        if isinstance(adapters, dict)
-        else "github",
-        test_command=testing.get("command", "make test")
-        if isinstance(testing, dict)
-        else "make test",
+        adapter=str(data.get("adapter", "github")),
+        auto_spec=bool(pipeline.get("auto_spec", False)),
+        auto_proceed=bool(pipeline.get("auto_proceed", True)),
         auto_merge=bool(pipeline.get("auto_merge", False)),
         default_base=str(pipeline.get("default_base", "main")),
-        jira_status_map=data.get("jira_status_map", {}),
+        test_command=str(data.get("test_command", "make test")),
+        stage_overrides=stage_overrides,
     )
+
+
+def load_stage_config(stage_name: str, project: ProjectConfig) -> StageConfig:
+    """Return a StageConfig for ``stage_name``, merged with project overrides.
+
+    Base config comes from the stage class; project ``stage_overrides`` are
+    applied on top using ``dataclasses.replace``.
+    """
+    from a2sdlc.stages import get_stage  # noqa: PLC0415
+
+    stage_obj = get_stage(stage_name)
+    base = stage_obj.config
+
+    overrides = project.stage_overrides.get(stage_name, {})
+    if not overrides:
+        return base
+
+    # Only pass fields that actually exist on StageConfig.
+    import dataclasses  # noqa: PLC0415
+
+    valid_fields = {f.name for f in dataclasses.fields(StageConfig)}
+    patches = {k: v for k, v in overrides.items() if k in valid_fields}
+    return replace(base, **patches)
+
+
+# ── Backward-compat shim ──────────────────────────────────────────────
+
+
+def load_project(project_root: Path) -> ProjectConfig:
+    """Backward-compatible shim: delegates to ``load_config_file``.
+
+    .. deprecated::
+        Use ``load_config_file`` directly.
+    """
+    return load_config_file(project_root)

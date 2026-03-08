@@ -1,17 +1,17 @@
-"""Tests for a2sdlc.config — StageConfig, ProjectConfig, load functions."""
+"""Tests for a2sdlc configuration."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
-import yaml
 
 from a2sdlc.config import (
+    PipelineFlags,
     ProjectConfig,
-    get_session_id,
-    load_config,
-    load_project,
+    load_config_file,
+    resolve_flags,
+    load_stage_config,
 )
 from a2sdlc.stages import STAGES, get_stage
 
@@ -52,27 +52,119 @@ class TestStageRegistry:
             get_stage("nonexistent")
 
 
-# ── load_config overrides ─────────────────────────────────────────────
+# ── PipelineFlags ─────────────────────────────────────────────────────
 
 
 @pytest.mark.unit
-class TestLoadConfig:
-    def test_override_model(self) -> None:
-        cfg = load_config("spec", model="claude-opus-4")
-        assert cfg.model == "claude-opus-4"
-        assert cfg.max_turns == 35
+class TestPipelineFlags:
+    def test_defaults(self) -> None:
+        flags = PipelineFlags()
+        assert flags.auto_spec is False
+        assert flags.auto_proceed is True
+        assert flags.auto_merge is False
 
-    def test_override_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("MODEL", "claude-haiku-4")
-        monkeypatch.setenv("MAX_TURNS", "99")
-        cfg = load_config("spec")
-        assert cfg.model == "claude-haiku-4"
-        assert cfg.max_turns == 99
+    def test_frozen(self) -> None:
+        flags = PipelineFlags()
+        with pytest.raises(AttributeError):
+            flags.auto_spec = True  # type: ignore[misc]  # ty: ignore[invalid-assignment]
 
-    def test_cli_beats_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("MODEL", "from-env")
-        cfg = load_config("spec", model="from-cli")
-        assert cfg.model == "from-cli"
+
+# ── resolve_flags ─────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestResolveFlags:
+    def test_no_overrides(self) -> None:
+        flags = resolve_flags(PipelineFlags(), labels=["agent", "bug"])
+        assert flags == PipelineFlags()
+
+    def test_auto_spec_label(self) -> None:
+        flags = resolve_flags(PipelineFlags(), labels=["agent", "auto-spec"])
+        assert flags.auto_spec is True
+        assert flags.auto_proceed is True
+
+    def test_auto_merge_label(self) -> None:
+        flags = resolve_flags(PipelineFlags(), labels=["agent", "auto-merge"])
+        assert flags.auto_merge is True
+
+    def test_spec_only_label(self) -> None:
+        flags = resolve_flags(PipelineFlags(), labels=["agent", "spec-only"])
+        assert flags.auto_proceed is False
+
+    def test_combined_labels(self) -> None:
+        flags = resolve_flags(
+            PipelineFlags(), labels=["agent", "auto-spec", "auto-merge"]
+        )
+        assert flags.auto_spec is True
+        assert flags.auto_merge is True
+        assert flags.auto_proceed is True
+
+
+# ── load_config_file ──────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestLoadConfigFile:
+    def test_load_minimal(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "a2sdlc.yaml"
+        config_file.write_text("adapter: github\n")
+        config = load_config_file(tmp_path)
+        assert config.adapter == "github"
+        assert config.auto_merge is False
+        assert config.default_base == "main"
+
+    def test_load_full(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "a2sdlc.yaml"
+        config_file.write_text(
+            "adapter: github\n"
+            "pipeline:\n"
+            "  auto_merge: true\n"
+            "  default_base: develop\n"
+            "stages:\n"
+            "  implement:\n"
+            "    code_reviews: 3\n"
+            "    max_turns: 200\n"
+        )
+        config = load_config_file(tmp_path)
+        assert config.auto_merge is True
+        assert config.default_base == "develop"
+
+    def test_missing_file_returns_defaults(self, tmp_path: Path) -> None:
+        config = load_config_file(tmp_path)
+        assert config.adapter == "github"
+
+    def test_pipeline_flags_method(self) -> None:
+        config = ProjectConfig(auto_spec=True, auto_merge=True)
+        flags = config.pipeline_flags()
+        assert flags.auto_spec is True
+        assert flags.auto_merge is True
+        assert flags.auto_proceed is True
+
+
+# ── load_stage_config ─────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestLoadStageConfig:
+    def test_default_stage_config(self) -> None:
+        project = ProjectConfig()
+        config = load_stage_config("spec", project)
+        assert config.name == "spec"
+        assert config.max_turns == 35  # spec default
+
+    def test_override_from_project(self) -> None:
+        project = ProjectConfig(
+            stage_overrides={"implement": {"code_reviews": 3, "max_turns": 200}}
+        )
+        config = load_stage_config("implement", project)
+        assert config.code_reviews == 3
+        assert config.max_turns == 200
+        assert config.timeout_minutes == 60  # not overridden
+
+    def test_no_override(self) -> None:
+        project = ProjectConfig(stage_overrides={"implement": {"code_reviews": 5}})
+        config = load_stage_config("spec", project)
+        assert config.code_reviews == 0  # spec default, not overridden
 
 
 # ── get_session_id ───────────────────────────────────────────────────
@@ -81,47 +173,22 @@ class TestLoadConfig:
 @pytest.mark.unit
 class TestGetSessionId:
     def test_deterministic(self) -> None:
+        from a2sdlc.config import get_session_id
+
         sid1 = get_session_id("PROJ-42", "spec")
         sid2 = get_session_id("PROJ-42", "spec")
         assert sid1 == sid2
 
     def test_different_keys(self) -> None:
+        from a2sdlc.config import get_session_id
+
         sid1 = get_session_id("PROJ-1", "spec")
         sid2 = get_session_id("PROJ-2", "spec")
         assert sid1 != sid2
 
     def test_different_agents(self) -> None:
+        from a2sdlc.config import get_session_id
+
         sid1 = get_session_id("PROJ-1", "spec")
         sid2 = get_session_id("PROJ-1", "implement")
         assert sid1 != sid2
-
-
-# ── ProjectConfig ─────────────────────────────────────────────────────
-
-
-@pytest.mark.unit
-class TestProjectConfig:
-    def test_load_project_missing(self, tmp_path: Path) -> None:
-        cfg = load_project(tmp_path)
-        assert cfg == ProjectConfig()
-        assert cfg.tickets_adapter == "github-issues"
-        assert cfg.test_command == "make test"
-
-    def test_load_project_with_file(self, tmp_path: Path) -> None:
-        config_dir = tmp_path / ".a2sdlc"
-        config_dir.mkdir()
-        config_file = config_dir / "project.yaml"
-        config_file.write_text(
-            yaml.dump(
-                {
-                    "adapters": {"tickets": "jira", "code": "gitlab"},
-                    "testing": {"command": "pytest -x"},
-                    "jira_status_map": {"todo": "To Do", "done": "Done"},
-                }
-            )
-        )
-        cfg = load_project(tmp_path)
-        assert cfg.tickets_adapter == "jira"
-        assert cfg.code_adapter == "gitlab"
-        assert cfg.test_command == "pytest -x"
-        assert cfg.jira_status_map == {"todo": "To Do", "done": "Done"}
