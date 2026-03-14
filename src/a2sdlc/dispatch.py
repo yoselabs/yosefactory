@@ -105,7 +105,8 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
     comment_id = ctx.tickets.post_comment(
         event.key, f"⏳ **{event.stage.value}** started..."
     )
-    ctx.tickets.set_stage_label(event.key, event.stage)
+    # Don't re-set the stage label — it's already set (that's what triggered us).
+    # Re-setting would create a new issues.labeled event → infinite loop.
 
     # 6. Merge stage — deterministic, no AI
     if event.stage == StageName.MERGE:

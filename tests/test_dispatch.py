@@ -138,8 +138,7 @@ class TestDispatchSpecComplete:
         assert r.next_stage == StageName.IMPLEMENT
         assert r.blocked is False
 
-        # Should have set stage:spec (announce) then stage:implement (transition)
-        assert ("T-1", "stage:spec") in h.tickets.label_history
+        # Should have set stage:implement (transition), NOT re-set stage:spec
         assert ("T-1", "stage:implement") in h.tickets.label_history
 
     @pytest.mark.asyncio
@@ -157,8 +156,7 @@ class TestDispatchSpecComplete:
         assert r.next_stage is None
         assert r.blocked is False
 
-        # Only the announce label, not the transition label
-        assert ("T-1", "stage:spec") in h.tickets.label_history
+        # Gate closed — no transition label set at all
         assert ("T-1", "stage:implement") not in h.tickets.label_history
 
 
