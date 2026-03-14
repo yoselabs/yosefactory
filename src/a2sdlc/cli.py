@@ -1,24 +1,18 @@
-"""CLI entry point — orchestrate, prompt assembly, merge."""
+"""CLI entry point — dispatch only."""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
 import logging
-import shutil
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 from importlib.resources import files as pkg_files
 
-from a2sdlc.config import load_config
-from a2sdlc.runner import run_stage
-from a2sdlc.stages import STAGES as _STAGE_REGISTRY
-
 logger = logging.getLogger("a2sdlc.cli")
-
-_STAGES = tuple(_STAGE_REGISTRY.keys()) + ("auto",)
 
 
 # ── Logging ──────────────────────────────────────────────────────────
@@ -141,135 +135,98 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    # run subcommand
-    run_parser = sub.add_parser("run", help="Run a pipeline stage")
-    run_parser.add_argument("stage", choices=_STAGES, help="Pipeline stage to run")
-    run_parser.add_argument(
-        "--source", required=True, help="Ticket source adapter name"
+    # dispatch subcommand
+    dispatch_parser = sub.add_parser("dispatch", help="Run pipeline dispatch")
+    dispatch_parser.add_argument("--project-root", type=Path, default=None)
+    # Local dev overrides
+    dispatch_parser.add_argument(
+        "--stage", default=None, help="Override stage (local dev)"
     )
-    run_parser.add_argument("--key", required=True, help="Ticket key (e.g. PROJ-42)")
-    run_parser.add_argument("--pr", type=int, default=None, help="PR number")
-    run_parser.add_argument("--model", default=None, help="Override model")
-    run_parser.add_argument(
-        "--max-turns", type=int, default=None, help="Override max turns"
+    dispatch_parser.add_argument("--key", default=None, help="Override key (local dev)")
+    dispatch_parser.add_argument(
+        "--flag",
+        action="append",
+        default=[],
+        help="Override flags (e.g. --flag auto_spec)",
     )
-    run_parser.add_argument(
-        "--resume", action="store_true", help="Resume existing session"
-    )
-    run_parser.add_argument(
-        "--dry-run", action="store_true", help="Print prompt and config, do not run"
-    )
-
-    # merge subcommand
-    merge_parser = sub.add_parser("merge", help="Squash-merge a PR and clean up")
-    merge_parser.add_argument("--key", required=True, help="Ticket key")
-    merge_parser.add_argument("--pr", type=int, required=True, help="PR number")
-
-    # cleanup subcommand
-    cleanup_parser = sub.add_parser("cleanup", help="Clean up session files")
-    cleanup_parser.add_argument("--key", required=True, help="Ticket key to clean up")
 
     return parser.parse_args(argv)
-
-
-# ── Orchestration ────────────────────────────────────────────────────
-
-
-async def orchestrate(args: argparse.Namespace) -> None:
-    """Main orchestration flow for the ``run`` subcommand."""
-    # 1. Find project root.
-    project_root = find_project_root()
-
-    # 2. Setup logging.
-    setup_logging(args.key, args.stage, project_root)
-    logger.info("Starting stage=%s key=%s source=%s", args.stage, args.key, args.source)
-
-    # 3. Load stage config with overrides.
-    # NOTE: Adapter initialization moved to dispatch layer (Task 7).
-    stage = args.stage
-
-    overrides: dict[str, object] = {}
-    if args.model is not None:
-        overrides["model"] = args.model
-    if args.max_turns is not None:
-        overrides["max_turns"] = args.max_turns
-    config = load_config(stage, **overrides)
-
-    # 4. Assemble system prompt.
-    a2sdlc_dir = project_root / ".a2sdlc"
-    system_prompt = assemble_system_prompt(stage, a2sdlc_dir)
-
-    # 5. Dry-run: print prompt and config, return.
-    if args.dry_run:
-        print(f"Stage: {stage}")
-        print(f"Config: {config}")
-        print(f"System prompt:\n{system_prompt}")
-        return
-
-    # 6. Run the stage via SDK.
-    result = await run_stage(
-        user_prompt="",
-        system_prompt=system_prompt,
-        config=config,
-        ticket_key=args.key,
-        stage=stage,
-        project_root=str(project_root),
-        is_resume=args.resume,
-    )
-
-    # 12. Log result summary.
-    logger.info(
-        "Run complete: success=%s error=%s cost=$%.4f output_len=%d",
-        result.success,
-        result.error,
-        result.total_cost_usd,
-        len(result.output),
-    )
-
-    # TODO: dispatch handles this
-
-    # 14. Log completion.
-    logger.info("Orchestration complete for %s/%s", args.key, stage)
-
-
-# ── Merge ────────────────────────────────────────────────────────────
-
-
-def do_merge(args: argparse.Namespace) -> None:
-    """Squash-merge a PR and clean up."""
-    # NOTE: Merge logic moved to dispatch layer (Task 7).
-    project_root = find_project_root()
-    logger.info("Merging PR #%d for %s", args.pr, args.key)
-    logger.info("Merged PR #%d", args.pr)
-
-    # Clean up session files.
-    session_dir = project_root / ".a2sdlc" / "sessions" / args.key
-    if session_dir.exists():
-        shutil.rmtree(session_dir)
-        logger.info("Cleaned up sessions for %s", args.key)
 
 
 # ── Main ─────────────────────────────────────────────────────────────
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Dispatch to orchestrate, merge, or cleanup."""
+    """Entry point."""
     args = parse_args(argv)
 
-    if args.command == "cleanup":
-        project_root = find_project_root()
-        session_dir = project_root / ".a2sdlc" / "sessions" / args.key
-        if session_dir.exists():
-            shutil.rmtree(session_dir)
-            logger.info("Cleaned up sessions for %s", args.key)
-        return
+    if args.command == "dispatch":
+        project_root = args.project_root or find_project_root()
 
-    if args.command == "merge":
-        do_merge(args)
-        return
+        from a2sdlc.config import load_config_file  # noqa: PLC0415
+        from a2sdlc.dispatch import DispatchContext, dispatch  # noqa: PLC0415
 
-    # args.command == "run"
-    try:
-        asyncio.run(orchestrate(args))
-    except KeyboardInterrupt:
-        logger.info("Interrupted by user")
+        config = load_config_file(project_root)
+        setup_logging("dispatch", "dispatch", project_root)
+
+        # Construct adapters
+        if config.adapter == "github":
+            from a2sdlc.adapters.github import GitHubTicketAdapter  # noqa: PLC0415
+
+            token = os.environ.get("GITHUB_TOKEN", os.environ.get("GH_TOKEN", ""))
+            repo = os.environ.get("GITHUB_REPOSITORY", "")
+            tickets = GitHubTicketAdapter(repo_name=repo, token=token)
+        else:
+            logger.error("Unknown adapter: %s", config.adapter)
+            sys.exit(1)
+
+        from a2sdlc.adapters.git import LocalGitAdapter  # noqa: PLC0415
+        from a2sdlc.runner import run_stage as _run_stage  # noqa: PLC0415
+
+        git = LocalGitAdapter(project_root)
+
+        from collections.abc import Callable  # noqa: PLC0415
+
+        from a2sdlc.config import StageConfig  # noqa: PLC0415
+        from a2sdlc.models import StageName  # noqa: PLC0415
+        from a2sdlc.runner import RunResult  # noqa: PLC0415
+
+        class _SdkRunner:
+            async def run(
+                self,
+                user_prompt: str,
+                system_prompt: str,
+                config: StageConfig,
+                ticket_key: str,
+                stage: StageName,
+                project_root: str,
+                is_resume: bool = False,
+                on_progress: Callable[[str], None] | None = None,
+            ) -> RunResult:
+                return await _run_stage(
+                    user_prompt=user_prompt,
+                    system_prompt=system_prompt,
+                    config=config,
+                    ticket_key=ticket_key,
+                    stage=stage,
+                    project_root=project_root,
+                    is_resume=is_resume,
+                    on_progress=on_progress,
+                )
+
+        ctx = DispatchContext(
+            tickets=tickets,
+            git=git,
+            runner=_SdkRunner(),
+            config=config,
+            project_root=project_root,
+            logger=logging.getLogger("a2sdlc.dispatch"),
+        )
+
+        try:
+            result = asyncio.run(dispatch(ctx))
+            if result.blocked:
+                logger.error("Dispatch blocked: %s", result.error)
+                sys.exit(1)
+        except KeyboardInterrupt:
+            logger.info("Interrupted")

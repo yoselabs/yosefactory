@@ -1,16 +1,15 @@
-"""Tests for a2sdlc.cli — CLI entry point, orchestration, prompt assembly."""
+"""Tests for a2sdlc.cli — CLI entry point, prompt assembly, project root."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from a2sdlc.cli import (
     assemble_system_prompt,
     find_project_root,
-    main,
     parse_args,
     setup_logging,
 )
@@ -45,39 +44,35 @@ class TestFindProjectRoot:
 
 @pytest.mark.unit
 class TestParseArgs:
-    def test_parse_args_run(self) -> None:
+    def test_parse_args_dispatch(self) -> None:
+        args = parse_args(["dispatch"])
+        assert args.command == "dispatch"
+        assert args.project_root is None
+        assert args.stage is None
+        assert args.key is None
+        assert args.flag == []
+
+    def test_parse_args_dispatch_with_overrides(self) -> None:
         args = parse_args(
             [
-                "run",
+                "dispatch",
+                "--project-root",
+                "/tmp/proj",
+                "--stage",
                 "implement",
-                "--source",
-                "github-issues",
                 "--key",
                 "PROJ-42",
-                "--pr",
-                "7",
-                "--model",
-                "claude-opus-4",
-                "--max-turns",
-                "50",
-                "--resume",
-                "--dry-run",
+                "--flag",
+                "auto_spec",
+                "--flag",
+                "auto_merge",
             ]
         )
-        assert args.command == "run"
+        assert args.command == "dispatch"
+        assert args.project_root == Path("/tmp/proj")
         assert args.stage == "implement"
-        assert args.source == "github-issues"
         assert args.key == "PROJ-42"
-        assert args.pr == 7
-        assert args.model == "claude-opus-4"
-        assert args.max_turns == 50
-        assert args.resume is True
-        assert args.dry_run is True
-
-    def test_parse_args_cleanup(self) -> None:
-        args = parse_args(["cleanup", "--key", "PROJ-99"])
-        assert args.command == "cleanup"
-        assert args.key == "PROJ-99"
+        assert args.flag == ["auto_spec", "auto_merge"]
 
 
 # ── assemble_system_prompt ───────────────────────────────────────────
@@ -140,29 +135,3 @@ class TestSetupLogging:
         assert log_dir.exists()
         log_files = list(log_dir.glob("PROJ-1-implement-*.log"))
         assert len(log_files) == 1
-
-
-# ── main ─────────────────────────────────────────────────────────────
-
-
-@pytest.mark.unit
-class TestMain:
-    def test_main_cleanup(self, tmp_path: Path) -> None:
-        session_dir = tmp_path / ".a2sdlc" / "sessions" / "PROJ-1"
-        session_dir.mkdir(parents=True)
-        (session_dir / "data.jsonl").write_text("{}")
-
-        with patch("a2sdlc.cli.find_project_root", return_value=tmp_path):
-            main(["cleanup", "--key", "PROJ-1"])
-
-        assert not session_dir.exists()
-
-    def test_main_keyboard_interrupt(self) -> None:
-        with (
-            patch("a2sdlc.cli.parse_args") as mock_parse,
-            patch("a2sdlc.cli.orchestrate", side_effect=KeyboardInterrupt),
-            patch("a2sdlc.cli.find_project_root", return_value=Path("/tmp")),
-        ):
-            mock_parse.return_value = MagicMock(command="run")
-            # Should not raise
-            main(["run", "implement", "--source", "github-issues", "--key", "T-1"])
