@@ -99,7 +99,20 @@ class GitHubTicketAdapter:
 
         label_map = self._label_to_stage()
         if label_name in label_map:
-            return DispatchInput(key=issue_number, stage=label_map[label_name])
+            stage = label_map[label_name]
+            pr_number = None
+            # Review stage needs a PR — look it up from the agent branch.
+            if stage == StageName.REVIEW:
+                pr_number = self.get_pr_for_branch(f"agent/{issue_number}")
+                if pr_number is None:
+                    raise SkipEvent(
+                        f"stage:review on issue {issue_number} but no PR found for agent/{issue_number}"
+                    )
+                logger.info(
+                    "review triggered from issue label, resolved PR #%d",
+                    pr_number,
+                )
+            return DispatchInput(key=issue_number, stage=stage, pr_number=pr_number)
 
         raise SkipEvent(f"label {label_name!r} is not a stage label")
 

@@ -165,6 +165,56 @@ class TestParseEvent:
         assert result.pr_number == 42
         assert result.key == "42"
 
+    def test_issue_labeled_review_resolves_pr(self, tmp_path: Path) -> None:
+        """stage:review on an issue should look up the PR from agent branch."""
+        path = self._write_event(
+            tmp_path,
+            {
+                "action": "labeled",
+                "label": {"name": "stage:review"},
+                "issue": {"number": 16, "labels": [{"name": "stage:review"}]},
+                "sender": {"type": "User"},
+            },
+        )
+        adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
+        mock_repo = MagicMock()
+        mock_pr = MagicMock()
+        mock_pr.number = 42
+        mock_repo.get_pulls.return_value = [mock_pr]
+        adapter._repo = mock_repo
+
+        with patch.dict(
+            os.environ, {"GITHUB_EVENT_PATH": path, "GITHUB_EVENT_NAME": "issues"}
+        ):
+            result = adapter.parse_event()
+
+        assert result.stage == StageName.REVIEW
+        assert result.pr_number == 42
+        assert result.key == "16"
+        mock_repo.get_pulls.assert_called_once_with(state="open", head="agent/16")
+
+    def test_issue_labeled_review_no_pr_raises_skip(self, tmp_path: Path) -> None:
+        """stage:review on an issue with no PR should skip."""
+        path = self._write_event(
+            tmp_path,
+            {
+                "action": "labeled",
+                "label": {"name": "stage:review"},
+                "issue": {"number": 16, "labels": [{"name": "stage:review"}]},
+                "sender": {"type": "User"},
+            },
+        )
+        adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
+        mock_repo = MagicMock()
+        mock_repo.get_pulls.return_value = []
+        adapter._repo = mock_repo
+
+        with patch.dict(
+            os.environ, {"GITHUB_EVENT_PATH": path, "GITHUB_EVENT_NAME": "issues"}
+        ):
+            with pytest.raises(SkipEvent, match="no PR found"):
+                adapter.parse_event()
+
     def test_unknown_event_name_raises_skip(self, tmp_path: Path) -> None:
         path = self._write_event(
             tmp_path,
