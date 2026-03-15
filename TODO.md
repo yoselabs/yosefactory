@@ -19,6 +19,13 @@
 - [ ] Show per-milestone log sections: "Implementation + last N logs", "Review 1 + last N logs", "Review 2 + last N logs"
 - [ ] Final comment shows all milestones collapsed with status bar summary
 
+## Review Stage Comment Routing
+
+- [ ] Review stage posts full result on the PR, not the issue
+- [ ] Issue gets a short summary: "Review complete: APPROVED. See PR #N for details."
+- [ ] Avoids duplicate content (currently full review on both issue and PR)
+- [ ] Related: post_review fallback posts a comment when self-approval fails — this becomes the primary path until separate review identity is configured
+
 ## Review Stage Context
 
 - [ ] Review stage should receive original issue description (the requirement)
@@ -50,6 +57,13 @@
 - [ ] Retry/backoff on GitHub API calls (PyGithub)
 - [ ] Engine CI — run tests on push to agentic-eng/a2sdlc
 - [ ] Flow trace review step — walk through each UC end-to-end across systems before shipping
+
+## Status Block Robustness
+
+- [ ] Agent sometimes doesn't produce the `a2sdlc` status block (especially when confused or hitting limits)
+- [ ] Add heuristic fallback: if output mentions spec/plan files but no block → treat as complete
+- [ ] Add stronger prompt reinforcement: repeat the status block requirement at the end of the prompt
+- [ ] Log the full agent output when no status block found (for debugging)
 
 ## Logging
 

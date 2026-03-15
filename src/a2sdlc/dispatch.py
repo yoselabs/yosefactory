@@ -171,8 +171,12 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
         },
     )
 
-    # 11. Handle failure
+    # 11. Log full output to CI (always, regardless of success)
     cost_footer = format_cost(result)
+    print(f"::group::Agent output ({len(result.output)} chars)")  # noqa: T201
+    print(result.output)  # noqa: T201
+    print("::endgroup::")  # noqa: T201
+
     if not result.success:
         error_msg = (
             f"🚨 **{event.stage.value}** failed: `{result.error}`\n\n{cost_footer}"
