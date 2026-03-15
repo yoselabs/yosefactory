@@ -19,6 +19,14 @@
 - [ ] Show per-milestone log sections: "Implementation + last N logs", "Review 1 + last N logs", "Review 2 + last N logs"
 - [ ] Final comment shows all milestones collapsed with status bar summary
 
+## Review Stage Context
+
+- [ ] Review stage should receive original issue description (the requirement)
+- [ ] Review stage should receive the spec document (what was planned)
+- [ ] Review stage should receive issue comments (Q&A context from spec stage)
+- [ ] Reviewer checks "does this PR implement what was asked?" not just "is the code correct?"
+- [ ] Currently reviewing code quality in isolation — doesn't know the original intent
+
 ## Pipeline Features
 
 - [ ] `base:` parsing from ticket body (custom base branch per ticket)

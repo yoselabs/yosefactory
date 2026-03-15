@@ -70,9 +70,11 @@ class GitHubTicketAdapter:
         with open(event_path) as f:
             event = json.load(f)
 
+        # Only filter bot senders on comment events (prevents infinite comment loops).
+        # Bot label events are intentional — they're the stage chain trigger.
         sender_type = event.get("sender", {}).get("type", "")
-        if sender_type == "Bot":
-            raise SkipEvent("bot sender")
+        if event_name == "issue_comment" and sender_type == "Bot":
+            raise SkipEvent("bot comment sender")
 
         if event_name == "issues":
             return self._parse_issues_event(event)

@@ -91,18 +91,38 @@ class TestParseEvent:
             with pytest.raises(SkipEvent, match="not a stage label"):
                 adapter.parse_event()
 
-    def test_bot_sender_raises_skip(self, tmp_path: Path) -> None:
+    def test_bot_label_event_allowed(self, tmp_path: Path) -> None:
+        """Bot label events are intentional (stage chain). Should NOT skip."""
         path = self._write_event(
             tmp_path,
             {
                 "action": "labeled",
                 "label": {"name": "stage:spec"},
-                "issue": {"number": 15, "labels": []},
+                "issue": {"number": 15, "labels": [{"name": "stage:spec"}]},
                 "sender": {"type": "Bot"},
             },
         )
         with patch.dict(
             os.environ, {"GITHUB_EVENT_PATH": path, "GITHUB_EVENT_NAME": "issues"}
+        ):
+            adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
+            result = adapter.parse_event()
+        assert result.stage == StageName.SPEC
+
+    def test_bot_comment_raises_skip(self, tmp_path: Path) -> None:
+        """Bot comments should be skipped (prevents infinite loops)."""
+        path = self._write_event(
+            tmp_path,
+            {
+                "action": "created",
+                "issue": {"number": 15, "labels": [{"name": "needs-input"}]},
+                "sender": {"type": "Bot"},
+                "comment": {"body": "bot comment"},
+            },
+        )
+        with patch.dict(
+            os.environ,
+            {"GITHUB_EVENT_PATH": path, "GITHUB_EVENT_NAME": "issue_comment"},
         ):
             adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
             with pytest.raises(SkipEvent, match="bot"):
