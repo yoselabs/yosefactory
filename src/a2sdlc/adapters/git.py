@@ -27,8 +27,22 @@ class LocalGitAdapter:
         existing = [h for h in self._repo.heads if h.name == branch_name]
         if existing:
             self._repo.git.checkout(branch_name)
+            # Pull latest from remote (previous stage may have pushed commits).
+            try:
+                self._repo.git.pull("origin", branch_name, "--no-edit")
+            except GitCommandError:
+                # Branch may not exist on remote yet — that's fine.
+                logger.debug(
+                    "git.pull_branch_not_remote", extra={"branch": branch_name}
+                )
         else:
-            self._repo.git.checkout("-b", branch_name)
+            # Try to checkout from remote if it exists there.
+            try:
+                self._repo.git.fetch("origin", branch_name)
+                self._repo.git.checkout("-b", branch_name, f"origin/{branch_name}")
+            except GitCommandError:
+                # Branch doesn't exist anywhere — create fresh from current HEAD.
+                self._repo.git.checkout("-b", branch_name)
 
         try:
             self._repo.git.fetch("origin", base)

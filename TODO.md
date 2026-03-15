@@ -51,6 +51,13 @@
 - [ ] Engine CI — run tests on push to agentic-eng/a2sdlc
 - [ ] Flow trace review step — walk through each UC end-to-end across systems before shipping
 
+## Logging
+
+- [ ] JSON log formatter doesn't include `extra` fields — structured log data (reason, stage, cost) is invisible in CI
+- [ ] All `logger.info("dispatch.*", extra={...})` calls produce logs without the extra context
+- [ ] Fix: update `setup_logging()` formatter to include extra fields in JSON output
+- [ ] All warnings and errors from adapters should be visible in CI logs for tracing
+
 ## Known Issues
 
 - [ ] `git add -u` equivalent needed — commit_artifacts takes explicit paths but we might miss files the agent created
