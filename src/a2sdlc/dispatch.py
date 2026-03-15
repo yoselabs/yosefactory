@@ -177,11 +177,20 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
     print(result.output)  # noqa: T201
     print("::endgroup::")  # noqa: T201
 
+    # 11a. Always commit+push agent work (even on failure — preserves session/files)
+    def _commit_and_push() -> None:
+        try:
+            ctx.git.commit_artifacts("chore: stage artifacts", [".a2sdlc/", "docs/"])
+            ctx.git.push()
+        except Exception:  # noqa: BLE001
+            ctx.logger.warning("dispatch.commit_push_failed", exc_info=True)
+
     if not result.success:
         error_msg = (
             f"🚨 **{event.stage.value}** failed: `{result.error}`\n\n{cost_footer}"
         )
         ctx.tickets.update_comment(event.key, comment_id, error_msg)
+        _commit_and_push()
         ctx.tickets.set_blocked(event.key, result.error or "unknown")
         return DispatchResult(stage=event.stage, blocked=True, error=result.error)
 
@@ -194,6 +203,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
             f"\n\n{partial}\n\n{cost_footer}"
         )
         ctx.tickets.update_comment(event.key, comment_id, error_msg)
+        _commit_and_push()
         ctx.tickets.set_blocked(event.key, "no status block in output")
         return DispatchResult(stage=event.stage, blocked=True, error="no_status_block")
 
@@ -223,8 +233,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
         last_updated=datetime.now(timezone.utc).isoformat(),
     )
     ctx.git.write_state(new_state.model_dump_json(indent=2))
-    ctx.git.commit_artifacts("chore: stage artifacts", [".a2sdlc/state.json"])
-    ctx.git.push()
+    _commit_and_push()
 
     # 15. Transition
     next_st = next_stage(event.stage, stage_result.status, flags)
