@@ -216,10 +216,21 @@ class GitHubTicketAdapter:
     # ── PR operations ─────────────────────────────────────────────────
 
     def post_review(self, pr: int, body: str, event: str) -> None:
-        """Post a review (APPROVE or REQUEST_CHANGES) on a PR."""
+        """Post a review (APPROVE or REQUEST_CHANGES) on a PR.
+
+        Falls back to a comment if the review fails (e.g., can't approve own PR).
+        """
         pull = self._repo.get_pull(pr)
-        pull.create_review(body=body, event=event)
-        logger.debug("posted review %s on PR %s", event, pr)
+        try:
+            pull.create_review(body=body, event=event)
+            logger.debug("posted review %s on PR %s", event, pr)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "post_review failed for PR %s, falling back to comment",
+                pr,
+                exc_info=True,
+            )
+            pull.create_issue_comment(f"**Review: {event}**\n\n{body}")
 
     def get_pr_for_branch(self, branch: str) -> int | None:
         """Find an open PR by head branch name. Returns PR number or None."""
