@@ -59,7 +59,7 @@ if isinstance(msg, AssistantMessage):
         progress.total_cost_usd = cost
 ```
 
-Note: SDK `AssistantMessage.usage` reports cumulative totals (not deltas), so we overwrite rather than sum. If it turns out to be deltas, switch to `+=`. Verify empirically on first run.
+**Usage semantics assumption:** SDK `AssistantMessage.usage` likely reports cumulative totals (not deltas), so we overwrite rather than sum. This needs empirical verification — add a debug log on the first streaming `AssistantMessage` to confirm. If `AssistantMessage` does not carry `usage` at all, tokens/cost will show as "—" during progress and only populate in the final comment from `ResultMessage`. The status bar should handle this gracefully (display "—" for unknown values, never show misleading zeros).
 
 ### Context window size
 
@@ -98,7 +98,7 @@ def _extract_target(name: str, inp: dict) -> str:
     return ""
 ```
 
-`_shorten_path`: strip common prefixes (project root) to keep paths readable.
+`_shorten_path`: strip common prefixes (project root) to keep paths readable. Project root is stored on `ProgressState` (added as a field) and passed to `_extract_target` from the streaming handler.
 
 ### Skill invocation detection
 
@@ -185,7 +185,7 @@ Changes to dispatch:
 
 1. **Pass branch name and model to runner** — runner needs these for ProgressState. Add `branch` param to `run_stage()`. Model already available via `config.model`.
 
-2. **Replace `format_cost()`** — dispatch currently calls `format_cost(result)` for the footer. Replace with `format_final(result, progress_state)` which renders the full status bar + milestones.
+2. **Replace `format_cost()`** — dispatch currently calls `format_cost(result)` for the footer. Replace with `format_final(result, milestones)` which renders the status bar from `RunResult` (authoritative final values) and milestones from `ProgressState`. `format_final` must NOT read tokens/cost from `ProgressState` — only milestones.
 
 3. **on_progress callback** — already in place, just receives the new format.
 
@@ -223,8 +223,9 @@ This lets dispatch access milestones and status bar data for the final comment w
 |------|--------|
 | `src/a2sdlc/runner.py` | Add ProgressState, ToolEntry, Milestone dataclasses. Rewrite `format_progress()`. Add `format_final()`, `format_error()`. Update `_handle_assistant_message()` to populate ProgressState. Update `run_stage()` signature (add branch param). |
 | `src/a2sdlc/dispatch.py` | Pass branch to runner. Replace `format_cost()` usage with `format_final()`/`format_error()`. |
-| `src/a2sdlc/config.py` | Add `_CONTEXT_WINDOWS` dict. |
-| `tests/` | Update existing runner/dispatch tests for new signatures. Add tests for format_progress, format_final, tool target extraction. |
+| `src/a2sdlc/config.py` | Add `_CONTEXT_WINDOWS` dict (known limitation: will go stale when new models are added — acceptable for v1, query SDK model metadata in future). |
+| `src/a2sdlc/adapters/protocols.py` | Update `StageRunner.run()` signature to include `branch: str`. |
+| `tests/` | Update existing runner/dispatch tests for new signatures (including `FakeRunner`). Add tests for format_progress, format_final, tool target extraction. |
 
 ## Out of scope
 
@@ -232,3 +233,5 @@ This lets dispatch access milestones and status bar data for the final comment w
 - Timer-based updates decoupled from tool activity (item 10) — current 5s throttle is adequate
 - Turn exhaustion → stage:blocked (item 16) — pipeline logic, not display
 - Table format for CI/GH Actions logs — only affects the issue comment format
+- Agent text messages in progress logs (TODO item 11) — deferred, would add noise to the tool table; revisit when milestone sections land
+- Tool log "result" column (TODO item 18 mentions it) — deferred, result data is hard to extract meaningfully from streaming events
