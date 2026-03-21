@@ -12,6 +12,10 @@
 - [ ] Status bar — reused across all stages, shown in final comment as summary
 - [ ] Icons — scannable at a glance
 - [ ] Turn exhaustion — if max turns reached, dispatch marks stage as `stage:blocked`
+- [ ] Move progress updates from hook-based (on each tool call) to timer-based (every 3s) — decouple from SDK streaming events so updates happen reliably regardless of tool activity
+- [ ] Skill invocations should persist in the log (not disappear when overwritten) — e.g. "brainstorming invoked at 0:42", "writing-plans invoked at 2:15"
+- [ ] Tool calls should include timestamp (relative to stage start) — "0:42 Read src/app.py", "1:15 Bash: pytest"
+- [ ] Consider table format for tool log — columns: time, tool, target, result. Make it scannable and visually appealing
 
 ## Code Review Milestones
 
