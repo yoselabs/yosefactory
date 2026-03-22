@@ -59,6 +59,64 @@ class ProgressState:
     milestones: list[Milestone] = field(default_factory=list)
 
 
+# ── Context window sizes ───────────────────────────────────────────
+
+_CONTEXT_WINDOWS: dict[str, int] = {
+    "claude-sonnet-4-6": 200_000,
+    "claude-opus-4-6": 1_000_000,
+    "claude-haiku-4-5-20251001": 200_000,
+}
+
+
+def context_window_for_model(model: str) -> int | None:
+    """Return context window size for a model, or None if unknown."""
+    return _CONTEXT_WINDOWS.get(model)
+
+
+# ── Formatting helpers ─────────────────────────────────────────────
+
+
+def _shorten_path(path: str, project_root: str) -> str:
+    """Strip project root prefix from a file path."""
+    if not path:
+        return ""
+    if path.startswith(project_root):
+        shortened = path[len(project_root) :]
+        return shortened.lstrip("/")
+    return path
+
+
+def _extract_target(name: str, inp: dict, project_root: str) -> str:
+    """Extract a human-readable target from tool input."""
+    if name in ("Read", "Edit", "Write"):
+        path = inp.get("file_path", "")
+        return _shorten_path(path, project_root) if path else ""
+    if name in ("Glob", "Grep"):
+        return inp.get("pattern", "") or inp.get("path", "") or ""
+    if name == "Bash":
+        cmd = inp.get("command", "")
+        return f"`{cmd[:60]}`" if cmd else ""
+    if name == "Skill":
+        return inp.get("skill", "")
+    return ""
+
+
+def _format_duration(seconds: float) -> str:
+    """Format duration as human-readable string."""
+    s = int(seconds)
+    if s >= 3600:
+        return f"{s // 3600}h {(s % 3600) // 60}m"
+    if s >= 60:
+        return f"{s // 60}m {s % 60}s"
+    return f"{s}s"
+
+
+def _format_tokens(tokens: int) -> str:
+    """Format token count as compact string (e.g. '45k')."""
+    k = max(1, round(tokens / 1000)) if tokens > 0 else 0
+    return f"{k}k"
+
+
 @dataclass
 class RunResult:
     """Normalized result from a stage execution."""
