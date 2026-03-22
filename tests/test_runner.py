@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,7 +14,6 @@ from a2sdlc.runner import (
     RunResult,
     ToolEntry,
     format_cost,
-    format_progress,
     run_stage,
 )
 
@@ -107,33 +105,8 @@ class TestFormatCost:
         assert "$0.00" in text
 
 
-# ── format_progress ──────────────────────────────────────────────────
-
-
-@pytest.mark.unit
-class TestFormatProgress:
-    def test_short_log(self) -> None:
-        tools = ["Read", "Bash", "Write"]
-        start = time.time() - 30
-        text = format_progress("implement", tools, start)
-        assert "implement" in text
-        assert "- Read" in text
-        assert "- Write" in text
-        assert "Tools: 3" in text
-
-    def test_long_log_shows_last_10(self) -> None:
-        tools = [f"Tool-{i}" for i in range(25)]
-        start = time.time() - 60
-        text = format_progress("implement", tools, start)
-        assert "... and 15 earlier actions" in text
-        assert "Tool-24" in text
-        assert "Tool-14" not in text
-        assert "Tools: 25" in text
-
-    def test_empty_log(self) -> None:
-        text = format_progress("spec", [], time.time())
-        assert "spec" in text
-        assert "Tools: 0" in text
+# NOTE: TestFormatProgress, TestFormatFinal, TestFormatError live in
+# tests/test_runner_helpers.py alongside the other formatting tests.
 
 
 # ── RunResult ────────────────────────────────────────────────────────

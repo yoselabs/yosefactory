@@ -117,6 +117,62 @@ def _format_tokens(tokens: int) -> str:
     return f"{k}k"
 
 
+def _format_milestone_time(seconds: float) -> str:
+    """Format timestamp as M:SS for milestone display."""
+    m = int(seconds) // 60
+    s = int(seconds) % 60
+    return f"{m}:{s:02d}"
+
+
+def _format_status_bar(
+    *,
+    model: str,
+    branch: str,
+    input_tokens: int,
+    output_tokens: int,
+    total_cost_usd: float,
+    duration_seconds: float,
+    num_turns: int,
+    max_turns: int,
+    context_window: int | None,
+) -> str:
+    """Render a single-row markdown table status bar."""
+    if input_tokens == 0 and output_tokens == 0 and total_cost_usd == 0.0:
+        tokens_str = "\u2014"
+        cost_str = "\u2014"
+        context_str = "\u2014"
+    else:
+        tokens_str = (
+            f"{_format_tokens(input_tokens)} in / {_format_tokens(output_tokens)} out"
+        )
+        cost_str = f"${total_cost_usd:.2f}"
+        if context_window:
+            pct = int(input_tokens / context_window * 100)
+            ctx_k = context_window // 1000
+            context_str = f"{_format_tokens(input_tokens)}/{ctx_k}k ({pct}%)"
+        else:
+            context_str = _format_tokens(input_tokens)
+
+    duration_str = _format_duration(duration_seconds)
+    turns_str = f"{num_turns}/{max_turns}"
+
+    header = "| Model | Branch | Context | Cost | Tokens | Duration | Turns |"
+    sep = "|-------|--------|---------|------|--------|----------|-------|"
+    row = f"| {model} | {branch} | {context_str} | {cost_str} | {tokens_str} | {duration_str} | {turns_str} |"
+    return f"{header}\n{sep}\n{row}"
+
+
+def _format_milestones(milestones: list[Milestone]) -> str:
+    """Render milestones as persistent pin lines."""
+    if not milestones:
+        return ""
+    lines = []
+    for ms in milestones:
+        time_str = _format_milestone_time(ms.timestamp)
+        lines.append(f"\U0001f4cc {time_str} \u2014 {ms.label}")
+    return "\n".join(lines)
+
+
 @dataclass
 class RunResult:
     """Normalized result from a stage execution."""
@@ -147,19 +203,116 @@ def format_cost(result: RunResult) -> str:
 # ── Progress tracking ───────────────────────────────────────────────
 
 
-def format_progress(stage: str, tool_log: list[str], start_time: float) -> str:
-    """Build a progress comment body from tool log."""
-    elapsed = time.time() - start_time
-    elapsed_str = f"{elapsed:.0f}s"
-    total = len(tool_log)
+def format_progress(
+    stage: str, progress: ProgressState, *, elapsed: float | None = None
+) -> str:
+    """Build a progress comment body from ProgressState."""
+    if elapsed is None:
+        elapsed = time.time() - progress.start_time
 
-    lines = [f"⏳ **{stage}** in progress...\n"]
-    if total > 10:
-        lines.append(f"... and {total - 10} earlier actions\n")
-    for tool in tool_log[-10:]:
-        lines.append(f"- {tool}")
-    lines.append(f"\nTools: {total} | {elapsed_str} elapsed")
-    return "\n".join(lines)
+    parts = [f"\u23f3 **{stage}** in progress...\n"]
+
+    parts.append(
+        _format_status_bar(
+            model=progress.model,
+            branch=progress.branch,
+            input_tokens=progress.input_tokens,
+            output_tokens=progress.output_tokens,
+            total_cost_usd=progress.total_cost_usd,
+            duration_seconds=elapsed,
+            num_turns=progress.num_turns,
+            max_turns=progress.max_turns,
+            context_window=progress.context_window
+            if progress.context_window > 0
+            else None,
+        )
+    )
+
+    ms_text = _format_milestones(progress.milestones)
+    if ms_text:
+        parts.append(f"\n{ms_text}")
+
+    if progress.tool_log:
+        parts.append("")
+        header = "| Time | Tool | Target |"
+        sep = "|------|------|--------|"
+        parts.append(header)
+        parts.append(sep)
+        total = len(progress.tool_log)
+        if total > 10:
+            parts.append(f"| ... | | *({total - 10} earlier)* |")
+        for entry in progress.tool_log[-10:]:
+            t = _format_milestone_time(entry.timestamp)
+            parts.append(f"| {t} | {entry.name} | {entry.target} |")
+
+    return "\n".join(parts)
+
+
+def format_final(
+    result: RunResult,
+    *,
+    milestones: list[Milestone],
+    model: str,
+    branch: str,
+    max_turns: int,
+    context_window: int | None,
+) -> str:
+    """Build the final completion comment with status bar and milestones."""
+    body = result.output or ""
+    duration_s = result.duration_ms / 1000
+
+    bar = _format_status_bar(
+        model=model,
+        branch=branch,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        total_cost_usd=result.total_cost_usd,
+        duration_seconds=duration_s,
+        num_turns=result.num_turns,
+        max_turns=max_turns,
+        context_window=context_window,
+    )
+
+    parts = [body, "\n---\n", bar]
+
+    ms_text = _format_milestones(milestones)
+    if ms_text:
+        parts.append(f"\n{ms_text}")
+
+    return "\n".join(parts)
+
+
+def format_error(
+    result: RunResult,
+    *,
+    milestones: list[Milestone],
+    model: str,
+    branch: str,
+    max_turns: int,
+    context_window: int | None,
+) -> str:
+    """Build an error comment with status bar and milestones."""
+    duration_s = result.duration_ms / 1000
+
+    bar = _format_status_bar(
+        model=model,
+        branch=branch,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        total_cost_usd=result.total_cost_usd,
+        duration_seconds=duration_s,
+        num_turns=result.num_turns,
+        max_turns=max_turns,
+        context_window=context_window,
+    )
+
+    parts = [f"\U0001f6a8 **{result.error}**", "\n---\n", bar]
+
+    ms_text = _format_milestones(milestones)
+    if ms_text:
+        parts.append(f"\n{ms_text}")
+
+    return "\n".join(parts)
 
 
 # ── Main runner ─────────────────────────────────────────────────────
@@ -223,7 +376,17 @@ async def run_stage(
                     if on_progress and tool_log:
                         now = time.time()
                         if now - last_progress_update >= 5:
-                            on_progress(format_progress(stage, tool_log, start_time))
+                            # Temporary shim: build a minimal ProgressState
+                            # until Task 5 refactors run_stage fully.
+                            _ps = ProgressState(
+                                model=config.model,
+                                branch="",
+                                max_turns=config.max_turns,
+                                context_window=0,
+                                project_root=project_root,
+                                start_time=start_time,
+                            )
+                            on_progress(format_progress(stage, _ps))
                             last_progress_update = now
 
                 elif isinstance(msg, ResultMessage):
