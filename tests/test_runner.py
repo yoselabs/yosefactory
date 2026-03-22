@@ -9,7 +9,77 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from a2sdlc.config import StageConfig
-from a2sdlc.runner import RunResult, format_cost, format_progress, run_stage
+from a2sdlc.runner import (
+    Milestone,
+    ProgressState,
+    RunResult,
+    ToolEntry,
+    format_cost,
+    format_progress,
+    run_stage,
+)
+
+
+# ── ToolEntry ───────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestToolEntry:
+    def test_create(self) -> None:
+        entry = ToolEntry(timestamp=1.5, name="Read", target="src/app.py")
+        assert entry.timestamp == 1.5
+        assert entry.name == "Read"
+        assert entry.target == "src/app.py"
+
+
+# ── Milestone ───────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestMilestone:
+    def test_create(self) -> None:
+        ms = Milestone(timestamp=42.0, label="brainstorming invoked")
+        assert ms.timestamp == 42.0
+        assert ms.label == "brainstorming invoked"
+
+
+# ── ProgressState ───────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestProgressState:
+    def test_defaults(self) -> None:
+        ps = ProgressState(
+            model="claude-sonnet-4-6",
+            branch="feat/T-1",
+            max_turns=120,
+            context_window=200_000,
+            project_root="/tmp/test",
+            start_time=1000.0,
+        )
+        assert ps.input_tokens == 0
+        assert ps.output_tokens == 0
+        assert ps.total_cost_usd == 0.0
+        assert ps.num_turns == 0
+        assert ps.tool_log == []
+        assert ps.milestones == []
+
+    def test_accumulate(self) -> None:
+        ps = ProgressState(
+            model="claude-sonnet-4-6",
+            branch="feat/T-1",
+            max_turns=120,
+            context_window=200_000,
+            project_root="/tmp/test",
+            start_time=1000.0,
+        )
+        ps.tool_log.append(ToolEntry(timestamp=1.0, name="Read", target="f.py"))
+        ps.milestones.append(Milestone(timestamp=2.0, label="skill invoked"))
+        ps.input_tokens = 5000
+        ps.num_turns = 3
+        assert len(ps.tool_log) == 1
+        assert len(ps.milestones) == 1
+        assert ps.input_tokens == 5000
 
 
 # ── format_cost ──────────────────────────────────────────────────────

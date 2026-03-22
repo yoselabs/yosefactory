@@ -24,6 +24,42 @@ console = Console(force_terminal=True, force_interactive=False)
 
 
 @dataclass
+class ToolEntry:
+    """Single tool call with context."""
+
+    timestamp: float  # seconds since stage start
+    name: str  # tool name (Read, Edit, Bash, etc.)
+    target: str  # extracted target (file path, command preview, pattern)
+
+
+@dataclass
+class Milestone:
+    """Persistent event that survives comment overwrites."""
+
+    timestamp: float  # seconds since stage start
+    label: str  # e.g. "brainstorming invoked"
+
+
+@dataclass
+class ProgressState:
+    """Accumulated metrics during stage execution."""
+
+    model: str
+    branch: str
+    max_turns: int
+    context_window: int  # total context window size in tokens
+    project_root: str  # for shortening file paths in tool targets
+    start_time: float  # time.time() at stage start
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_cost_usd: float = 0.0
+    num_turns: int = 0
+    tool_log: list[ToolEntry] = field(default_factory=list)
+    milestones: list[Milestone] = field(default_factory=list)
+
+
+@dataclass
 class RunResult:
     """Normalized result from a stage execution."""
 
