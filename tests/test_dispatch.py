@@ -455,3 +455,44 @@ class TestDispatchState:
 
         state = json.loads(h.git.written_state[0])
         assert state["base_branch"] == "develop"
+
+
+@pytest.mark.unit
+class TestDispatchBranchPassing:
+    @pytest.mark.asyncio
+    async def test_passes_branch_to_runner(self) -> None:
+        h = _make(
+            event=DispatchInput(key="T-1", stage=StageName.SPEC),
+            result=_success_result("complete"),
+        )
+        await dispatch(h.ctx)
+
+        assert len(h.runner.calls) == 1
+        assert h.runner.calls[0].branch == "a2sdlc/T-1"
+
+
+@pytest.mark.unit
+class TestDispatchStatusBar:
+    @pytest.mark.asyncio
+    async def test_final_comment_has_status_bar(self) -> None:
+        h = _make(
+            event=DispatchInput(key="T-1", stage=StageName.SPEC),
+            result=_success_result("complete"),
+        )
+        await dispatch(h.ctx)
+
+        final_body = h.tickets.updated_comments[-1][2]
+        assert "| Model |" in final_body
+        assert "claude-sonnet-4-6" in final_body
+
+    @pytest.mark.asyncio
+    async def test_error_comment_has_status_bar(self) -> None:
+        h = _make(
+            event=DispatchInput(key="T-1", stage=StageName.SPEC),
+            result=_failure_result("timeout (60min)"),
+        )
+        await dispatch(h.ctx)
+
+        final_body = h.tickets.updated_comments[-1][2]
+        assert "🚨" in final_body
+        assert "| Model |" in final_body

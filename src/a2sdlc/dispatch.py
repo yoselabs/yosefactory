@@ -17,7 +17,7 @@ from a2sdlc.models import (
     extract_result,
     strip_status_block,
 )
-from a2sdlc.runner import format_cost
+from a2sdlc.runner import RunResult, format_error, format_final
 from a2sdlc.stages import next_stage
 
 
@@ -157,6 +157,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
         project_root=str(ctx.project_root),
         is_resume=event.is_resume,
         on_progress=on_progress,
+        branch=branch,
     )
 
     ctx.logger.info(
@@ -172,10 +173,13 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
     )
 
     # 11. Log full output to CI (always, regardless of success)
-    cost_footer = format_cost(result)
     print(f"::group::Agent output ({len(result.output)} chars)")  # noqa: T201
     print(result.output)  # noqa: T201
     print("::endgroup::")  # noqa: T201
+
+    # Build shared format kwargs for status bar
+    _milestones = result.progress.milestones if result.progress else []
+    _ctx_window = result.progress.context_window if result.progress else None
 
     # 11a. Always commit+push agent work (even on failure — preserves session/files)
     def _commit_and_push() -> None:
@@ -186,10 +190,15 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
             ctx.logger.warning("dispatch.commit_push_failed", exc_info=True)
 
     if not result.success:
-        error_msg = (
-            f"🚨 **{event.stage.value}** failed: `{result.error}`\n\n{cost_footer}"
+        error_comment = format_error(
+            result,
+            milestones=_milestones,
+            model=stage_config.model,
+            branch=branch,
+            max_turns=stage_config.max_turns,
+            context_window=_ctx_window,
         )
-        ctx.tickets.update_comment(event.key, comment_id, error_msg)
+        ctx.tickets.update_comment(event.key, comment_id, error_comment)
         _commit_and_push()
         ctx.tickets.set_blocked(event.key, result.error or "unknown")
         return DispatchResult(stage=event.stage, blocked=True, error=result.error)
@@ -198,9 +207,17 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
     stage_result = extract_result(result.output)
     if stage_result is None:
         partial = result.output[:2000]
+        no_status_footer = format_final(
+            result,
+            milestones=_milestones,
+            model=stage_config.model,
+            branch=branch,
+            max_turns=stage_config.max_turns,
+            context_window=_ctx_window,
+        )
         error_msg = (
             f"⚠️ No status block in **{event.stage.value}** output."
-            f"\n\n{partial}\n\n{cost_footer}"
+            f"\n\n{partial}\n\n{no_status_footer}"
         )
         ctx.tickets.update_comment(event.key, comment_id, error_msg)
         _commit_and_push()
@@ -208,9 +225,23 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
         return DispatchResult(stage=event.stage, blocked=True, error="no_status_block")
 
     comment_body = strip_status_block(result.output)
-    ctx.tickets.update_comment(
-        event.key, comment_id, f"{comment_body}\n\n{cost_footer}"
+    final_comment = format_final(
+        RunResult(
+            success=result.success,
+            output=comment_body,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            total_cost_usd=result.total_cost_usd,
+            duration_ms=result.duration_ms,
+            num_turns=result.num_turns,
+        ),
+        milestones=_milestones,
+        model=stage_config.model,
+        branch=branch,
+        max_turns=stage_config.max_turns,
+        context_window=_ctx_window,
     )
+    ctx.tickets.update_comment(event.key, comment_id, final_comment)
 
     # 13. Side effects — PR review
     if event.stage == StageName.REVIEW and event.pr_number:
