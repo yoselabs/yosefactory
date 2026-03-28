@@ -422,5 +422,35 @@ class TestRunStage:
         assert result.input_tokens == 2000
         assert result.output_tokens == 800
 
+    @pytest.mark.asyncio
+    async def test_progress_attached_to_result(self) -> None:
+        assistant_msg = _make_assistant_message(["Read", "Write"])
+        result_msg = _make_result_message(output="Done.")
+
+        async def mock_query(prompt: str, options: object):  # noqa: ANN201, ARG001
+            yield assistant_msg
+            yield result_msg
+
+        with (
+            patch("claude_agent_sdk.query", side_effect=mock_query),
+            patch("claude_agent_sdk.ClaudeAgentOptions"),
+        ):
+            result = await run_stage(
+                user_prompt="Build",
+                system_prompt="sys",
+                config=_make_config(),
+                ticket_key="PROJ-1",
+                stage="spec",
+                project_root="/tmp/test",
+                branch="feat/PROJ-1",
+            )
+
+        assert result.success is True
+        assert result.progress is not None
+        assert result.progress.branch == "feat/PROJ-1"
+        assert result.progress.model == "claude-sonnet-4-6"
+        assert result.progress.num_turns == 1
+        assert len(result.progress.tool_log) == 2
+
 
 # NOTE: TestHandleAssistantMessage lives in tests/test_runner_handler.py

@@ -98,25 +98,19 @@ def _extract_target(name: str, inp: dict, project_root: str) -> str:
 
 
 def _format_duration(seconds: float) -> str:
-    """Format duration as human-readable string."""
     s = int(seconds)
     if s >= 3600:
         return f"{s // 3600}h {(s % 3600) // 60}m"
-    if s >= 60:
-        return f"{s // 60}m {s % 60}s"
-    return f"{s}s"
+    return f"{s // 60}m {s % 60}s" if s >= 60 else f"{s}s"
 
 
 def _format_tokens(tokens: int) -> str:
-    """Format token count as compact string (e.g. '45k')."""
     k = max(1, round(tokens / 1000)) if tokens > 0 else 0
     return f"{k}k"
 
 
 def _format_milestone_time(seconds: float) -> str:
-    """Format timestamp as M:SS for milestone display."""
-    m = int(seconds) // 60
-    s = int(seconds) % 60
+    m, s = int(seconds) // 60, int(seconds) % 60
     return f"{m}:{s:02d}"
 
 
@@ -183,6 +177,7 @@ class RunResult:
     output_tokens: int = 0
     num_turns: int = 0
     tool_log: list[str] = field(default_factory=list)
+    progress: ProgressState | None = None
 
 
 def format_cost(result: RunResult) -> str:
@@ -263,12 +258,6 @@ def _result_status_bar(
     )
 
 
-def _append_milestones(parts: list[str], milestones: list[Milestone]) -> None:
-    ms_text = _format_milestones(milestones)
-    if ms_text:
-        parts.append(f"\n{ms_text}")
-
-
 def format_final(
     result: RunResult,
     *,
@@ -287,7 +276,9 @@ def format_final(
         context_window=context_window,
     )
     parts = [result.output or "", "\n---\n", bar]
-    _append_milestones(parts, milestones)
+    ms_text = _format_milestones(milestones)
+    if ms_text:
+        parts.append(f"\n{ms_text}")
     return "\n".join(parts)
 
 
@@ -309,7 +300,9 @@ def format_error(
         context_window=context_window,
     )
     parts = [f"\U0001f6a8 **{result.error}**", "\n---\n", bar]
-    _append_milestones(parts, milestones)
+    ms_text = _format_milestones(milestones)
+    if ms_text:
+        parts.append(f"\n{ms_text}")
     return "\n".join(parts)
 
 
@@ -322,6 +315,7 @@ async def run_stage(
     project_root: str,
     is_resume: bool = False,
     on_progress: Callable[[str], None] | None = None,
+    branch: str = "",
 ) -> RunResult:
     """Run a pipeline stage via Claude Agent SDK with streaming progress."""
     from claude_agent_sdk import ClaudeAgentOptions, query  # noqa: PLC0415
@@ -348,16 +342,15 @@ async def run_stage(
     else:
         options.session_id = sid
 
-    tool_log: list[str] = []
     start_time = time.time()
     last_progress_update = 0.0
     result_msg: ResultMessage | None = None
 
-    _ps = ProgressState(  # shim until Task 5 refactors run_stage
+    progress = ProgressState(
         model=config.model,
-        branch="",
+        branch=branch,
         max_turns=config.max_turns,
-        context_window=0,
+        context_window=context_window_for_model(config.model) or 0,
         project_root=project_root,
         start_time=start_time,
     )
@@ -370,14 +363,13 @@ async def run_stage(
             nonlocal result_msg, last_progress_update
             async for msg in query(prompt=user_prompt, options=options):
                 if isinstance(msg, AssistantMessage):
-                    _handle_assistant_message(msg, _ps)
+                    progress.num_turns += 1
+                    _handle_assistant_message(msg, progress)
 
-                    tool_log.clear()  # back-fill legacy tool_log
-                    tool_log.extend(e.name for e in _ps.tool_log)
-                    if on_progress and _ps.tool_log:  # throttled progress
+                    if on_progress and progress.tool_log:  # throttled progress
                         now = time.time()
                         if now - last_progress_update >= 5:
-                            on_progress(format_progress(stage, _ps))
+                            on_progress(format_progress(stage, progress))
                             last_progress_update = now
 
                 elif isinstance(msg, ResultMessage):
@@ -392,7 +384,8 @@ async def run_stage(
             success=False,
             error=f"timeout ({config.timeout_minutes}min)",
             session_id=sid,
-            tool_log=tool_log,
+            tool_log=[e.name for e in progress.tool_log],
+            progress=progress,
         )
     except Exception as exc:
         logger.exception("SDK error during stage %s", stage)
@@ -400,7 +393,8 @@ async def run_stage(
             success=False,
             error=f"sdk_error: {type(exc).__name__}: {exc}",
             session_id=sid,
-            tool_log=tool_log,
+            tool_log=[e.name for e in progress.tool_log],
+            progress=progress,
         )
 
     if result_msg is None:
@@ -408,7 +402,8 @@ async def run_stage(
             success=False,
             error="no_result",
             session_id=sid,
-            tool_log=tool_log,
+            tool_log=[e.name for e in progress.tool_log],
+            progress=progress,
         )
 
     usage = result_msg.usage or {}
@@ -426,7 +421,8 @@ async def run_stage(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         num_turns=getattr(result_msg, "num_turns", 0) or 0,
-        tool_log=tool_log,
+        tool_log=[e.name for e in progress.tool_log],
+        progress=progress,
     )
 
     logger.info(
@@ -434,7 +430,7 @@ async def run_stage(
         run_result.success,
         run_result.total_cost_usd,
         run_result.num_turns,
-        len(tool_log),
+        len(run_result.tool_log),
         len(run_result.output),
     )
     return run_result
