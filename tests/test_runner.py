@@ -181,6 +181,8 @@ def _make_assistant_message(tool_names: list[str] | None = None) -> MagicMock:
     from claude_agent_sdk.types import AssistantMessage, TextBlock, ToolUseBlock
 
     msg = MagicMock(spec=AssistantMessage)
+    msg.usage = None
+    msg.total_cost_usd = None
     blocks = []
     if tool_names:
         for name in tool_names:
@@ -419,3 +421,6 @@ class TestRunStage:
 
         assert result.input_tokens == 2000
         assert result.output_tokens == 800
+
+
+# NOTE: TestHandleAssistantMessage lives in tests/test_runner_handler.py

@@ -7,6 +7,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 from claude_agent_sdk.types import (
     AssistantMessage,
@@ -59,8 +60,6 @@ class ProgressState:
     milestones: list[Milestone] = field(default_factory=list)
 
 
-# ── Context window sizes ───────────────────────────────────────────
-
 _CONTEXT_WINDOWS: dict[str, int] = {
     "claude-sonnet-4-6": 200_000,
     "claude-opus-4-6": 1_000_000,
@@ -71,9 +70,6 @@ _CONTEXT_WINDOWS: dict[str, int] = {
 def context_window_for_model(model: str) -> int | None:
     """Return context window size for a model, or None if unknown."""
     return _CONTEXT_WINDOWS.get(model)
-
-
-# ── Formatting helpers ─────────────────────────────────────────────
 
 
 def _shorten_path(path: str, project_root: str) -> str:
@@ -200,9 +196,6 @@ def format_cost(result: RunResult) -> str:
     )
 
 
-# ── Progress tracking ───────────────────────────────────────────────
-
-
 def format_progress(
     stage: str, progress: ProgressState, *, elapsed: float | None = None
 ) -> str:
@@ -248,6 +241,34 @@ def format_progress(
     return "\n".join(parts)
 
 
+def _result_status_bar(
+    result: RunResult,
+    *,
+    model: str,
+    branch: str,
+    max_turns: int,
+    context_window: int | None,
+) -> str:
+    """Build a status bar from RunResult metadata."""
+    return _format_status_bar(
+        model=model,
+        branch=branch,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        total_cost_usd=result.total_cost_usd,
+        duration_seconds=result.duration_ms / 1000,
+        num_turns=result.num_turns,
+        max_turns=max_turns,
+        context_window=context_window,
+    )
+
+
+def _append_milestones(parts: list[str], milestones: list[Milestone]) -> None:
+    ms_text = _format_milestones(milestones)
+    if ms_text:
+        parts.append(f"\n{ms_text}")
+
+
 def format_final(
     result: RunResult,
     *,
@@ -258,27 +279,15 @@ def format_final(
     context_window: int | None,
 ) -> str:
     """Build the final completion comment with status bar and milestones."""
-    body = result.output or ""
-    duration_s = result.duration_ms / 1000
-
-    bar = _format_status_bar(
+    bar = _result_status_bar(
+        result,
         model=model,
         branch=branch,
-        input_tokens=result.input_tokens,
-        output_tokens=result.output_tokens,
-        total_cost_usd=result.total_cost_usd,
-        duration_seconds=duration_s,
-        num_turns=result.num_turns,
         max_turns=max_turns,
         context_window=context_window,
     )
-
-    parts = [body, "\n---\n", bar]
-
-    ms_text = _format_milestones(milestones)
-    if ms_text:
-        parts.append(f"\n{ms_text}")
-
+    parts = [result.output or "", "\n---\n", bar]
+    _append_milestones(parts, milestones)
     return "\n".join(parts)
 
 
@@ -292,30 +301,16 @@ def format_error(
     context_window: int | None,
 ) -> str:
     """Build an error comment with status bar and milestones."""
-    duration_s = result.duration_ms / 1000
-
-    bar = _format_status_bar(
+    bar = _result_status_bar(
+        result,
         model=model,
         branch=branch,
-        input_tokens=result.input_tokens,
-        output_tokens=result.output_tokens,
-        total_cost_usd=result.total_cost_usd,
-        duration_seconds=duration_s,
-        num_turns=result.num_turns,
         max_turns=max_turns,
         context_window=context_window,
     )
-
     parts = [f"\U0001f6a8 **{result.error}**", "\n---\n", bar]
-
-    ms_text = _format_milestones(milestones)
-    if ms_text:
-        parts.append(f"\n{ms_text}")
-
+    _append_milestones(parts, milestones)
     return "\n".join(parts)
-
-
-# ── Main runner ─────────────────────────────────────────────────────
 
 
 async def run_stage(
@@ -328,11 +323,7 @@ async def run_stage(
     is_resume: bool = False,
     on_progress: Callable[[str], None] | None = None,
 ) -> RunResult:
-    """Run a pipeline stage using the Claude Agent SDK.
-
-    Streams events in real-time, tracks tool calls for progress,
-    and returns a normalized result.
-    """
+    """Run a pipeline stage via Claude Agent SDK with streaming progress."""
     from claude_agent_sdk import ClaudeAgentOptions, query  # noqa: PLC0415
 
     sid = get_session_id(ticket_key, stage)
@@ -362,6 +353,15 @@ async def run_stage(
     last_progress_update = 0.0
     result_msg: ResultMessage | None = None
 
+    _ps = ProgressState(  # shim until Task 5 refactors run_stage
+        model=config.model,
+        branch="",
+        max_turns=config.max_turns,
+        context_window=0,
+        project_root=project_root,
+        start_time=start_time,
+    )
+
     timeout_seconds = config.timeout_minutes * 60
 
     try:
@@ -370,22 +370,13 @@ async def run_stage(
             nonlocal result_msg, last_progress_update
             async for msg in query(prompt=user_prompt, options=options):
                 if isinstance(msg, AssistantMessage):
-                    _handle_assistant_message(msg, tool_log)
+                    _handle_assistant_message(msg, _ps)
 
-                    # Throttled progress update
-                    if on_progress and tool_log:
+                    tool_log.clear()  # back-fill legacy tool_log
+                    tool_log.extend(e.name for e in _ps.tool_log)
+                    if on_progress and _ps.tool_log:  # throttled progress
                         now = time.time()
                         if now - last_progress_update >= 5:
-                            # Temporary shim: build a minimal ProgressState
-                            # until Task 5 refactors run_stage fully.
-                            _ps = ProgressState(
-                                model=config.model,
-                                branch="",
-                                max_turns=config.max_turns,
-                                context_window=0,
-                                project_root=project_root,
-                                start_time=start_time,
-                            )
                             on_progress(format_progress(stage, _ps))
                             last_progress_update = now
 
@@ -420,15 +411,9 @@ async def run_stage(
             tool_log=tool_log,
         )
 
-    # Extract usage data — usage may be a dict or an object.
     usage = result_msg.usage or {}
-    if isinstance(usage, dict):
-        input_tokens = usage.get("input_tokens", 0) or 0
-        output_tokens = usage.get("output_tokens", 0) or 0
-    else:
-        input_tokens = getattr(usage, "input_tokens", 0) or 0
-        output_tokens = getattr(usage, "output_tokens", 0) or 0
-
+    input_tokens = _get_tokens(usage, "input_tokens")
+    output_tokens = _get_tokens(usage, "output_tokens")
     success = getattr(result_msg, "subtype", "") == "success"
 
     run_result = RunResult(
@@ -455,22 +440,58 @@ async def run_stage(
     return run_result
 
 
-def _handle_assistant_message(msg: object, tool_log: list[str]) -> None:
-    """Extract tool call names from an AssistantMessage and log them."""
-    # SDK puts content directly on AssistantMessage, not on msg.message.
+def _get_tokens(usage: Any, field: str) -> int:
+    """Safely extract token count from usage (dict or object)."""
+    if isinstance(usage, dict):
+        return int(usage.get(field, 0) or 0)
+    return int(getattr(usage, field, 0) or 0)
+
+
+def _handle_assistant_message(
+    msg: object,
+    progress: ProgressState,
+    *,
+    current_time: float | None = None,
+) -> None:
+    """Extract tool calls, usage, and milestones from an AssistantMessage."""
+    now = current_time if current_time is not None else time.time()
+    elapsed = now - progress.start_time
+
+    # Accumulate usage
+    usage = getattr(msg, "usage", None)
+    if usage:
+        progress.input_tokens = _get_tokens(usage, "input_tokens")
+        progress.output_tokens = _get_tokens(usage, "output_tokens")
+    cost = getattr(msg, "total_cost_usd", None)
+    if cost:
+        progress.total_cost_usd = cost
+
+    # Process content blocks
     content = getattr(msg, "content", None)
     if not content:
         return
     for block in content:
         if isinstance(block, ToolUseBlock):
             name = block.name or "unknown"
-            tool_log.append(name)
+            inp = block.input if isinstance(block.input, dict) else {}
+            target = _extract_target(name, inp, progress.project_root)
+
+            progress.tool_log.append(
+                ToolEntry(timestamp=elapsed, name=name, target=target)
+            )
+
+            # Skill invocation → milestone
+            if name == "Skill":
+                skill_name = inp.get("skill", "unknown")
+                progress.milestones.append(
+                    Milestone(timestamp=elapsed, label=f"{skill_name} invoked")
+                )
+
             # GH Actions collapsible group
             print(f"::group::Tool: {name}")  # noqa: T201
             console.log(f"[cyan]Tool:[/cyan] {name}")
-            inp = block.input
-            if isinstance(inp, dict):
-                for k, v in inp.items():
+            if isinstance(block.input, dict):
+                for k, v in block.input.items():
                     console.log(f"  [dim]{k}:[/dim] {str(v)[:100]}")
             print("::endgroup::")  # noqa: T201
         elif isinstance(block, TextBlock):
