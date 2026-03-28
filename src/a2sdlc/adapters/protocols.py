@@ -69,4 +69,5 @@ class StageRunner(Protocol):
         project_root: str,
         is_resume: bool = False,
         on_progress: Callable[[str], None] | None = None,
+        branch: str = "",
     ) -> RunResult: ...

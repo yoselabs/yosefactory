@@ -151,6 +151,7 @@ class _RunnerCall:
     project_root: str
     is_resume: bool
     on_progress: Callable[[str], None] | None
+    branch: str
 
 
 class FakeRunner:
@@ -170,6 +171,7 @@ class FakeRunner:
         project_root: str,
         is_resume: bool = False,
         on_progress: Callable[[str], None] | None = None,
+        branch: str = "",
     ) -> RunResult:
         self.calls.append(
             _RunnerCall(
@@ -181,6 +183,7 @@ class FakeRunner:
                 project_root=project_root,
                 is_resume=is_resume,
                 on_progress=on_progress,
+                branch=branch,
             )
         )
         return self._result
