@@ -269,10 +269,19 @@ def format_final(
     body = (result.output or "").strip()
     while body.endswith("---") or body.endswith("___"):
         body = body[:-3].strip()
-    parts = [f"### \u2705 {stage}\n", body, "\n---\n", bar]
+
+    # Build collapsed stats block
+    stats_lines = [bar]
     ms_text = _format_milestones(milestones)
     if ms_text:
-        parts.append(f"\n{ms_text}")
+        stats_lines.append(f"\n{ms_text}")
+    stats_body = "\n".join(stats_lines)
+
+    parts = [
+        f"### \u2705 {stage}\n",
+        body,
+        f"\n\n<details>\n<summary>Stats</summary>\n\n{stats_body}\n\n</details>",
+    ]
     return "\n".join(parts)
 
 

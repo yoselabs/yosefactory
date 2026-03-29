@@ -315,7 +315,7 @@ class TestFormatFinal:
         )
         assert "### \u2705 implement" in text
         assert "Done implementing." in text
-        assert "---" in text
+        assert "<details>" in text
         assert "312k" in text
         assert "$2.14" in text
         assert "\U0001f4cc 0:42 \u2014 brainstorming invoked" in text
