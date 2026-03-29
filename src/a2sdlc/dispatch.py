@@ -260,6 +260,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
         partial = result.output[:2000]
         no_status_footer = format_final(
             result,
+            stage=event.stage.value,
             milestones=_milestones,
             model=stage_config.model,
             branch=branch,
@@ -286,6 +287,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
             duration_ms=result.duration_ms,
             num_turns=result.num_turns,
         ),
+        stage=event.stage.value,
         milestones=_milestones,
         model=stage_config.model,
         branch=branch,

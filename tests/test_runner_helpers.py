@@ -306,12 +306,14 @@ class TestFormatFinal:
         ]
         text = format_final(
             result,
+            stage="implement",
             milestones=milestones,
             model="claude-sonnet-4-6",
             branch="feat/T-1",
             max_turns=120,
             context_window=200_000,
         )
+        assert "### \u2705 implement" in text
         assert "Done implementing." in text
         assert "---" in text
         assert "312k" in text
@@ -330,12 +332,14 @@ class TestFormatFinal:
         )
         text = format_final(
             result,
+            stage="spec",
             milestones=[],
             model="claude-sonnet-4-6",
             branch="feat/T-1",
             max_turns=120,
             context_window=200_000,
         )
+        assert "### \u2705 spec" in text
         assert "Done." in text
         assert "\U0001f4cc" not in text
 

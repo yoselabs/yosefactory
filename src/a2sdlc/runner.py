@@ -250,6 +250,7 @@ def _result_status_bar(
 def format_final(
     result: RunResult,
     *,
+    stage: str,
     milestones: list[Milestone],
     model: str,
     branch: str,
@@ -264,7 +265,11 @@ def format_final(
         max_turns=max_turns,
         context_window=context_window,
     )
-    parts = [result.output or "", "\n---\n", bar]
+    # Strip trailing horizontal rules (--- or ___) left by the agent
+    body = (result.output or "").strip()
+    while body.endswith("---") or body.endswith("___"):
+        body = body[:-3].strip()
+    parts = [f"### \u2705 {stage}\n", body, "\n---\n", bar]
     ms_text = _format_milestones(milestones)
     if ms_text:
         parts.append(f"\n{ms_text}")
