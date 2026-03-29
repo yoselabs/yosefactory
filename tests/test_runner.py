@@ -13,7 +13,6 @@ from a2sdlc.runner import (
     ProgressState,
     RunResult,
     ToolEntry,
-    format_cost,
     run_stage,
 )
 
@@ -78,31 +77,6 @@ class TestProgressState:
         assert len(ps.tool_log) == 1
         assert len(ps.milestones) == 1
         assert ps.input_tokens == 5000
-
-
-# ── format_cost ──────────────────────────────────────────────────────
-
-
-@pytest.mark.unit
-class TestFormatCost:
-    def test_format_cost(self) -> None:
-        result = RunResult(
-            success=True,
-            input_tokens=12450,
-            output_tokens=3200,
-            total_cost_usd=0.08,
-            duration_ms=135000,
-        )
-        text = format_cost(result)
-        assert "12,450 in" in text
-        assert "3,200 out" in text
-        assert "$0.08" in text
-        assert "135s" in text
-
-    def test_format_cost_zero(self) -> None:
-        result = RunResult(success=False, error="timeout")
-        text = format_cost(result)
-        assert "$0.00" in text
 
 
 # NOTE: TestFormatProgress, TestFormatFinal, TestFormatError live in

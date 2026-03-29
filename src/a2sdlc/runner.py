@@ -180,17 +180,6 @@ class RunResult:
     progress: ProgressState | None = None
 
 
-def format_cost(result: RunResult) -> str:
-    """Format cost/usage footer for ticket comments."""
-    duration_s = result.duration_ms / 1000
-    return (
-        f"---\n"
-        f"Tokens: {result.input_tokens:,} in / {result.output_tokens:,} out"
-        f" | Cost: ${result.total_cost_usd:.2f}"
-        f" | Duration: {duration_s:.0f}s"
-    )
-
-
 def format_progress(
     stage: str, progress: ProgressState, *, elapsed: float | None = None
 ) -> str:
