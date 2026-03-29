@@ -204,8 +204,58 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
         ctx.tickets.set_blocked(event.key, result.error or "unknown")
         return DispatchResult(stage=event.stage, blocked=True, error=result.error)
 
-    # 12. Parse result
+    # 12. Parse result — with auto-approval retry on missing status block
     stage_result = extract_result(result.output)
+
+    max_auto_approvals = 3
+    auto_approval_count = 0
+    while (
+        stage_result is None
+        and flags.auto_spec
+        and auto_approval_count < max_auto_approvals
+    ):
+        auto_approval_count += 1
+        ctx.logger.warning(
+            "dispatch.auto_approve_retry",
+            extra={
+                "attempt": auto_approval_count,
+                "max": max_auto_approvals,
+                "stage": event.stage.value,
+                "reason": "no status block — resuming session with auto-approval",
+            },
+        )
+        ctx.tickets.update_comment(
+            event.key,
+            comment_id,
+            f"⏳ **{event.stage.value}** — auto-approving to continue "
+            f"(attempt {auto_approval_count}/{max_auto_approvals})...",
+        )
+
+        result = await ctx.runner.run(
+            user_prompt=(
+                "Approved — proceed. You are running autonomously in CI. "
+                "Do not ask further questions. Self-approve all decisions and "
+                "complete the stage. You MUST end your response with the "
+                "```a2sdlc status block."
+            ),
+            system_prompt=system_prompt,
+            config=stage_config,
+            ticket_key=event.key,
+            stage=event.stage,
+            project_root=str(ctx.project_root),
+            is_resume=True,
+            on_progress=on_progress,
+            branch=branch,
+        )
+
+        # Refresh milestones from the new result
+        _milestones = result.progress.milestones if result.progress else []
+        _ctx_window = result.progress.context_window if result.progress else None
+
+        if not result.success:
+            break
+        stage_result = extract_result(result.output)
+
     if stage_result is None:
         partial = result.output[:2000]
         no_status_footer = format_final(

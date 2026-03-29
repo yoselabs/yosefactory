@@ -85,7 +85,7 @@ class _Harness:
 
 def _make(
     event: DispatchInput | None = None,
-    result: RunResult | None = None,
+    result: RunResult | list[RunResult] | None = None,
     labels: list[str] | None = None,
     conflict: bool = False,
     state_json: str | None = None,
@@ -420,7 +420,7 @@ class TestDispatchAutoSpec:
         assert not system_prompt.startswith("IMPORTANT:")
 
 
-# ── State persistence ─────────��─────────────────────────────────────
+# ── State persistence ─────────────────────────────────────────────
 
 
 @pytest.mark.unit

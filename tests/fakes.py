@@ -155,10 +155,16 @@ class _RunnerCall:
 
 
 class FakeRunner:
-    """In-memory StageRunner for tests. Returns canned result."""
+    """In-memory StageRunner for tests. Returns canned result(s).
 
-    def __init__(self, result: RunResult) -> None:
-        self._result = result
+    Pass a single RunResult or a list of RunResult for sequential calls.
+    """
+
+    def __init__(self, result: RunResult | list[RunResult]) -> None:
+        self._results: list[RunResult] = (
+            [result] if isinstance(result, RunResult) else result
+        )
+        self._call_index = 0
         self.calls: list[_RunnerCall] = []
 
     async def run(
@@ -186,4 +192,6 @@ class FakeRunner:
                 branch=branch,
             )
         )
-        return self._result
+        idx = min(self._call_index, len(self._results) - 1)
+        self._call_index += 1
+        return self._results[idx]
