@@ -274,6 +274,7 @@ def format_final(
 def format_error(
     result: RunResult,
     *,
+    stage: str,
     milestones: list[Milestone],
     model: str,
     branch: str,
@@ -288,7 +289,7 @@ def format_error(
         max_turns=max_turns,
         context_window=context_window,
     )
-    parts = [f"\U0001f6a8 **{result.error}**", "\n---\n", bar]
+    parts = [f"\U0001f6a8 **{stage}** failed: `{result.error}`", "\n---\n", bar]
     ms_text = _format_milestones(milestones)
     if ms_text:
         parts.append(f"\n{ms_text}")

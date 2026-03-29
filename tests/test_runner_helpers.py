@@ -357,6 +357,7 @@ class TestFormatError:
         milestones = [Milestone(timestamp=42.0, label="brainstorming invoked")]
         text = format_error(
             result,
+            stage="implement",
             milestones=milestones,
             model="claude-sonnet-4-6",
             branch="feat/T-1",
@@ -364,6 +365,7 @@ class TestFormatError:
             context_window=200_000,
         )
         assert "\U0001f6a8" in text
+        assert "**implement** failed" in text
         assert "timeout (60min)" in text
         assert "claude-sonnet-4-6" in text
         assert "\U0001f4cc 0:42 \u2014 brainstorming invoked" in text
@@ -372,6 +374,7 @@ class TestFormatError:
         result = RunResult(success=False, error="sdk_error")
         text = format_error(
             result,
+            stage="spec",
             milestones=[],
             model="claude-sonnet-4-6",
             branch="feat/T-1",

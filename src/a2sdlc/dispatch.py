@@ -192,6 +192,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
     if not result.success:
         error_comment = format_error(
             result,
+            stage=event.stage.value,
             milestones=_milestones,
             model=stage_config.model,
             branch=branch,
