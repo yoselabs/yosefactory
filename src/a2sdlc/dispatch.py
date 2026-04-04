@@ -224,9 +224,8 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
                 "reason": "no status block — resuming session with auto-approval",
             },
         )
-        ctx.tickets.update_comment(
+        comment_id = ctx.tickets.post_comment(
             event.key,
-            comment_id,
             f"⏳ **{event.stage.value}** — auto-approving to continue "
             f"(attempt {auto_approval_count}/{max_auto_approvals})...",
         )
