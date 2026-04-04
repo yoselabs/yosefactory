@@ -213,6 +213,7 @@ def main(argv: list[str] | None = None) -> None:
                     project_root=project_root,
                     is_resume=is_resume,
                     on_progress=on_progress,
+                    branch=branch,
                 )
 
         ctx = DispatchContext(

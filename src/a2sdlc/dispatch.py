@@ -255,6 +255,22 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
             break
         stage_result = extract_result(result.output)
 
+    # If a retry failed (SDK error/timeout), route to the error path
+    if not result.success:
+        error_comment = format_error(
+            result,
+            stage=event.stage.value,
+            milestones=_milestones,
+            model=stage_config.model,
+            branch=branch,
+            max_turns=stage_config.max_turns,
+            context_window=_ctx_window,
+        )
+        ctx.tickets.update_comment(event.key, comment_id, error_comment)
+        _commit_and_push()
+        ctx.tickets.set_blocked(event.key, result.error or "unknown")
+        return DispatchResult(stage=event.stage, blocked=True, error=result.error)
+
     if stage_result is None:
         partial = result.output[:2000]
         no_status_footer = format_final(
