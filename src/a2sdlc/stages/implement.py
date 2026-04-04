@@ -32,7 +32,7 @@ class ImplementStage:
     }
     config = StageConfig(
         name="implement",
-        max_turns=120,
+        max_turns=150,
         timeout_minutes=60,
         allowed_tools=list(_DEFAULT_TOOLS),
     )

@@ -21,7 +21,7 @@ class ReviewStage:
     }
     config = StageConfig(
         name="review",
-        max_turns=25,
+        max_turns=150,
         timeout_minutes=20,
         allowed_tools=["Bash", "Read", "Glob", "Grep", "WebFetch", "WebSearch"],
     )

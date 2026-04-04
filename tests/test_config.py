@@ -28,14 +28,14 @@ class TestStageRegistry:
     def test_spec_config(self) -> None:
         stage = get_stage("spec")
         assert stage.config.model == "claude-sonnet-4-6"
-        assert stage.config.max_turns == 35
+        assert stage.config.max_turns == 150
         assert stage.config.timeout_minutes == 30
         assert "Bash" in stage.config.allowed_tools
         assert "Agent" in stage.config.allowed_tools
 
     def test_implement_config(self) -> None:
         stage = get_stage("implement")
-        assert stage.config.max_turns == 120
+        assert stage.config.max_turns == 150
         assert stage.config.timeout_minutes == 60
 
     def test_review_restricted_tools(self) -> None:
@@ -150,7 +150,7 @@ class TestLoadStageConfig:
         project = ProjectConfig()
         config = load_stage_config("spec", project)
         assert config.name == "spec"
-        assert config.max_turns == 35  # spec default
+        assert config.max_turns == 150  # spec default
 
     def test_override_from_project(self) -> None:
         project = ProjectConfig(

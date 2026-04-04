@@ -33,7 +33,7 @@ class SpecStage:
     }
     config = StageConfig(
         name="spec",
-        max_turns=35,
+        max_turns=150,
         timeout_minutes=30,
         allowed_tools=list(_DEFAULT_TOOLS),
     )
