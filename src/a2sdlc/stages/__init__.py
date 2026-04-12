@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Union
-
 from a2sdlc.models import GateConfig, GateMode, StageName, StageStatus
 from a2sdlc.stages.implement import ImplementStage
 from a2sdlc.stages.merge import MergeStage
 from a2sdlc.stages.review import ReviewStage
 from a2sdlc.stages.spec import SpecStage
 
-AnyStage = Union[SpecStage, ImplementStage, ReviewStage, MergeStage]
+AnyStage = SpecStage | ImplementStage | ReviewStage | MergeStage
 
 _ALL_STAGES: list[type[AnyStage]] = [SpecStage, ImplementStage, ReviewStage, MergeStage]
 

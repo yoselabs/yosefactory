@@ -57,16 +57,6 @@ class StageResult(BaseModel):
     questions: list[str] | None = None
 
 
-class BranchState(BaseModel):
-    """State file written to .a2sdlc/state.json on the agent branch."""
-
-    stage: StageName
-    status: StageStatus
-    base_branch: str = "main"
-    review_cycles: int = 0
-    last_updated: str
-
-
 class TicketState(BaseModel):
     """v2 state model for tracking ticket progress through the pipeline."""
 

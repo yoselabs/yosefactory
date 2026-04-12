@@ -23,7 +23,8 @@ from a2sdlc.models import (
     strip_status_block,
 )
 from a2sdlc.pr_lifecycle import PRLifecycle
-from a2sdlc.runner import RunResult, format_error, format_final
+from a2sdlc.progress import format_error, format_final
+from a2sdlc.runner import RunResult
 from a2sdlc.stage_executor import StageExecutor
 from a2sdlc.stages import next_stage
 from a2sdlc.state_manager import StateManager
@@ -268,6 +269,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
         duration_ms=exec_result.stats.duration_ms,
         num_turns=exec_result.stats.num_turns,
     )
+    _tasks = exec_result.progress.tasks if exec_result.progress else None
     final_comment = format_final(
         stats_result,
         stage=event.stage.value,
@@ -276,6 +278,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
         branch=branch,
         max_turns=stage_config.max_turns,
         context_window=_ctx_window,
+        tasks=_tasks,
     )
     comment.finalize(final_comment)
 

@@ -1,0 +1,222 @@
+"""Tests for progress comment rendering: format_progress, format_final, format_error."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from a2sdlc.progress import (
+    Milestone,
+    ProgressState,
+    ToolEntry,
+    format_error,
+    format_final,
+    format_progress,
+)
+from a2sdlc.runner import RunResult
+
+
+def _make_progress(**overrides: Any) -> ProgressState:
+    return ProgressState(
+        model=str(overrides.get("model", "claude-sonnet-4-6")),
+        branch=str(overrides.get("branch", "feat/T-1")),
+        max_turns=int(overrides.get("max_turns", 120)),
+        context_window=int(overrides.get("context_window", 200_000)),
+        project_root=str(overrides.get("project_root", "/tmp/test")),
+        start_time=float(overrides.get("start_time", 1000.0)),
+    )
+
+
+@pytest.mark.unit
+class TestFormatProgress:
+    def test_basic_progress(self) -> None:
+        ps = _make_progress()
+        ps.input_tokens = 45000
+        ps.output_tokens = 12000
+        ps.total_cost_usd = 0.72
+        ps.num_turns = 12
+        ps.tool_log = [
+            ToolEntry(timestamp=1.0, name="Read", target="src/app.py"),
+            ToolEntry(timestamp=2.0, name="Edit", target="src/app.py"),
+        ]
+        text = format_progress("implement", ps, elapsed=135.0)
+        assert "\u23f3 **implement** in progress..." in text
+        assert "claude-sonnet-4-6" in text
+        assert "feat/T-1" in text
+        assert "| Read | src/app.py |" in text
+        assert "| Edit | src/app.py |" in text
+
+    def test_tool_log_truncation(self) -> None:
+        ps = _make_progress()
+        ps.tool_log = [
+            ToolEntry(timestamp=float(i), name=f"Tool-{i}", target=f"f{i}.py")
+            for i in range(25)
+        ]
+        text = format_progress("implement", ps, elapsed=60.0)
+        assert "*(15 earlier)*" in text
+        assert "Tool-24" in text
+        assert "Tool-14" not in text
+
+    def test_milestones_shown(self) -> None:
+        ps = _make_progress()
+        ps.milestones = [Milestone(timestamp=42.0, label="brainstorming invoked")]
+        text = format_progress("spec", ps, elapsed=60.0)
+        assert "\U0001f4cc 0:42 \u2014 brainstorming invoked" in text
+
+    def test_empty_log(self) -> None:
+        ps = _make_progress()
+        text = format_progress("spec", ps, elapsed=0.0)
+        assert "\u23f3 **spec** in progress..." in text
+
+
+@pytest.mark.unit
+class TestFormatFinal:
+    def test_success(self) -> None:
+        result = RunResult(
+            success=True,
+            output="Done implementing.",
+            input_tokens=312000,
+            output_tokens=24000,
+            total_cost_usd=2.14,
+            duration_ms=522000,
+            num_turns=45,
+        )
+        milestones = [
+            Milestone(timestamp=42.0, label="brainstorming invoked"),
+            Milestone(timestamp=390.0, label="requesting-code-review invoked"),
+        ]
+        text = format_final(
+            result,
+            stage="implement",
+            milestones=milestones,
+            model="claude-sonnet-4-6",
+            branch="feat/T-1",
+            max_turns=120,
+            context_window=200_000,
+        )
+        assert "### \u2705 implement" in text
+        assert "Done implementing." in text
+        assert "<details>" in text
+        assert "312k" in text
+        assert "$2.14" in text
+        assert "\U0001f4cc 0:42 \u2014 brainstorming invoked" in text
+        assert "\U0001f4cc 6:30 \u2014 requesting-code-review invoked" in text
+
+    def test_tasks_in_details_block(self) -> None:
+        result = RunResult(
+            success=True,
+            output="All done.",
+            input_tokens=1000,
+            output_tokens=500,
+            total_cost_usd=0.10,
+            duration_ms=10000,
+            num_turns=5,
+        )
+        tasks = {
+            "Write unit tests": "completed",
+            "Implement feature": "completed",
+            "Run linter": "in_progress",
+            "Deploy": "pending",
+        }
+        text = format_final(
+            result,
+            stage="implement",
+            milestones=[],
+            model="claude-sonnet-4-6",
+            branch="feat/T-1",
+            max_turns=120,
+            context_window=200_000,
+            tasks=tasks,
+        )
+        assert "<details>" in text
+        assert "\u2705 Write unit tests" in text
+        assert "\u2705 Implement feature" in text
+        assert "\U0001f504 Run linter" in text
+        assert "\u2b1c Deploy" in text
+
+    def test_no_tasks_omits_section(self) -> None:
+        result = RunResult(
+            success=True,
+            output="Done.",
+            input_tokens=1000,
+            output_tokens=500,
+            total_cost_usd=0.05,
+            duration_ms=30000,
+        )
+        text = format_final(
+            result,
+            stage="spec",
+            milestones=[],
+            model="claude-sonnet-4-6",
+            branch="feat/T-1",
+            max_turns=120,
+            context_window=200_000,
+            tasks=None,
+        )
+        assert "\u2b1c" not in text
+
+    def test_no_milestones(self) -> None:
+        result = RunResult(
+            success=True,
+            output="Done.",
+            input_tokens=1000,
+            output_tokens=500,
+            total_cost_usd=0.05,
+            duration_ms=30000,
+        )
+        text = format_final(
+            result,
+            stage="spec",
+            milestones=[],
+            model="claude-sonnet-4-6",
+            branch="feat/T-1",
+            max_turns=120,
+            context_window=200_000,
+        )
+        assert "### \u2705 spec" in text
+        assert "Done." in text
+        assert "\U0001f4cc" not in text
+
+
+@pytest.mark.unit
+class TestFormatError:
+    def test_error_with_milestones(self) -> None:
+        result = RunResult(
+            success=False,
+            error="timeout (60min)",
+            input_tokens=100000,
+            output_tokens=5000,
+            total_cost_usd=0.50,
+            duration_ms=3600000,
+        )
+        milestones = [Milestone(timestamp=42.0, label="brainstorming invoked")]
+        text = format_error(
+            result,
+            stage="implement",
+            milestones=milestones,
+            model="claude-sonnet-4-6",
+            branch="feat/T-1",
+            max_turns=120,
+            context_window=200_000,
+        )
+        assert "\U0001f6a8" in text
+        assert "**implement** failed" in text
+        assert "timeout (60min)" in text
+        assert "claude-sonnet-4-6" in text
+        assert "\U0001f4cc 0:42 \u2014 brainstorming invoked" in text
+
+    def test_error_no_milestones(self) -> None:
+        result = RunResult(success=False, error="sdk_error")
+        text = format_error(
+            result,
+            stage="spec",
+            milestones=[],
+            model="claude-sonnet-4-6",
+            branch="feat/T-1",
+            max_turns=25,
+            context_window=200_000,
+        )
+        assert "\U0001f6a8" in text
+        assert "sdk_error" in text
+        assert "\U0001f4cc" not in text

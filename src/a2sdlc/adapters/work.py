@@ -10,7 +10,7 @@ from a2sdlc.models import StageName
 
 @dataclass
 class PipelineEvent:
-    """Normalized pipeline event. Replaces DispatchInput."""
+    """Normalized pipeline event from a work adapter."""
 
     key: str
     stage: StageName

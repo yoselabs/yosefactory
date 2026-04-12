@@ -9,7 +9,7 @@ import pytest
 
 from a2sdlc.config import get_session_id
 from a2sdlc.models import StageName, TicketState
-from tests.fakes_v2 import FakeGitAdapter
+from tests.fakes import FakeGitAdapter
 
 
 def _make_state(**kwargs: object) -> TicketState:

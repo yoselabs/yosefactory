@@ -1,59 +1,49 @@
-"""Fake adapter implementations for testing."""
+"""Fake adapter implementations for protocol tests.
+
+These test doubles implement WorkAdapter, ReviewAdapter, GitAdapter, and
+StageRunner. They faithfully record all calls so integration tests can
+assert on the exact sequence of adapter interactions.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from a2sdlc.adapters.protocols import DispatchInput
+from a2sdlc.adapters.review import Approval, ReviewComment
+from a2sdlc.adapters.work import PipelineEvent
 from a2sdlc.config import StageConfig
 from a2sdlc.exceptions import BlockedError, SkipEvent
 from a2sdlc.models import StageName
 from a2sdlc.runner import RunResult
 
 
-# ── FakeTicketAdapter ────────────────────────────────────────────────
+# ── FakeWorkAdapter ───────────────────────────────────────────────────
 
 
-class FakeTicketAdapter:
-    """In-memory TicketAdapter for tests. Records all calls."""
-
-    STAGE_LABELS: dict[StageName, str] = {
-        StageName.SPEC: "stage:spec",
-        StageName.IMPLEMENT: "stage:implement",
-        StageName.REVIEW: "stage:review",
-        StageName.MERGE: "stage:merge",
-    }
-    TRIGGER_LABEL: str = "agent"
-    BLOCKED_LABEL: str = "stage:blocked"
-    DONE_LABEL: str = "stage:done"
-    NEEDS_INPUT_LABEL: str = "needs-input"
-    PROCEED_LABEL: str = "proceed"
+class FakeWorkAdapter:
+    """In-memory WorkAdapter for tests. Records all calls."""
 
     def __init__(
         self,
-        event: DispatchInput | None = None,
+        event: PipelineEvent | None = None,
         ticket_body: str = "",
         labels: list[str] | None = None,
-        pr_for_branch: int | None = None,
     ) -> None:
         self._event = event
         self._ticket_body = ticket_body
         self._labels: list[str] = labels or []
-        self._pr_for_branch = pr_for_branch
 
         # Call records
-        self.comments: list[tuple[str, str]] = []  # (key, body)
-        self.updated_comments: list[
-            tuple[str, str, str]
-        ] = []  # (key, comment_id, body)
+        self.created_comments: list[str] = []  # comment IDs from begin_comment
+        self.progress_updates: list[tuple[str, str]] = []  # (comment_id, body)
+        self.finalized_comments: list[tuple[str, str]] = []  # (comment_id, body)
         self.label_history: list[tuple[str, str]] = []  # (key, label)
-        self.reviews: list[tuple[int, str, str]] = []  # (pr, body, event)
-        self.merged_prs: list[tuple[int, str]] = []  # (pr, method)
         self.blocked: list[tuple[str, str]] = []  # (key, reason)
+
         self._comment_counter = 0
 
-    def parse_event(self) -> DispatchInput:
+    def parse_event(self) -> PipelineEvent:
         if self._event is None:
             raise SkipEvent("no event configured")
         return self._event
@@ -64,37 +54,94 @@ class FakeTicketAdapter:
     def get_labels(self, key: str) -> list[str]:
         return list(self._labels)
 
-    def post_comment(self, key: str, body: str) -> str:
+    def begin_comment(self, key: str) -> str:
         self._comment_counter += 1
-        comment_id = str(self._comment_counter)
-        self.comments.append((key, body))
+        comment_id = f"comment-{self._comment_counter}"
+        self.created_comments.append(comment_id)
         return comment_id
 
-    def update_comment(self, key: str, comment_id: str, body: str) -> None:
-        self.updated_comments.append((key, comment_id, body))
+    def update_progress(self, comment_id: str, body: str) -> None:
+        self.progress_updates.append((comment_id, body))
+
+    def finalize_comment(self, comment_id: str, body: str) -> None:
+        self.finalized_comments.append((comment_id, body))
 
     def set_stage_label(self, key: str, stage: StageName) -> None:
-        label = self.STAGE_LABELS[stage]
-        self.label_history.append((key, label))
+        self.label_history.append((key, f"stage:{stage.value}"))
 
     def set_done_label(self, key: str) -> None:
-        self.label_history.append((key, self.DONE_LABEL))
+        self.label_history.append((key, "stage:done"))
 
     def set_blocked(self, key: str, reason: str) -> None:
         self.blocked.append((key, reason))
-        self.label_history.append((key, self.BLOCKED_LABEL))
 
-    def post_review(self, pr: int, body: str, event: str) -> None:
-        self.reviews.append((pr, body, event))
-
-    def get_pr_for_branch(self, branch: str) -> int | None:
-        return self._pr_for_branch
-
-    def merge_pr(self, pr: int, method: str = "squash") -> None:
-        self.merged_prs.append((pr, method))
+    def format_branch(self, ticket_key: str) -> str:
+        return f"agent/{ticket_key}"
 
 
-# ── FakeGitAdapter ───────────────────────────────────────────────────
+# ── FakeReviewAdapter ─────────────────────────────────────────────────
+
+
+class FakeReviewAdapter:
+    """In-memory ReviewAdapter for tests. Records all calls."""
+
+    def __init__(
+        self,
+        pr_diff: str = "",
+        pr_comments: list[ReviewComment] | None = None,
+        approvals: list[Approval] | None = None,
+    ) -> None:
+        self._pr_diff = pr_diff
+        self._pr_comments: list[ReviewComment] = pr_comments or []
+        self._approvals: list[Approval] = approvals or []
+
+        # Call records
+        self.created_prs: list[
+            tuple[str, str, str, str]
+        ] = []  # (branch, base, title, ticket_key)
+        self.updated_prs: list[
+            tuple[int, str, str, str]
+        ] = []  # (pr_number, title, body, ticket_key)
+        self.ready_prs: list[int] = []  # pr_numbers
+        self.merged_prs: list[tuple[int, str]] = []  # (pr_number, method)
+        self.reviews: list[tuple[int, str, str]] = []  # (pr_number, body, verdict)
+
+        self._pr_counter = 0
+
+    def create_draft_pr(
+        self,
+        branch: str,
+        base: str,
+        title: str,
+        ticket_key: str,
+    ) -> int:
+        self._pr_counter += 1
+        self.created_prs.append((branch, base, title, ticket_key))
+        return self._pr_counter
+
+    def update_pr(self, pr_number: int, title: str, body: str, ticket_key: str) -> None:
+        self.updated_prs.append((pr_number, title, body, ticket_key))
+
+    def mark_pr_ready(self, pr_number: int) -> None:
+        self.ready_prs.append(pr_number)
+
+    def merge_pr(self, pr_number: int, method: str = "squash") -> None:
+        self.merged_prs.append((pr_number, method))
+
+    def get_approvals(self, pr_number: int) -> list[Approval]:
+        return list(self._approvals)
+
+    def post_review(self, pr_number: int, body: str, verdict: str) -> None:
+        self.reviews.append((pr_number, body, verdict))
+
+    def read_pr_diff(self, pr_number: int) -> str:
+        return self._pr_diff
+
+    def read_pr_comments(self, pr_number: int) -> list[ReviewComment]:
+        return list(self._pr_comments)
+
+
+# ── FakeGitAdapter ────────────────────────────────────────────────────
 
 
 class FakeGitAdapter:
@@ -109,7 +156,7 @@ class FakeGitAdapter:
         self._conflict_on_setup = conflict_on_setup
 
         # Call records
-        self.branch_setups: list[tuple[str, str]] = []  # (key, base)
+        self.branch_setups: list[tuple[str, str]] = []  # (branch_name, base)
         self.commits: list[tuple[str, list[str]]] = []  # (message, paths)
         self.pushes: list[None] = []
         self.written_state: list[str] = []
@@ -138,11 +185,13 @@ class FakeGitAdapter:
         self._state_json = data
 
 
-# ── FakeRunner ───────────────────────────────────────────────────────
+# ── FakeRunner ────────────────────────────────────────────────────────
 
 
 @dataclass
-class _RunnerCall:
+class RunnerCall:
+    """Record of a single StageRunner.run() invocation."""
+
     user_prompt: str
     system_prompt: str
     config: StageConfig
@@ -165,7 +214,7 @@ class FakeRunner:
             [result] if isinstance(result, RunResult) else result
         )
         self._call_index = 0
-        self.calls: list[_RunnerCall] = []
+        self.calls: list[RunnerCall] = []
 
     async def run(
         self,
@@ -180,7 +229,7 @@ class FakeRunner:
         branch: str = "",
     ) -> RunResult:
         self.calls.append(
-            _RunnerCall(
+            RunnerCall(
                 user_prompt=user_prompt,
                 system_prompt=system_prompt,
                 config=config,

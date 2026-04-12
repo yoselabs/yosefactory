@@ -9,7 +9,7 @@ import pytest
 from a2sdlc.config import StageConfig
 from a2sdlc.models import StageName, StageStatus
 from a2sdlc.runner import RunResult
-from tests.fakes_v2 import FakeRunner
+from tests.fakes import FakeRunner
 
 
 # ── Helpers ──────────────────────────────────────────────────────────

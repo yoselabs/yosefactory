@@ -1,4 +1,4 @@
-"""Tests for GitHubTicketAdapter — parse_event, label management, PR ops."""
+"""Tests for GitHub adapters — GitHubWorkAdapter + GitHubReviewAdapter."""
 
 from __future__ import annotations
 
@@ -9,9 +9,20 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from a2sdlc.adapters.github import GitHubTicketAdapter
+from a2sdlc.adapters.github import GitHubWorkAdapter
 from a2sdlc.exceptions import SkipEvent
 from a2sdlc.models import StageName
+
+
+# ── Helpers ──────────────────────────────────────────────────────────
+
+
+def _make_work_adapter() -> GitHubWorkAdapter:
+    """Create a GitHubWorkAdapter with a mock repo."""
+    return GitHubWorkAdapter(repo=MagicMock())
+
+
+# ── WorkAdapter: parse_event ─────────────────────────────────────────
 
 
 @pytest.mark.unit
@@ -34,7 +45,7 @@ class TestParseEvent:
         with patch.dict(
             os.environ, {"GITHUB_EVENT_PATH": path, "GITHUB_EVENT_NAME": "issues"}
         ):
-            adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
+            adapter = _make_work_adapter()
             result = adapter.parse_event()
         assert result.stage == StageName.SPEC
         assert result.key == "15"
@@ -52,7 +63,7 @@ class TestParseEvent:
         with patch.dict(
             os.environ, {"GITHUB_EVENT_PATH": path, "GITHUB_EVENT_NAME": "issues"}
         ):
-            adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
+            adapter = _make_work_adapter()
             result = adapter.parse_event()
         assert result.stage == StageName.IMPLEMENT
         assert result.key == "15"
@@ -70,7 +81,7 @@ class TestParseEvent:
         with patch.dict(
             os.environ, {"GITHUB_EVENT_PATH": path, "GITHUB_EVENT_NAME": "issues"}
         ):
-            adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
+            adapter = _make_work_adapter()
             result = adapter.parse_event()
         assert result.stage == StageName.IMPLEMENT
 
@@ -87,7 +98,7 @@ class TestParseEvent:
         with patch.dict(
             os.environ, {"GITHUB_EVENT_PATH": path, "GITHUB_EVENT_NAME": "issues"}
         ):
-            adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
+            adapter = _make_work_adapter()
             with pytest.raises(SkipEvent, match="not a stage label"):
                 adapter.parse_event()
 
@@ -105,7 +116,7 @@ class TestParseEvent:
         with patch.dict(
             os.environ, {"GITHUB_EVENT_PATH": path, "GITHUB_EVENT_NAME": "issues"}
         ):
-            adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
+            adapter = _make_work_adapter()
             result = adapter.parse_event()
         assert result.stage == StageName.SPEC
 
@@ -124,7 +135,7 @@ class TestParseEvent:
             os.environ,
             {"GITHUB_EVENT_PATH": path, "GITHUB_EVENT_NAME": "issue_comment"},
         ):
-            adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
+            adapter = _make_work_adapter()
             with pytest.raises(SkipEvent, match="bot"):
                 adapter.parse_event()
 
@@ -142,11 +153,11 @@ class TestParseEvent:
             os.environ,
             {"GITHUB_EVENT_PATH": path, "GITHUB_EVENT_NAME": "issue_comment"},
         ):
-            adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
+            adapter = _make_work_adapter()
             result = adapter.parse_event()
         assert result.is_resume is True
         assert result.key == "15"
-        assert result.stage == StageName.SPEC  # default resume stage
+        assert result.stage == StageName.SPEC
 
     def test_issue_comment_without_needs_input_skips(self, tmp_path: Path) -> None:
         path = self._write_event(
@@ -162,7 +173,7 @@ class TestParseEvent:
             os.environ,
             {"GITHUB_EVENT_PATH": path, "GITHUB_EVENT_NAME": "issue_comment"},
         ):
-            adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
+            adapter = _make_work_adapter()
             with pytest.raises(SkipEvent, match="needs-input"):
                 adapter.parse_event()
 
@@ -179,7 +190,7 @@ class TestParseEvent:
         with patch.dict(
             os.environ, {"GITHUB_EVENT_PATH": path, "GITHUB_EVENT_NAME": "pull_request"}
         ):
-            adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
+            adapter = _make_work_adapter()
             result = adapter.parse_event()
         assert result.stage == StageName.REVIEW
         assert result.pr_number == 42
@@ -196,7 +207,7 @@ class TestParseEvent:
                 "sender": {"type": "User"},
             },
         )
-        adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
+        adapter = _make_work_adapter()
         mock_repo = MagicMock()
         mock_pr = MagicMock()
         mock_pr.number = 42
@@ -224,7 +235,7 @@ class TestParseEvent:
                 "sender": {"type": "User"},
             },
         )
-        adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
+        adapter = _make_work_adapter()
         mock_repo = MagicMock()
         mock_repo.get_pulls.return_value = []
         adapter._repo = mock_repo
@@ -246,7 +257,7 @@ class TestParseEvent:
         with patch.dict(
             os.environ, {"GITHUB_EVENT_PATH": path, "GITHUB_EVENT_NAME": "push"}
         ):
-            adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
+            adapter = _make_work_adapter()
             with pytest.raises(SkipEvent):
                 adapter.parse_event()
 
@@ -263,15 +274,18 @@ class TestParseEvent:
         with patch.dict(
             os.environ, {"GITHUB_EVENT_PATH": path, "GITHUB_EVENT_NAME": "issues"}
         ):
-            adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
+            adapter = _make_work_adapter()
             with pytest.raises(SkipEvent, match="action"):
                 adapter.parse_event()
+
+
+# ── WorkAdapter: labels ──────────────────────────────────────────────
 
 
 @pytest.mark.unit
 class TestSetStageLabel:
     def test_removes_old_sets_new(self) -> None:
-        adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
+        adapter = _make_work_adapter()
         mock_repo = MagicMock()
         mock_issue = MagicMock()
         old_label = MagicMock()
@@ -288,7 +302,7 @@ class TestSetStageLabel:
         mock_issue.add_to_labels.assert_called_once_with("stage:implement")
 
     def test_no_old_stage_labels(self) -> None:
-        adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
+        adapter = _make_work_adapter()
         mock_repo = MagicMock()
         mock_issue = MagicMock()
         bug_label = MagicMock()
@@ -306,7 +320,7 @@ class TestSetStageLabel:
 @pytest.mark.unit
 class TestSetDoneLabel:
     def test_adds_done_label(self) -> None:
-        adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
+        adapter = _make_work_adapter()
         mock_repo = MagicMock()
         mock_issue = MagicMock()
         mock_issue.labels = []
@@ -321,7 +335,7 @@ class TestSetDoneLabel:
 @pytest.mark.unit
 class TestSetBlocked:
     def test_adds_label_and_comment(self) -> None:
-        adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
+        adapter = _make_work_adapter()
         mock_repo = MagicMock()
         mock_issue = MagicMock()
         mock_repo.get_issue.return_value = mock_issue
@@ -335,10 +349,13 @@ class TestSetBlocked:
         assert "merge conflict" in body
 
 
+# ── WorkAdapter: comments ────────────────────────────────────────────
+
+
 @pytest.mark.unit
-class TestPostComment:
+class TestBeginComment:
     def test_returns_comment_id(self) -> None:
-        adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
+        adapter = _make_work_adapter()
         mock_repo = MagicMock()
         mock_issue = MagicMock()
         mock_comment = MagicMock()
@@ -347,34 +364,53 @@ class TestPostComment:
         mock_repo.get_issue.return_value = mock_issue
         adapter._repo = mock_repo
 
-        result = adapter.post_comment("15", "hello")
+        result = adapter.begin_comment("15")
 
-        mock_issue.create_comment.assert_called_once_with("hello")
+        mock_issue.create_comment.assert_called_once()
         assert result == "99"
 
 
 @pytest.mark.unit
-class TestUpdateComment:
-    def test_edits_comment(self) -> None:
-        adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
+class TestUpdateProgress:
+    def test_patches_comment_by_id(self) -> None:
+        adapter = _make_work_adapter()
         mock_repo = MagicMock()
-        mock_issue = MagicMock()
-        mock_comment = MagicMock()
-        mock_issue.get_comment.return_value = mock_comment
-        mock_repo.get_issue.return_value = mock_issue
+        mock_repo.url = "https://api.github.com/repos/owner/repo"
         adapter._repo = mock_repo
 
-        adapter.update_comment("15", "99", "updated body")
+        adapter.update_progress("99", "new body")
 
-        mock_repo.get_issue.assert_called_once_with(15)
-        mock_issue.get_comment.assert_called_once_with(99)
-        mock_comment.edit.assert_called_once_with("updated body")
+        mock_repo._requester.requestJsonAndCheck.assert_called_once_with(
+            "PATCH",
+            "https://api.github.com/repos/owner/repo/issues/comments/99",
+            input={"body": "new body"},
+        )
+
+
+@pytest.mark.unit
+class TestFinalizeComment:
+    def test_delegates_to_update_progress(self) -> None:
+        adapter = _make_work_adapter()
+        mock_repo = MagicMock()
+        mock_repo.url = "https://api.github.com/repos/owner/repo"
+        adapter._repo = mock_repo
+
+        adapter.finalize_comment("99", "final body")
+
+        mock_repo._requester.requestJsonAndCheck.assert_called_once_with(
+            "PATCH",
+            "https://api.github.com/repos/owner/repo/issues/comments/99",
+            input={"body": "final body"},
+        )
+
+
+# ── WorkAdapter: ticket access ───────────────────────────────────────
 
 
 @pytest.mark.unit
 class TestGetLabels:
     def test_returns_label_names(self) -> None:
-        adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
+        adapter = _make_work_adapter()
         mock_repo = MagicMock()
         mock_issue = MagicMock()
         lbl1 = MagicMock()
@@ -393,7 +429,7 @@ class TestGetLabels:
 @pytest.mark.unit
 class TestGetTicket:
     def test_issue_returns_body(self) -> None:
-        adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
+        adapter = _make_work_adapter()
         mock_repo = MagicMock()
         mock_issue = MagicMock()
         mock_issue.body = "Issue description"
@@ -404,93 +440,13 @@ class TestGetTicket:
 
         assert result == "Issue description"
 
-    def test_pr_returns_summary(self) -> None:
-        adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
-        mock_repo = MagicMock()
-        mock_pr = MagicMock()
-        mock_pr.title = "My PR"
-        mock_pr.body = "PR description"
-        mock_file = MagicMock()
-        mock_file.filename = "src/foo.py"
-        mock_pr.get_files.return_value = [mock_file]
-        mock_repo.get_pull.return_value = mock_pr
-        mock_repo.get_issue.side_effect = Exception("should not be called for PR")
-        adapter._repo = mock_repo
 
-        result = adapter.get_ticket("pr:42")
-
-        assert "My PR" in result
-        assert "PR description" in result
-        assert "src/foo.py" in result
+# ── WorkAdapter: format_branch ───────────────────────────────────────
 
 
 @pytest.mark.unit
-class TestPostReview:
-    def test_approve(self) -> None:
-        adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
-        mock_repo = MagicMock()
-        mock_pr = MagicMock()
-        mock_repo.get_pull.return_value = mock_pr
-        adapter._repo = mock_repo
-
-        adapter.post_review(42, "LGTM", "APPROVE")
-
-        mock_repo.get_pull.assert_called_once_with(42)
-        mock_pr.create_review.assert_called_once_with(body="LGTM", event="APPROVE")
-
-
-@pytest.mark.unit
-class TestMergePr:
-    def test_squash_merge(self) -> None:
-        adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
-        mock_repo = MagicMock()
-        mock_pr = MagicMock()
-        mock_repo.get_pull.return_value = mock_pr
-        adapter._repo = mock_repo
-
-        adapter.merge_pr(42)
-
-        mock_repo.get_pull.assert_called_once_with(42)
-        mock_pr.merge.assert_called_once_with(merge_method="squash")
-
-    def test_merge_method_passed(self) -> None:
-        adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
-        mock_repo = MagicMock()
-        mock_pr = MagicMock()
-        mock_repo.get_pull.return_value = mock_pr
-        adapter._repo = mock_repo
-
-        adapter.merge_pr(42, method="merge")
-
-        mock_pr.merge.assert_called_once_with(merge_method="merge")
-
-
-@pytest.mark.unit
-class TestGetPrForBranch:
-    def test_finds_pr(self) -> None:
-        adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
-        mock_repo = MagicMock()
-        mock_pr = MagicMock()
-        mock_pr.number = 42
-        mock_repo.get_pulls.return_value = [mock_pr]
-        adapter._repo = mock_repo
-
-        assert adapter.get_pr_for_branch("agent/15") == 42
-
-    def test_no_pr_returns_none(self) -> None:
-        adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
-        mock_repo = MagicMock()
-        mock_repo.get_pulls.return_value = []
-        adapter._repo = mock_repo
-
-        assert adapter.get_pr_for_branch("agent/15") is None
-
-    def test_queries_with_head_branch(self) -> None:
-        adapter = GitHubTicketAdapter.__new__(GitHubTicketAdapter)
-        mock_repo = MagicMock()
-        mock_repo.get_pulls.return_value = []
-        adapter._repo = mock_repo
-
-        adapter.get_pr_for_branch("agent/15")
-
-        mock_repo.get_pulls.assert_called_once_with(state="open", head="agent/15")
+class TestFormatBranch:
+    def test_returns_agent_prefix(self) -> None:
+        adapter = _make_work_adapter()
+        assert adapter.format_branch("15") == "agent/15"
+        assert adapter.format_branch("PROJ-42") == "agent/PROJ-42"

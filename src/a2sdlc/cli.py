@@ -171,11 +171,17 @@ def main(argv: list[str] | None = None) -> None:
 
         # Construct adapters
         if config.adapter == "github":
-            from a2sdlc.adapters.github import GitHubTicketAdapter  # noqa: PLC0415
+            from a2sdlc.adapters.github import (  # noqa: PLC0415
+                GitHubReviewAdapter,
+                GitHubWorkAdapter,
+                connect,
+            )
 
             token = os.environ.get("GITHUB_TOKEN", os.environ.get("GH_TOKEN", ""))
-            repo = os.environ.get("GITHUB_REPOSITORY", "")
-            tickets = GitHubTicketAdapter(repo_name=repo, token=token)
+            repo_name = os.environ.get("GITHUB_REPOSITORY", "")
+            repo = connect(repo_name, token)
+            work_adapter = GitHubWorkAdapter(repo)
+            review_adapter = GitHubReviewAdapter(repo)
         else:
             logger.error("Unknown adapter: %s", config.adapter)
             sys.exit(1)
@@ -217,9 +223,9 @@ def main(argv: list[str] | None = None) -> None:
                 )
 
         ctx = DispatchContext(
-            work=tickets,  # ty: ignore[invalid-argument-type]  # TODO(task-16): split
+            work=work_adapter,
             git=git,
-            review=tickets,  # ty: ignore[invalid-argument-type]  # TODO(task-16): split
+            review=review_adapter,
             runner=_SdkRunner(),
             config=config,
             project_root=project_root,

@@ -6,7 +6,7 @@ import pytest
 
 from a2sdlc.comment_lifecycle import CommentManager
 from a2sdlc.exceptions import TransientError
-from tests.fakes_v2 import FakeWorkAdapter
+from tests.fakes import FakeWorkAdapter
 
 
 # -- Fixtures ----------------------------------------------------------

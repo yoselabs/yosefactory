@@ -6,10 +6,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from a2sdlc.runner import (
-    ProgressState,
-    _handle_assistant_message,
-)
+from a2sdlc.progress import ProgressState
+from a2sdlc.runner import _handle_assistant_message
 
 
 def _make_progress() -> ProgressState:

@@ -18,43 +18,14 @@ from claude_agent_sdk.types import (
 from rich.console import Console
 
 from a2sdlc.config import StageConfig, get_session_id
-from a2sdlc.progress import (  # noqa: F401 — re-exported for backward compat
+from a2sdlc.progress import (
     Milestone,
     ProgressState,
     ToolEntry,
     _extract_target,
-    _format_duration,
-    _format_milestone_time,
-    _format_milestones,
-    _format_status_bar,
-    _format_tasks,
-    _format_tokens,
-    _shorten_path,
     context_window_for_model,
-    format_error,
-    format_final,
     format_progress,
 )
-
-# Re-export for backward compatibility
-__all__ = [
-    "Milestone",
-    "ProgressState",
-    "RunResult",
-    "ToolEntry",
-    "_extract_target",
-    "_format_duration",
-    "_format_milestone_time",
-    "_format_milestones",
-    "_format_status_bar",
-    "_format_tasks",
-    "_shorten_path",
-    "context_window_for_model",
-    "format_error",
-    "format_final",
-    "format_progress",
-    "run_stage",
-]
 
 logger = logging.getLogger("a2sdlc.runner")
 

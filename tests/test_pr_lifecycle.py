@@ -5,7 +5,7 @@ from __future__ import annotations
 from a2sdlc.adapters.review import Approval, ReviewComment
 from a2sdlc.models import StageResult, StageStatus
 from a2sdlc.pr_lifecycle import PRLifecycle
-from tests.fakes_v2 import FakeReviewAdapter
+from tests.fakes import FakeReviewAdapter
 
 
 # -- create_draft -------------------------------------------------------

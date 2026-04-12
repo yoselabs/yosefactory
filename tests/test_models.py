@@ -7,7 +7,6 @@ from typing import Any
 import pytest
 
 from a2sdlc.models import (
-    BranchState,
     GateConfig,
     GateMode,
     StageName,
@@ -53,20 +52,6 @@ class TestStageResult:
     def test_invalid_status_raises(self) -> None:
         with pytest.raises(Exception):
             StageResult.model_validate_json('{"status": "invalid"}')
-
-
-@pytest.mark.unit
-class TestBranchState:
-    def test_roundtrip(self) -> None:
-        state = BranchState(
-            stage=StageName.SPEC,
-            status=StageStatus.COMPLETE,
-            last_updated="2026-04-05T12:00:00Z",
-        )
-        dumped = state.model_dump_json()
-        restored = BranchState.model_validate_json(dumped)
-        assert restored.stage == StageName.SPEC
-        assert restored.status == StageStatus.COMPLETE
 
 
 @pytest.mark.unit

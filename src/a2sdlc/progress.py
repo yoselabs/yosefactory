@@ -245,6 +245,7 @@ def format_final(
     branch: str,
     max_turns: int,
     context_window: int | None,
+    tasks: dict[str, str] | None = None,
 ) -> str:
     """Build the final completion comment with collapsed stats."""
     # Accept any object with RunResult-like attributes
@@ -277,6 +278,10 @@ def format_final(
     ms_text = _format_milestones(milestones)
     if ms_text:
         stats_lines.append(f"\n{ms_text}")
+    if tasks:
+        tasks_text = _format_tasks(tasks)
+        if tasks_text:
+            stats_lines.append(f"\n{tasks_text}")
     stats_body = "\n".join(stats_lines)
 
     parts = [

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import uuid
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -28,40 +27,6 @@ class StageConfig:
     allowed_tools: list[str] = field(default_factory=list)
     code_reviews: int = 0
     max_review_cycles: int = 2
-
-
-# Env-var name → StageConfig field name + converter
-_ENV_MAP: dict[str, tuple[str, type]] = {
-    "MODEL": ("model", str),
-    "MAX_TURNS": ("max_turns", int),
-}
-
-
-def load_config(stage: str, **overrides: object) -> StageConfig:
-    """Build a StageConfig by merging stage defaults, env vars, and CLI overrides.
-
-    Stage defaults come from the stage module (e.g., stages/spec.py).
-    Priority: CLI arg > env var > stage default.
-
-    .. deprecated::
-        Use ``load_stage_config`` with a ``ProjectConfig`` instead.
-        This function is kept for backward compatibility with the CLI.
-    """
-    from a2sdlc.stages import get_stage  # noqa: PLC0415
-
-    stage_obj = get_stage(stage)
-    base = stage_obj.config
-
-    # Layer env vars on top of defaults.
-    env_patches: dict[str, object] = {}
-    for env_key, (field_name, conv) in _ENV_MAP.items():
-        val = os.environ.get(env_key)
-        if val is not None:
-            env_patches[field_name] = conv(val)
-
-    # Layer CLI overrides on top of env.
-    merged = {**env_patches, **{k: v for k, v in overrides.items() if v is not None}}
-    return replace(base, **merged)
 
 
 # ── Session helpers ──────────────────────────────────────────────────

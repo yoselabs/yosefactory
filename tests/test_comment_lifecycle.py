@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from a2sdlc.models import StageName
-from tests.fakes_v2 import FakeWorkAdapter
+from tests.fakes import FakeWorkAdapter
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────
