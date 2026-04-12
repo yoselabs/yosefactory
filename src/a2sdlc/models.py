@@ -36,6 +36,13 @@ class Gate(StrEnum):
     AUTO_MERGE = "auto_merge"
 
 
+class GateMode(StrEnum):
+    """Controls how a pipeline gate is triggered."""
+
+    AUTO = "auto"
+    HUMAN = "human"
+
+
 # ── Transition table ──────────────────────────────────────────────
 
 
@@ -55,10 +62,23 @@ class Transition:
 # ── Structured output ─────────────────────────────────────────────
 
 
+class GateConfig(BaseModel):
+    """Controls pipeline autonomy at each gate."""
+
+    merge: GateMode = GateMode.HUMAN
+    review: GateMode = GateMode.AUTO
+
+
 class StageResult(BaseModel):
     """Structured output from an agent stage."""
 
     status: StageStatus
+    pr_title: str | None = None
+    pr_summary: str | None = None
+    ticket_summary: str | None = None
+    spec_path: str | None = None
+    plan_path: str | None = None
+    questions: list[str] | None = None
 
 
 class BranchState(BaseModel):
@@ -68,6 +88,24 @@ class BranchState(BaseModel):
     status: StageStatus
     base_branch: str = "main"
     review_cycles: int = 0
+    last_updated: str
+
+
+class TicketState(BaseModel):
+    """v2 state model for tracking ticket progress through the pipeline."""
+
+    stage: StageName
+    status: StageStatus | None = None
+    base_branch: str = "main"
+    branch: str
+    pr_number: int | None = None
+    stage_run_id: str
+    comment_id: str | None = None
+    review_cycles: int = 0
+    accumulated_cost_usd: float = 0.0
+    accumulated_tokens_in: int = 0
+    accumulated_tokens_out: int = 0
+    accumulated_duration_ms: int = 0
     last_updated: str
 
 
