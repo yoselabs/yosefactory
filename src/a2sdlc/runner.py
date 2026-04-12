@@ -18,6 +18,7 @@ from claude_agent_sdk.types import (
 from rich.console import Console
 
 from a2sdlc.config import StageConfig, get_session_id
+from a2sdlc.models import StageName
 from a2sdlc.progress import (
     Milestone,
     ProgressState,
@@ -251,3 +252,34 @@ def _handle_assistant_message(
             if block.text:
                 preview = block.text[:200].replace("\n", " ")
                 console.log(f"[dim]{preview}[/dim]")
+
+
+# ── StageRunner implementation ──────────────────────────────────────
+
+
+class SdkStageRunner:
+    """StageRunner backed by the Claude Agent SDK. Wraps ``run_stage``."""
+
+    async def run(
+        self,
+        user_prompt: str,
+        system_prompt: str,
+        config: StageConfig,
+        ticket_key: str,
+        stage: StageName,
+        project_root: str,
+        is_resume: bool = False,
+        on_progress: Callable[[str], None] | None = None,
+        branch: str = "",
+    ) -> RunResult:
+        return await run_stage(
+            user_prompt=user_prompt,
+            system_prompt=system_prompt,
+            config=config,
+            ticket_key=ticket_key,
+            stage=stage,
+            project_root=project_root,
+            is_resume=is_resume,
+            on_progress=on_progress,
+            branch=branch,
+        )

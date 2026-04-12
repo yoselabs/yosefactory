@@ -14,7 +14,7 @@ from a2sdlc.progress import (
     format_final,
     format_progress,
 )
-from a2sdlc.runner import RunResult
+from a2sdlc.stats import StageRunStats
 
 
 def _make_progress(**overrides: Any) -> ProgressState:
@@ -25,6 +25,23 @@ def _make_progress(**overrides: Any) -> ProgressState:
         context_window=int(overrides.get("context_window", 200_000)),
         project_root=str(overrides.get("project_root", "/tmp/test")),
         start_time=float(overrides.get("start_time", 1000.0)),
+    )
+
+
+def _make_stats(
+    *,
+    cost_usd: float = 0.0,
+    tokens_in: int = 0,
+    tokens_out: int = 0,
+    duration_ms: int = 0,
+    num_turns: int = 0,
+) -> StageRunStats:
+    return StageRunStats(
+        cost_usd=cost_usd,
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        duration_ms=duration_ms,
+        num_turns=num_turns,
     )
 
 
@@ -73,12 +90,10 @@ class TestFormatProgress:
 @pytest.mark.unit
 class TestFormatFinal:
     def test_success(self) -> None:
-        result = RunResult(
-            success=True,
-            output="Done implementing.",
-            input_tokens=312000,
-            output_tokens=24000,
-            total_cost_usd=2.14,
+        stats = _make_stats(
+            tokens_in=312000,
+            tokens_out=24000,
+            cost_usd=2.14,
             duration_ms=522000,
             num_turns=45,
         )
@@ -87,8 +102,9 @@ class TestFormatFinal:
             Milestone(timestamp=390.0, label="requesting-code-review invoked"),
         ]
         text = format_final(
-            result,
+            "Done implementing.",
             stage="implement",
+            stats=stats,
             milestones=milestones,
             model="claude-sonnet-4-6",
             branch="feat/T-1",
@@ -104,12 +120,10 @@ class TestFormatFinal:
         assert "\U0001f4cc 6:30 \u2014 requesting-code-review invoked" in text
 
     def test_tasks_in_details_block(self) -> None:
-        result = RunResult(
-            success=True,
-            output="All done.",
-            input_tokens=1000,
-            output_tokens=500,
-            total_cost_usd=0.10,
+        stats = _make_stats(
+            tokens_in=1000,
+            tokens_out=500,
+            cost_usd=0.10,
             duration_ms=10000,
             num_turns=5,
         )
@@ -120,8 +134,9 @@ class TestFormatFinal:
             "Deploy": "pending",
         }
         text = format_final(
-            result,
+            "All done.",
             stage="implement",
+            stats=stats,
             milestones=[],
             model="claude-sonnet-4-6",
             branch="feat/T-1",
@@ -136,17 +151,13 @@ class TestFormatFinal:
         assert "\u2b1c Deploy" in text
 
     def test_no_tasks_omits_section(self) -> None:
-        result = RunResult(
-            success=True,
-            output="Done.",
-            input_tokens=1000,
-            output_tokens=500,
-            total_cost_usd=0.05,
-            duration_ms=30000,
+        stats = _make_stats(
+            tokens_in=1000, tokens_out=500, cost_usd=0.05, duration_ms=30000
         )
         text = format_final(
-            result,
+            "Done.",
             stage="spec",
+            stats=stats,
             milestones=[],
             model="claude-sonnet-4-6",
             branch="feat/T-1",
@@ -157,17 +168,13 @@ class TestFormatFinal:
         assert "\u2b1c" not in text
 
     def test_no_milestones(self) -> None:
-        result = RunResult(
-            success=True,
-            output="Done.",
-            input_tokens=1000,
-            output_tokens=500,
-            total_cost_usd=0.05,
-            duration_ms=30000,
+        stats = _make_stats(
+            tokens_in=1000, tokens_out=500, cost_usd=0.05, duration_ms=30000
         )
         text = format_final(
-            result,
+            "Done.",
             stage="spec",
+            stats=stats,
             milestones=[],
             model="claude-sonnet-4-6",
             branch="feat/T-1",
@@ -182,18 +189,17 @@ class TestFormatFinal:
 @pytest.mark.unit
 class TestFormatError:
     def test_error_with_milestones(self) -> None:
-        result = RunResult(
-            success=False,
-            error="timeout (60min)",
-            input_tokens=100000,
-            output_tokens=5000,
-            total_cost_usd=0.50,
+        stats = _make_stats(
+            tokens_in=100000,
+            tokens_out=5000,
+            cost_usd=0.50,
             duration_ms=3600000,
         )
         milestones = [Milestone(timestamp=42.0, label="brainstorming invoked")]
         text = format_error(
-            result,
+            "timeout (60min)",
             stage="implement",
+            stats=stats,
             milestones=milestones,
             model="claude-sonnet-4-6",
             branch="feat/T-1",
@@ -207,10 +213,11 @@ class TestFormatError:
         assert "\U0001f4cc 0:42 \u2014 brainstorming invoked" in text
 
     def test_error_no_milestones(self) -> None:
-        result = RunResult(success=False, error="sdk_error")
+        stats = _make_stats()
         text = format_error(
-            result,
+            "sdk_error",
             stage="spec",
+            stats=stats,
             milestones=[],
             model="claude-sonnet-4-6",
             branch="feat/T-1",

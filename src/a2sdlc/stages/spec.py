@@ -22,10 +22,6 @@ class SpecStage:
     name = StageName.SPEC
     uses_ai = True
     valid_statuses = frozenset({StageStatus.COMPLETE, StageStatus.QUESTIONS})
-    transitions: dict[StageStatus, StageName | None] = {
-        StageStatus.COMPLETE: StageName.IMPLEMENT,
-        StageStatus.QUESTIONS: None,
-    }
     config = StageConfig(
         name="spec",
         max_turns=150,

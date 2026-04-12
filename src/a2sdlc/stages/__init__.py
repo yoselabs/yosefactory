@@ -29,6 +29,9 @@ def get_stage(name: StageName | str) -> AnyStage:
     return cls()
 
 
+# ── Transition logic ────────────────────────────────────────────────
+
+
 def next_stage(
     current: StageName,
     status: StageStatus,
@@ -63,25 +66,3 @@ def next_stage(
             return StageName.IMPLEMENT
         case _:
             return None
-
-
-# ── Validate completeness at import ────────────────────────────────
-
-
-def _validate_stages() -> None:
-    for cls in _ALL_STAGES:
-        instance = cls()
-        if not hasattr(instance, "valid_statuses"):
-            continue
-        if not hasattr(instance, "transitions"):
-            continue
-        for status in instance.valid_statuses:
-            if status not in instance.transitions:
-                msg = (
-                    f"Stage {cls.name}: status {status!r} is in valid_statuses "
-                    f"but has no transition defined"
-                )
-                raise AssertionError(msg)
-
-
-_validate_stages()

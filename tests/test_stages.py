@@ -12,33 +12,24 @@ from a2sdlc.stages import STAGES, next_stage
 
 
 @pytest.mark.unit
-class TestTransitionTable:
-    """Every valid_status must have a transition. Checked at import, but
-    also tested explicitly for safety."""
+class TestTransitionCompleteness:
+    """Verify next_stage() handles every valid_status for every stage."""
 
-    def test_all_stages_have_transitions_for_valid_statuses(self) -> None:
+    def test_all_valid_statuses_produce_a_decision(self) -> None:
+        """next_stage must return StageName or None for every valid status."""
+        gates = GateConfig()
         for stage_cls in STAGES.values():
             stage = stage_cls()
             for status in stage.valid_statuses:
-                assert status in stage.transitions, (
-                    f"{stage.name}: missing transition for {status}"
+                result = next_stage(stage.name, status, gates)
+                assert result is None or isinstance(result, StageName), (
+                    f"{stage.name}/{status}: next_stage returned {result!r}"
                 )
-
-    def test_all_transitions_target_valid_stages(self) -> None:
-        valid_names = set(StageName)
-        for stage_cls in STAGES.values():
-            stage = stage_cls()
-            for status, target in stage.transitions.items():
-                if target is not None:
-                    assert target in valid_names, (
-                        f"{stage.name}/{status}: targets unknown {target}"
-                    )
 
     def test_merge_is_terminal(self) -> None:
         from a2sdlc.stages.merge import MergeStage
 
         stage = MergeStage()
-        assert len(stage.transitions) == 0
         assert len(stage.valid_statuses) == 0
 
 

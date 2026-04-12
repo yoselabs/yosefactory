@@ -24,7 +24,7 @@ from a2sdlc.models import (
 )
 from a2sdlc.pr_lifecycle import PRLifecycle
 from a2sdlc.progress import format_error, format_final
-from a2sdlc.runner import RunResult
+from a2sdlc.prompt_assembly import assemble_system_prompt
 from a2sdlc.stage_executor import StageExecutor
 from a2sdlc.stages import next_stage
 from a2sdlc.state_manager import StateManager
@@ -152,8 +152,6 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
     # 9. Load stage config + assemble prompts
     stage_config = load_stage_config(event.stage.value, ctx.config)
 
-    from a2sdlc.cli import assemble_system_prompt  # noqa: PLC0415
-
     system_prompt = assemble_system_prompt(
         event.stage.value, ctx.project_root / ".a2sdlc"
     )
@@ -205,18 +203,10 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
 
     # 13. Handle failure
     if not exec_result.success:
-        error_result = RunResult(
-            success=False,
-            error=exec_result.error,
-            input_tokens=exec_result.stats.tokens_in,
-            output_tokens=exec_result.stats.tokens_out,
-            total_cost_usd=exec_result.stats.cost_usd,
-            duration_ms=exec_result.stats.duration_ms,
-            num_turns=exec_result.stats.num_turns,
-        )
         error_comment = format_error(
-            error_result,
+            exec_result.error or "unknown",
             stage=event.stage.value,
+            stats=exec_result.stats,
             milestones=_milestones,
             model=stage_config.model,
             branch=branch,
@@ -231,18 +221,10 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
     # 14. No status block even after follow-ups
     if stage_result is None:
         partial = exec_result.output[:2000]
-        fallback_result = RunResult(
-            success=True,
-            output=partial,
-            input_tokens=exec_result.stats.tokens_in,
-            output_tokens=exec_result.stats.tokens_out,
-            total_cost_usd=exec_result.stats.cost_usd,
-            duration_ms=exec_result.stats.duration_ms,
-            num_turns=exec_result.stats.num_turns,
-        )
         no_status_footer = format_final(
-            fallback_result,
+            partial,
             stage=event.stage.value,
+            stats=exec_result.stats,
             milestones=_milestones,
             model=stage_config.model,
             branch=branch,
@@ -260,19 +242,11 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
 
     # 15. Success path
     comment_body = strip_status_block(exec_result.output)
-    stats_result = RunResult(
-        success=True,
-        output=comment_body,
-        input_tokens=exec_result.stats.tokens_in,
-        output_tokens=exec_result.stats.tokens_out,
-        total_cost_usd=exec_result.stats.cost_usd,
-        duration_ms=exec_result.stats.duration_ms,
-        num_turns=exec_result.stats.num_turns,
-    )
     _tasks = exec_result.progress.tasks if exec_result.progress else None
     final_comment = format_final(
-        stats_result,
+        comment_body,
         stage=event.stage.value,
+        stats=exec_result.stats,
         milestones=_milestones,
         model=stage_config.model,
         branch=branch,
@@ -310,10 +284,14 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
         pr_number=pr_number,
         stage_run_id=ctx.run_id or "",
         review_cycles=review_cycles,
-        accumulated_cost_usd=exec_result.stats.cost_usd,
-        accumulated_tokens_in=exec_result.stats.tokens_in,
-        accumulated_tokens_out=exec_result.stats.tokens_out,
-        accumulated_duration_ms=exec_result.stats.duration_ms,
+        accumulated_cost_usd=(state.accumulated_cost_usd if state else 0.0)
+        + exec_result.stats.cost_usd,
+        accumulated_tokens_in=(state.accumulated_tokens_in if state else 0)
+        + exec_result.stats.tokens_in,
+        accumulated_tokens_out=(state.accumulated_tokens_out if state else 0)
+        + exec_result.stats.tokens_out,
+        accumulated_duration_ms=(state.accumulated_duration_ms if state else 0)
+        + exec_result.stats.duration_ms,
         last_updated=datetime.now(timezone.utc).isoformat(),
     )
     state_mgr.write_state(new_state)

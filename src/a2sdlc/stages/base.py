@@ -18,5 +18,4 @@ class Stage(Protocol):
     name: StageName
     config: StageConfig
     valid_statuses: frozenset[StageStatus]
-    transitions: dict[StageStatus, StageName | None]
     uses_ai: bool

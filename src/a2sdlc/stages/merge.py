@@ -10,5 +10,4 @@ class MergeStage:
     name = StageName.MERGE
     uses_ai = False
     valid_statuses = frozenset[StageStatus]()
-    transitions: dict[StageStatus, StageName | None] = {}  # terminal stage
     config = StageConfig(name="merge", max_turns=0, timeout_minutes=5)

@@ -22,10 +22,6 @@ class ImplementStage:
     name = StageName.IMPLEMENT
     uses_ai = True
     valid_statuses = frozenset({StageStatus.COMPLETE, StageStatus.QUESTIONS})
-    transitions: dict[StageStatus, StageName | None] = {
-        StageStatus.COMPLETE: StageName.REVIEW,
-        StageStatus.QUESTIONS: None,
-    }
     config = StageConfig(
         name="implement",
         max_turns=150,

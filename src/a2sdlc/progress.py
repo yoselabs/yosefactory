@@ -236,10 +236,33 @@ def format_progress(
     return "\n".join(parts)
 
 
+def _stats_bar(
+    stats: object,
+    *,
+    model: str,
+    branch: str,
+    max_turns: int,
+    context_window: int | None,
+) -> str:
+    """Build a status bar from a StageRunStats-like object."""
+    return _format_status_bar(
+        model=model,
+        branch=branch,
+        input_tokens=getattr(stats, "tokens_in", 0) or 0,
+        output_tokens=getattr(stats, "tokens_out", 0) or 0,
+        total_cost_usd=getattr(stats, "cost_usd", 0.0) or 0.0,
+        duration_seconds=(getattr(stats, "duration_ms", 0) or 0) / 1000,
+        num_turns=getattr(stats, "num_turns", 0) or 0,
+        max_turns=max_turns,
+        context_window=context_window,
+    )
+
+
 def format_final(
-    result: object,
+    output: str,
     *,
     stage: str,
+    stats: object,
     milestones: list[Milestone],
     model: str,
     branch: str,
@@ -247,23 +270,15 @@ def format_final(
     context_window: int | None,
     tasks: dict[str, str] | None = None,
 ) -> str:
-    """Build the final completion comment with collapsed stats."""
-    # Accept any object with RunResult-like attributes
-    input_tokens = getattr(result, "input_tokens", 0) or 0
-    output_tokens = getattr(result, "output_tokens", 0) or 0
-    total_cost_usd = getattr(result, "total_cost_usd", 0.0) or 0.0
-    duration_ms = getattr(result, "duration_ms", 0) or 0
-    num_turns = getattr(result, "num_turns", 0) or 0
-    output = getattr(result, "output", "") or ""
+    """Build the final completion comment with collapsed stats.
 
-    bar = _format_status_bar(
+    ``stats`` must have ``tokens_in``, ``tokens_out``, ``cost_usd``,
+    ``duration_ms``, ``num_turns`` attributes (e.g. ``StageRunStats``).
+    """
+    bar = _stats_bar(
+        stats,
         model=model,
         branch=branch,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        total_cost_usd=total_cost_usd,
-        duration_seconds=duration_ms / 1000,
-        num_turns=num_turns,
         max_turns=max_turns,
         context_window=context_window,
     )
@@ -293,31 +308,25 @@ def format_final(
 
 
 def format_error(
-    result: object,
+    error: str,
     *,
     stage: str,
+    stats: object,
     milestones: list[Milestone],
     model: str,
     branch: str,
     max_turns: int,
     context_window: int | None,
 ) -> str:
-    """Build an error comment with status bar and milestones."""
-    input_tokens = getattr(result, "input_tokens", 0) or 0
-    output_tokens = getattr(result, "output_tokens", 0) or 0
-    total_cost_usd = getattr(result, "total_cost_usd", 0.0) or 0.0
-    duration_ms = getattr(result, "duration_ms", 0) or 0
-    num_turns = getattr(result, "num_turns", 0) or 0
-    error = getattr(result, "error", "unknown") or "unknown"
+    """Build an error comment with status bar and milestones.
 
-    bar = _format_status_bar(
+    ``stats`` must have ``tokens_in``, ``tokens_out``, ``cost_usd``,
+    ``duration_ms``, ``num_turns`` attributes (e.g. ``StageRunStats``).
+    """
+    bar = _stats_bar(
+        stats,
         model=model,
         branch=branch,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        total_cost_usd=total_cost_usd,
-        duration_seconds=duration_ms / 1000,
-        num_turns=num_turns,
         max_turns=max_turns,
         context_window=context_window,
     )

@@ -8,11 +8,11 @@ from unittest.mock import patch
 import pytest
 
 from a2sdlc.cli import (
-    assemble_system_prompt,
     find_project_root,
     parse_args,
     setup_logging,
 )
+from a2sdlc.prompt_assembly import assemble_system_prompt
 
 
 # ── find_project_root ────────────────────────────────────────────────
@@ -117,7 +117,7 @@ class TestAssembleSystemPrompt:
         a2sdlc_dir = tmp_path / ".a2sdlc"
         a2sdlc_dir.mkdir()
         # No prompts dir at all, and mock importlib to also return nothing
-        with patch("a2sdlc.cli.pkg_files") as mock_pkg:
+        with patch("a2sdlc.prompt_assembly.pkg_files") as mock_pkg:
             mock_pkg.return_value = tmp_path / "nonexistent-pkg"
             result = assemble_system_prompt("implement", a2sdlc_dir)
 

@@ -10,10 +10,6 @@ class ReviewStage:
     name = StageName.REVIEW
     uses_ai = True
     valid_statuses = frozenset({StageStatus.APPROVED, StageStatus.CHANGES_REQUESTED})
-    transitions: dict[StageStatus, StageName | None] = {
-        StageStatus.APPROVED: StageName.MERGE,
-        StageStatus.CHANGES_REQUESTED: StageName.IMPLEMENT,
-    }
     config = StageConfig(
         name="review",
         max_turns=150,
