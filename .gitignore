@@ -290,3 +290,4 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 .a2sdlc/state.json
+.claude/worktrees/
