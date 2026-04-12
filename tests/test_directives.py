@@ -1,0 +1,142 @@
+"""Tests for a2sdlc.directives — ticket directive parsing."""
+
+from __future__ import annotations
+
+import pytest
+
+from a2sdlc.directives import TicketDirectives, parse_directives
+from a2sdlc.models import GateMode
+
+
+@pytest.mark.unit
+class TestParseDirectivesNoDirectives:
+    def test_no_directives_returns_empty_and_unchanged_body(self) -> None:
+        body = "This is a ticket description.\n\nWith multiple paragraphs."
+        directives, cleaned = parse_directives(body)
+        assert directives == TicketDirectives()
+        assert cleaned == body
+
+    def test_empty_body_no_crash(self) -> None:
+        directives, cleaned = parse_directives("")
+        assert directives == TicketDirectives()
+        assert cleaned == ""
+
+
+@pytest.mark.unit
+class TestParseDirectivesBase:
+    def test_single_base_directive(self) -> None:
+        body = "[a2sdlc base=feature/my-branch]\nDo the thing."
+        directives, cleaned = parse_directives(body)
+        assert directives.base == "feature/my-branch"
+        assert "a2sdlc" not in cleaned
+        assert "Do the thing." in cleaned
+
+    def test_base_directive_stripped_from_body(self) -> None:
+        body = "Before.\n[a2sdlc base=feature/x]\nAfter."
+        directives, cleaned = parse_directives(body)
+        assert directives.base == "feature/x"
+        assert cleaned == "Before.\nAfter."
+
+
+@pytest.mark.unit
+class TestParseDirectivesGate:
+    def test_gate_merge_human(self) -> None:
+        body = "[a2sdlc gate:merge=human]"
+        directives, _ = parse_directives(body)
+        assert directives.gate_merge is GateMode.HUMAN
+
+    def test_gate_review_auto(self) -> None:
+        body = "[a2sdlc gate:review=auto]"
+        directives, _ = parse_directives(body)
+        assert directives.gate_review is GateMode.AUTO
+
+    def test_gate_review_human(self) -> None:
+        body = "[a2sdlc gate:review=human]"
+        directives, _ = parse_directives(body)
+        assert directives.gate_review is GateMode.HUMAN
+
+
+@pytest.mark.unit
+class TestParseDirectivesMultipleKeys:
+    def test_multiple_keys_on_one_line(self) -> None:
+        body = "[a2sdlc base=feature/x gate:merge=human model=opus]"
+        directives, cleaned = parse_directives(body)
+        assert directives.base == "feature/x"
+        assert directives.gate_merge is GateMode.HUMAN
+        assert directives.model == "opus"
+        assert cleaned == ""
+
+    def test_model_directive(self) -> None:
+        body = "[a2sdlc model=sonnet]"
+        directives, _ = parse_directives(body)
+        assert directives.model == "sonnet"
+
+
+@pytest.mark.unit
+class TestParseDirectivesMultipleLines:
+    def test_two_directive_lines_merged(self) -> None:
+        body = "[a2sdlc base=feature/x]\n[a2sdlc gate:merge=human]\nDo the thing."
+        directives, cleaned = parse_directives(body)
+        assert directives.base == "feature/x"
+        assert directives.gate_merge is GateMode.HUMAN
+        assert "Do the thing." in cleaned
+        assert "a2sdlc" not in cleaned
+
+    def test_later_line_overrides_earlier(self) -> None:
+        body = "[a2sdlc base=feature/a]\n[a2sdlc base=feature/b]"
+        directives, _ = parse_directives(body)
+        assert directives.base == "feature/b"
+
+
+@pytest.mark.unit
+class TestParseDirectivesMalformed:
+    def test_empty_brackets_ignored(self) -> None:
+        body = "[a2sdlc]\nSome text."
+        directives, cleaned = parse_directives(body)
+        assert directives == TicketDirectives()
+        assert "Some text." in cleaned
+
+    def test_invalid_gate_value_ignored(self) -> None:
+        body = "[a2sdlc gate:merge=bogus]\nSome text."
+        directives, cleaned = parse_directives(body)
+        assert directives.gate_merge is None
+        assert "Some text." in cleaned
+
+    def test_unknown_key_ignored(self) -> None:
+        body = "[a2sdlc unknown_key=foo base=feature/x]"
+        directives, _ = parse_directives(body)
+        assert directives.base == "feature/x"
+
+    def test_no_crash_on_malformed(self) -> None:
+        body = "[a2sdlc ===]\nOk text."
+        # Should not raise
+        directives, cleaned = parse_directives(body)
+        assert "Ok text." in cleaned
+
+
+@pytest.mark.unit
+class TestParseDirectivesBodyPreserved:
+    def test_body_content_preserved_after_strip(self) -> None:
+        body = (
+            "[a2sdlc base=feature/x]\n"
+            "\n"
+            "## Summary\n"
+            "\n"
+            "This ticket is about doing X.\n"
+            "\n"
+            "## Details\n"
+            "\n"
+            "More information here."
+        )
+        directives, cleaned = parse_directives(body)
+        assert directives.base == "feature/x"
+        assert "## Summary" in cleaned
+        assert "This ticket is about doing X." in cleaned
+        assert "## Details" in cleaned
+        assert "[a2sdlc" not in cleaned
+
+    def test_whitespace_trimmed_from_cleaned_body(self) -> None:
+        body = "[a2sdlc base=feature/x]\n\nActual content."
+        _, cleaned = parse_directives(body)
+        assert not cleaned.startswith("\n")
+        assert not cleaned.endswith("\n")

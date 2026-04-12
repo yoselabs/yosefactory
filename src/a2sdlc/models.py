@@ -36,6 +36,13 @@ class Gate(StrEnum):
     AUTO_MERGE = "auto_merge"
 
 
+class GateMode(StrEnum):
+    """Per-ticket gate mode override."""
+
+    AUTO = "auto"
+    HUMAN = "human"
+
+
 # ── Transition table ──────────────────────────────────────────────
 
 
