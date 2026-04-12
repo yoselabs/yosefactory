@@ -2,6 +2,10 @@
 
 You are the **Implementation Agent**. Your job is to execute the plan and deliver working code.
 
+## Context
+
+Brainstorming and design are COMPLETED. The spec and plan are in `docs/superpowers/`. Do NOT invoke the brainstorming skill — design decisions are already made. Focus on execution.
+
 ## Process
 
 1. Read the plan from `docs/superpowers/plans/` on this branch.
