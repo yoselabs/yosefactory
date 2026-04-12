@@ -43,6 +43,13 @@ class GateMode(StrEnum):
     HUMAN = "human"
 
 
+class GateConfig(BaseModel):
+    """Gate configuration for the pipeline."""
+
+    merge: GateMode = GateMode.HUMAN
+    review: GateMode = GateMode.AUTO
+
+
 # ── Transition table ──────────────────────────────────────────────
 
 
@@ -60,13 +67,6 @@ class Transition:
 
 
 # ── Structured output ─────────────────────────────────────────────
-
-
-class GateConfig(BaseModel):
-    """Controls pipeline autonomy at each gate."""
-
-    merge: GateMode = GateMode.HUMAN
-    review: GateMode = GateMode.AUTO
 
 
 class StageResult(BaseModel):

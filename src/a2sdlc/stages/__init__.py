@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Union
+from typing import Any, Union
 
-from a2sdlc.config import PipelineFlags
 from a2sdlc.models import StageName, StageStatus, Transition
 from a2sdlc.stages.implement import ImplementStage
 from a2sdlc.stages.merge import MergeStage
@@ -35,7 +34,7 @@ def get_stage(name: StageName | str) -> AnyStage:
 def next_stage(
     current: StageName,
     status: StageStatus,
-    flags: PipelineFlags,
+    flags: Any,
 ) -> StageName | None:
     """Pure function: determine the next stage from the transition table.
 
