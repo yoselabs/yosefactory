@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from a2sdlc.config import StageConfig
-from a2sdlc.models import StageName, StageStatus, Transition
+from a2sdlc.models import StageName, StageStatus
 
 
 class Stage(Protocol):
@@ -18,5 +18,5 @@ class Stage(Protocol):
     name: StageName
     config: StageConfig
     valid_statuses: frozenset[StageStatus]
-    transitions: dict[StageStatus, Transition]
+    transitions: dict[StageStatus, StageName | None]
     uses_ai: bool

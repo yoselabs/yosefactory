@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Union
+from typing import Union
 
-from a2sdlc.models import StageName, StageStatus, Transition
+from a2sdlc.models import GateConfig, GateMode, StageName, StageStatus
 from a2sdlc.stages.implement import ImplementStage
 from a2sdlc.stages.merge import MergeStage
 from a2sdlc.stages.review import ReviewStage
@@ -34,30 +34,37 @@ def get_stage(name: StageName | str) -> AnyStage:
 def next_stage(
     current: StageName,
     status: StageStatus,
-    flags: Any,
+    gates: GateConfig,
 ) -> StageName | None:
-    """Pure function: determine the next stage from the transition table.
+    """Pure function: determine the next stage given current stage, status, and gate config.
 
-    Returns the next stage name, or None if the pipeline should wait.
+    Returns the next stage name, or None if the pipeline should wait for a human.
+
+    Transition table:
+    - Spec + complete → IMPLEMENT (always auto)
+    - Spec + questions → None
+    - Implement + complete + gates.review=AUTO → REVIEW
+    - Implement + complete + gates.review=HUMAN → None
+    - Implement + questions → None
+    - Review + approved + gates.merge=AUTO → MERGE
+    - Review + approved + gates.merge=HUMAN → None
+    - Review + changes_requested → IMPLEMENT (always loops back)
     """
-    stage = get_stage(current)
-    transition = stage.transitions.get(status)
-    if transition is None:
-        return None
-    if transition.next is None:
-        return None
-    if transition.gate is not None and not getattr(flags, transition.gate):
-        return None  # gate closed — wait for human
-    return transition.next
-
-
-def get_transition(
-    current: StageName,
-    status: StageStatus,
-) -> Transition | None:
-    """Look up the transition for a given stage + status."""
-    stage = get_stage(current)
-    return stage.transitions.get(status)
+    match (current, status):
+        case (StageName.SPEC, StageStatus.COMPLETE):
+            return StageName.IMPLEMENT
+        case (StageName.SPEC, StageStatus.QUESTIONS):
+            return None
+        case (StageName.IMPLEMENT, StageStatus.COMPLETE):
+            return StageName.REVIEW if gates.review == GateMode.AUTO else None
+        case (StageName.IMPLEMENT, StageStatus.QUESTIONS):
+            return None
+        case (StageName.REVIEW, StageStatus.APPROVED):
+            return StageName.MERGE if gates.merge == GateMode.AUTO else None
+        case (StageName.REVIEW, StageStatus.CHANGES_REQUESTED):
+            return StageName.IMPLEMENT
+        case _:
+            return None
 
 
 # ── Validate completeness at import ────────────────────────────────
@@ -65,8 +72,13 @@ def get_transition(
 
 def _validate_stages() -> None:
     for cls in _ALL_STAGES:
-        for status in cls.valid_statuses:
-            if status not in cls.transitions:
+        instance = cls()
+        if not hasattr(instance, "valid_statuses"):
+            continue
+        if not hasattr(instance, "transitions"):
+            continue
+        for status in instance.valid_statuses:
+            if status not in instance.transitions:
                 msg = (
                     f"Stage {cls.name}: status {status!r} is in valid_statuses "
                     f"but has no transition defined"

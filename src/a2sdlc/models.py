@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from enum import StrEnum
 
 from pydantic import BaseModel
@@ -29,13 +28,6 @@ class StageStatus(StrEnum):
     CHANGES_REQUESTED = "changes_requested"
 
 
-class Gate(StrEnum):
-    """Pipeline flags that control auto-transition at gates."""
-
-    AUTO_PROCEED = "auto_proceed"
-    AUTO_MERGE = "auto_merge"
-
-
 class GateMode(StrEnum):
     """Controls how a pipeline gate is triggered."""
 
@@ -48,22 +40,6 @@ class GateConfig(BaseModel):
 
     merge: GateMode = GateMode.HUMAN
     review: GateMode = GateMode.AUTO
-
-
-# ── Transition table ──────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class Transition:
-    """Typed edge in the state machine.
-
-    Declared on each stage class. ``next`` is the target stage (None = WAIT).
-    ``gate`` is the flag that must be true to auto-transition; if the gate is
-    closed the engine stops and waits for a human trigger.
-    """
-
-    next: StageName | None
-    gate: Gate | None = None
 
 
 # ── Structured output ─────────────────────────────────────────────

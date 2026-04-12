@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from a2sdlc.config import StageConfig
-from a2sdlc.models import StageName, StageStatus, Transition
+from a2sdlc.models import StageName, StageStatus
 
 _DEFAULT_TOOLS = [
     "Bash",
@@ -22,13 +22,9 @@ class ImplementStage:
     name = StageName.IMPLEMENT
     uses_ai = True
     valid_statuses = frozenset({StageStatus.COMPLETE, StageStatus.QUESTIONS})
-    transitions: dict[StageStatus, Transition] = {
-        StageStatus.COMPLETE: Transition(
-            next=StageName.REVIEW,
-        ),
-        StageStatus.QUESTIONS: Transition(
-            next=None,
-        ),
+    transitions: dict[StageStatus, StageName | None] = {
+        StageStatus.COMPLETE: StageName.REVIEW,
+        StageStatus.QUESTIONS: None,
     }
     config = StageConfig(
         name="implement",
