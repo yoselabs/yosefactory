@@ -7,10 +7,10 @@ fix:
 	agent-harness fix
 
 test:
-	uv run pytest tests/ -v
+	uv run pytest tests/ -v --cov=a2sdlc --cov-report=xml --cov-report=term-missing
 
 coverage-diff:
-	@uv run diff-cover coverage.xml --compare-branch=origin/main --fail-under=95
+	@uv run diff-cover coverage.xml --compare-branch=main --fail-under=95
 
 security-audit:
 	agent-harness security-audit

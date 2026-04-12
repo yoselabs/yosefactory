@@ -35,7 +35,9 @@ env = [
 [dependency-groups]
 dev = [
     "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0",
     "pytest-env>=1.6.0",
+    "diff-cover>=9.0",
     "ruff>=0.15.9",
     "ty>=0.0.28",
 ]
