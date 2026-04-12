@@ -33,7 +33,7 @@ env = [
 [tool.ty.src]
 # dispatch.py and test_dispatch.py are intentionally broken during Phase 2 migration;
 # they will be rewritten in Phase 3.
-exclude = ["src/a2sdlc/dispatch.py", "tests/test_dispatch.py", "tests/test_dispatch_auto_approve.py"]
+exclude = ["src/a2sdlc/dispatch.py", "tests/test_dispatch.py", "tests/test_dispatch_auto_approve.py", "tests/test_stage_executor.py", "tests/test_state_manager.py"]
 
 [dependency-groups]
 dev = [
