@@ -123,6 +123,51 @@ class TestAssembleSystemPrompt:
 
         assert result.strip() == ""
 
+    def test_implement_stage_contains_skill_scoping(self, tmp_path: Path) -> None:
+        """Implement stage prompt must tell agent not to invoke brainstorming."""
+        a2sdlc_dir = tmp_path / ".a2sdlc"
+        a2sdlc_dir.mkdir()
+        # Use empty project dir so function falls back to package-bundled prompts.
+        result = assemble_system_prompt("implement", a2sdlc_dir)
+
+        result_lower = result.lower()
+        assert "do not" in result_lower, "implement prompt missing 'DO NOT' directive"
+        assert "brainstorming" in result_lower, (
+            "implement prompt missing 'brainstorming' keyword"
+        )
+
+    def test_review_stage_contains_skill_scoping(self, tmp_path: Path) -> None:
+        """Review stage prompt must tell agent not to invoke brainstorming."""
+        a2sdlc_dir = tmp_path / ".a2sdlc"
+        a2sdlc_dir.mkdir()
+        result = assemble_system_prompt("review", a2sdlc_dir)
+
+        result_lower = result.lower()
+        assert "do not" in result_lower, "review prompt missing 'DO NOT' directive"
+        assert "brainstorming" in result_lower, (
+            "review prompt missing 'brainstorming' keyword"
+        )
+
+    def test_spec_stage_does_not_restrict_brainstorming(self, tmp_path: Path) -> None:
+        """Spec stage should NOT tell the agent to skip brainstorming."""
+        a2sdlc_dir = tmp_path / ".a2sdlc"
+        a2sdlc_dir.mkdir()
+        result = assemble_system_prompt("spec", a2sdlc_dir)
+
+        # spec.md should reference brainstorming as something to USE, not avoid
+        result_lower = result.lower()
+        assert "brainstorming" in result_lower, (
+            "spec prompt should mention brainstorming skill"
+        )
+        # Ensure the spec prompt doesn't accidentally include a DO NOT brainstorming directive
+        # (a simple heuristic: "do not" and "brainstorming" should not appear on the same line)
+        for line in result.splitlines():
+            line_lower = line.lower()
+            if "brainstorming" in line_lower:
+                assert "do not" not in line_lower, (
+                    f"spec prompt line unexpectedly restricts brainstorming: {line!r}"
+                )
+
 
 # ── setup_logging ────────────────────────────────────────────────────
 
