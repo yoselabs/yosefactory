@@ -20,7 +20,7 @@ class TestSetupBranch:
             mock_repo.git = MagicMock()
 
             adapter = LocalGitAdapter(tmp_path)
-            branch = adapter.setup_branch("15", "main")
+            branch = adapter.setup_branch("agent/15", "main")
 
         assert branch == "agent/15"
         mock_repo.git.checkout.assert_called()
@@ -34,7 +34,7 @@ class TestSetupBranch:
             mock_repo.git = MagicMock()
 
             adapter = LocalGitAdapter(tmp_path)
-            branch = adapter.setup_branch("15", "main")
+            branch = adapter.setup_branch("agent/15", "main")
 
         assert branch == "agent/15"
 
@@ -49,7 +49,7 @@ class TestSetupBranch:
 
             adapter = LocalGitAdapter(tmp_path)
             with pytest.raises(BlockedError, match="conflict"):
-                adapter.setup_branch("15", "main")
+                adapter.setup_branch("agent/15", "main")
 
 
 @pytest.mark.unit
