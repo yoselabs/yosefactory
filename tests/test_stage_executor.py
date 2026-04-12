@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 
 from a2sdlc.config import StageConfig
@@ -54,11 +56,14 @@ def _failure(error: str = "sdk_error") -> RunResult:
     )
 
 
-async def _run(runner: FakeRunner, **kw) -> object:
+async def _run(
+    runner: FakeRunner,
+    on_progress: Callable[[str], None] | None = None,
+):  # noqa: ANN202
     from a2sdlc.stage_executor import StageExecutor
 
     executor = StageExecutor(runner)
-    defaults = dict(
+    return await executor.run(
         user_prompt="Do the work.",
         system_prompt="You are helpful.",
         config=_cfg(),
@@ -66,11 +71,9 @@ async def _run(runner: FakeRunner, **kw) -> object:
         stage=StageName.SPEC,
         project_root="/repo",
         is_resume=False,
-        on_progress=None,
+        on_progress=on_progress,
         branch="main",
     )
-    defaults.update(kw)
-    return await executor.run(**defaults)
 
 
 # ── Tests ─────────────────────────────────────────────────────────────

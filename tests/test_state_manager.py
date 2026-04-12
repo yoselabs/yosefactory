@@ -21,7 +21,7 @@ def _make_state(**kwargs: object) -> TicketState:
         "last_updated": datetime.now(timezone.utc).isoformat(),
     }
     defaults.update(kwargs)
-    return TicketState(**defaults)  # type: ignore[arg-type]
+    return TicketState(**defaults)  # ty: ignore[invalid-argument-type]
 
 
 @pytest.mark.unit
