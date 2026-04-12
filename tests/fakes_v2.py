@@ -90,9 +90,9 @@ class FakeReviewAdapter:
 
     def __init__(
         self,
-        pr_diff: str,
-        pr_comments: list[ReviewComment] | None,
-        approvals: list[Approval] | None,
+        pr_diff: str = "",
+        pr_comments: list[ReviewComment] | None = None,
+        approvals: list[Approval] | None = None,
     ) -> None:
         self._pr_diff = pr_diff
         self._pr_comments: list[ReviewComment] = pr_comments or []
