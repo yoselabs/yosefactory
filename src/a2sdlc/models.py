@@ -66,7 +66,6 @@ class TicketState(BaseModel):
     branch: str
     pr_number: int | None = None
     stage_run_id: str
-    comment_id: str | None = None
     review_cycles: int = 0
     accumulated_cost_usd: float = 0.0
     accumulated_tokens_in: int = 0

@@ -184,7 +184,6 @@ class TestTicketState:
         assert ts.status is None
         assert ts.base_branch == "main"
         assert ts.pr_number is None
-        assert ts.comment_id is None
         assert ts.review_cycles == 0
         assert ts.accumulated_cost_usd == 0.0
         assert ts.accumulated_tokens_in == 0
@@ -195,7 +194,6 @@ class TestTicketState:
         ts = self._make(
             status=StageStatus.COMPLETE,
             pr_number=42,
-            comment_id="cmt-999",
             review_cycles=2,
             accumulated_cost_usd=1.23,
             accumulated_tokens_in=1000,
@@ -204,7 +202,6 @@ class TestTicketState:
         )
         assert ts.status is StageStatus.COMPLETE
         assert ts.pr_number == 42
-        assert ts.comment_id == "cmt-999"
         assert ts.review_cycles == 2
         assert ts.accumulated_cost_usd == pytest.approx(1.23)
         assert ts.accumulated_tokens_in == 1000

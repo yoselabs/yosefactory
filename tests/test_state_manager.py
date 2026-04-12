@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, timezone
 
 import pytest
 
-from a2sdlc.config import get_session_id
 from a2sdlc.models import StageName, TicketState
 from tests.fakes import FakeGitAdapter
 
@@ -111,93 +109,3 @@ class TestCheckIdempotency:
         sm = StateManager(git)
 
         assert sm.check_idempotency("run-42") is False
-
-
-@pytest.mark.unit
-class TestGenerateRunId:
-    def test_github_run_id_and_attempt(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from a2sdlc.state_manager import StateManager
-
-        monkeypatch.setenv("GITHUB_RUN_ID", "12345")
-        monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "3")
-        monkeypatch.delenv("A2SDLC_RUN_ID", raising=False)
-
-        git = FakeGitAdapter()
-        sm = StateManager(git)
-
-        assert sm.generate_run_id() == "12345-3"
-
-    def test_a2sdlc_run_id_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from a2sdlc.state_manager import StateManager
-
-        monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
-        monkeypatch.delenv("GITHUB_RUN_ATTEMPT", raising=False)
-        monkeypatch.setenv("A2SDLC_RUN_ID", "custom-run-id")
-
-        git = FakeGitAdapter()
-        sm = StateManager(git)
-
-        assert sm.generate_run_id() == "custom-run-id"
-
-    def test_fallback_random_uuid(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from a2sdlc.state_manager import StateManager
-
-        monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
-        monkeypatch.delenv("GITHUB_RUN_ATTEMPT", raising=False)
-        monkeypatch.delenv("A2SDLC_RUN_ID", raising=False)
-
-        git = FakeGitAdapter()
-        sm = StateManager(git)
-
-        run_id = sm.generate_run_id()
-        # Must be a valid UUID string
-        parsed = uuid.UUID(run_id)
-        assert str(parsed) == run_id
-
-    def test_github_run_id_without_attempt_uses_a2sdlc_run_id(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Only GITHUB_RUN_ID set (no attempt) — falls through to A2SDLC_RUN_ID."""
-        from a2sdlc.state_manager import StateManager
-
-        monkeypatch.setenv("GITHUB_RUN_ID", "12345")
-        monkeypatch.delenv("GITHUB_RUN_ATTEMPT", raising=False)
-        monkeypatch.setenv("A2SDLC_RUN_ID", "fallback-id")
-
-        git = FakeGitAdapter()
-        sm = StateManager(git)
-
-        assert sm.generate_run_id() == "fallback-id"
-
-
-@pytest.mark.unit
-class TestGetSessionId:
-    def test_delegates_to_config_get_session_id(self) -> None:
-        from a2sdlc.state_manager import StateManager
-
-        git = FakeGitAdapter()
-        sm = StateManager(git)
-
-        expected = get_session_id("PROJ-10", "spec", 0)
-        result = sm.get_session_id("PROJ-10", "spec", review_cycles=0)
-        assert result == expected
-
-    def test_delegates_with_review_cycles(self) -> None:
-        from a2sdlc.state_manager import StateManager
-
-        git = FakeGitAdapter()
-        sm = StateManager(git)
-
-        expected = get_session_id("PROJ-10", "review", 2)
-        result = sm.get_session_id("PROJ-10", "review", review_cycles=2)
-        assert result == expected
-
-    def test_review_cycles_default_zero(self) -> None:
-        from a2sdlc.state_manager import StateManager
-
-        git = FakeGitAdapter()
-        sm = StateManager(git)
-
-        assert sm.get_session_id("PROJ-1", "spec") == get_session_id(
-            "PROJ-1", "spec", 0
-        )

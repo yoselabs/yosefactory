@@ -74,8 +74,7 @@ class TestProgressState:
         assert ps.input_tokens == 5000
 
 
-# NOTE: TestFormatProgress, TestFormatFinal, TestFormatError live in
-# tests/test_runner_helpers.py alongside the other formatting tests.
+# NOTE: Format tests live in tests/progress/test_formatting.py
 
 
 # ── RunResult ────────────────────────────────────────────────────────
@@ -422,4 +421,4 @@ class TestRunStage:
         assert len(result.progress.tool_log) == 2
 
 
-# NOTE: TestHandleAssistantMessage lives in tests/test_runner_handler.py
+# NOTE: TestHandleAssistantMessage lives in tests/runner/test_handler.py

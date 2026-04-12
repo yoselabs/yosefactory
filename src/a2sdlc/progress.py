@@ -73,7 +73,7 @@ def _shorten_path(path: str, project_root: str) -> str:
     return path
 
 
-def _extract_target(name: str, inp: dict, project_root: str) -> str:
+def extract_target(name: str, inp: dict, project_root: str) -> str:
     """Extract a human-readable target from tool input."""
     if name in ("Read", "Edit", "Write"):
         path = inp.get("file_path", "")

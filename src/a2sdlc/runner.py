@@ -23,7 +23,7 @@ from a2sdlc.progress import (
     Milestone,
     ProgressState,
     ToolEntry,
-    _extract_target,
+    extract_target,
     context_window_for_model,
     format_progress,
 )
@@ -217,7 +217,7 @@ def _handle_assistant_message(
         if isinstance(block, ToolUseBlock):
             name = block.name or "unknown"
             inp = block.input if isinstance(block.input, dict) else {}
-            target = _extract_target(name, inp, progress.project_root)
+            target = extract_target(name, inp, progress.project_root)
 
             progress.tool_log.append(
                 ToolEntry(timestamp=elapsed, name=name, target=target)
