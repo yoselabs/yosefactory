@@ -20,8 +20,7 @@ class LocalGitAdapter:
         self._root = project_root
         self._repo = Repo(project_root)
 
-    def setup_branch(self, key: str, base: str) -> str:
-        branch_name = f"agent/{key}"
+    def setup_branch(self, branch_name: str, base: str) -> str:
         logger.info("git.setup_branch", extra={"branch": branch_name, "base": base})
 
         existing = [h for h in self._repo.heads if h.name == branch_name]

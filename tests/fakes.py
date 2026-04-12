@@ -114,11 +114,11 @@ class FakeGitAdapter:
         self.pushes: list[None] = []
         self.written_state: list[str] = []
 
-    def setup_branch(self, key: str, base: str) -> str:
+    def setup_branch(self, branch_name: str, base: str) -> str:
         if self._conflict_on_setup:
             raise BlockedError("conflict on branch setup")
-        self.branch_setups.append((key, base))
-        return f"a2sdlc/{key}"
+        self.branch_setups.append((branch_name, base))
+        return branch_name
 
     def sync_with_base(self, base: str) -> bool:
         return True

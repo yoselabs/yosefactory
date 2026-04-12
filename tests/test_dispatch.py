@@ -468,7 +468,7 @@ class TestDispatchBranchPassing:
         await dispatch(h.ctx)
 
         assert len(h.runner.calls) == 1
-        assert h.runner.calls[0].branch == "a2sdlc/T-1"
+        assert h.runner.calls[0].branch == "T-1"
 
 
 @pytest.mark.unit
