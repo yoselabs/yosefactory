@@ -217,8 +217,9 @@ def main(argv: list[str] | None = None) -> None:
                 )
 
         ctx = DispatchContext(
-            tickets=tickets,
+            work=tickets,  # ty: ignore[invalid-argument-type]  # TODO(task-16): split
             git=git,
+            review=tickets,  # ty: ignore[invalid-argument-type]  # TODO(task-16): split
             runner=_SdkRunner(),
             config=config,
             project_root=project_root,
