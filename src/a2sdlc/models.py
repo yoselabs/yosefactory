@@ -36,6 +36,20 @@ class Gate(StrEnum):
     AUTO_MERGE = "auto_merge"
 
 
+class GateMode(StrEnum):
+    """Gate mode: automatic or human-in-the-loop."""
+
+    AUTO = "auto"
+    HUMAN = "human"
+
+
+class GateConfig(BaseModel):
+    """Gate configuration for the pipeline."""
+
+    merge: GateMode = GateMode.HUMAN
+    review: GateMode = GateMode.AUTO
+
+
 # ── Transition table ──────────────────────────────────────────────
 
 

@@ -7,12 +7,11 @@ from pathlib import Path
 import pytest
 
 from a2sdlc.config import (
-    PipelineFlags,
     ProjectConfig,
     load_config_file,
-    resolve_flags,
     load_stage_config,
 )
+from a2sdlc.models import GateMode
 from a2sdlc.stages import STAGES, get_stage
 
 
@@ -52,54 +51,6 @@ class TestStageRegistry:
             get_stage("nonexistent")
 
 
-# ── PipelineFlags ─────────────────────────────────────────────────────
-
-
-@pytest.mark.unit
-class TestPipelineFlags:
-    def test_defaults(self) -> None:
-        flags = PipelineFlags()
-        assert flags.auto_spec is False
-        assert flags.auto_proceed is True
-        assert flags.auto_merge is False
-
-    def test_frozen(self) -> None:
-        flags = PipelineFlags()
-        with pytest.raises(AttributeError):
-            flags.auto_spec = True  # type: ignore[misc]  # ty: ignore[invalid-assignment]
-
-
-# ── resolve_flags ─────────────────────────────────────────────────────
-
-
-@pytest.mark.unit
-class TestResolveFlags:
-    def test_no_overrides(self) -> None:
-        flags = resolve_flags(PipelineFlags(), labels=["agent", "bug"])
-        assert flags == PipelineFlags()
-
-    def test_auto_spec_label(self) -> None:
-        flags = resolve_flags(PipelineFlags(), labels=["agent", "auto-spec"])
-        assert flags.auto_spec is True
-        assert flags.auto_proceed is True
-
-    def test_auto_merge_label(self) -> None:
-        flags = resolve_flags(PipelineFlags(), labels=["agent", "auto-merge"])
-        assert flags.auto_merge is True
-
-    def test_spec_only_label(self) -> None:
-        flags = resolve_flags(PipelineFlags(), labels=["agent", "spec-only"])
-        assert flags.auto_proceed is False
-
-    def test_combined_labels(self) -> None:
-        flags = resolve_flags(
-            PipelineFlags(), labels=["agent", "auto-spec", "auto-merge"]
-        )
-        assert flags.auto_spec is True
-        assert flags.auto_merge is True
-        assert flags.auto_proceed is True
-
-
 # ── load_config_file ──────────────────────────────────────────────────
 
 
@@ -110,7 +61,6 @@ class TestLoadConfigFile:
         config_file.write_text("adapter: github\n")
         config = load_config_file(tmp_path)
         assert config.adapter == "github"
-        assert config.auto_merge is False
         assert config.default_base == "main"
 
     def test_load_full(self, tmp_path: Path) -> None:
@@ -118,7 +68,6 @@ class TestLoadConfigFile:
         config_file.write_text(
             "adapter: github\n"
             "pipeline:\n"
-            "  auto_merge: true\n"
             "  default_base: develop\n"
             "stages:\n"
             "  implement:\n"
@@ -126,19 +75,17 @@ class TestLoadConfigFile:
             "    max_turns: 200\n"
         )
         config = load_config_file(tmp_path)
-        assert config.auto_merge is True
         assert config.default_base == "develop"
 
     def test_missing_file_returns_defaults(self, tmp_path: Path) -> None:
         config = load_config_file(tmp_path)
         assert config.adapter == "github"
 
-    def test_pipeline_flags_method(self) -> None:
-        config = ProjectConfig(auto_spec=True, auto_merge=True)
-        flags = config.pipeline_flags()
-        assert flags.auto_spec is True
-        assert flags.auto_merge is True
-        assert flags.auto_proceed is True
+    def test_auto_spec_still_works(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "a2sdlc.yaml"
+        config_file.write_text("pipeline:\n  auto_spec: true\n")
+        config = load_config_file(tmp_path)
+        assert config.auto_spec is True
 
 
 # ── load_stage_config ─────────────────────────────────────────────────
@@ -192,3 +139,83 @@ class TestGetSessionId:
         sid1 = get_session_id("PROJ-1", "spec")
         sid2 = get_session_id("PROJ-1", "implement")
         assert sid1 != sid2
+
+    def test_different_review_cycles_produce_different_ids(self) -> None:
+        from a2sdlc.config import get_session_id
+
+        sid0 = get_session_id("PROJ-1", "review", review_cycles=0)
+        sid1 = get_session_id("PROJ-1", "review", review_cycles=1)
+        sid2 = get_session_id("PROJ-1", "review", review_cycles=2)
+        assert sid0 != sid1
+        assert sid1 != sid2
+        assert sid0 != sid2
+
+    def test_deterministic_with_review_cycles(self) -> None:
+        from a2sdlc.config import get_session_id
+
+        sid1 = get_session_id("PROJ-42", "review", review_cycles=3)
+        sid2 = get_session_id("PROJ-42", "review", review_cycles=3)
+        assert sid1 == sid2
+
+    def test_default_review_cycles_backward_compat(self) -> None:
+        from a2sdlc.config import get_session_id
+
+        # Calling with explicit 0 should match default
+        sid_default = get_session_id("PROJ-1", "spec")
+        sid_explicit = get_session_id("PROJ-1", "spec", review_cycles=0)
+        assert sid_default == sid_explicit
+
+
+# ── gate_config ───────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestGateConfig:
+    def test_defaults_merge_human_review_auto(self) -> None:
+        config = ProjectConfig()
+        gates = config.gate_config()
+        assert gates.merge == GateMode.HUMAN
+        assert gates.review == GateMode.AUTO
+
+    def test_parse_merge_auto_from_yaml(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "a2sdlc.yaml"
+        config_file.write_text("pipeline:\n  gates:\n    merge: auto\n")
+        config = load_config_file(tmp_path)
+        gates = config.gate_config()
+        assert gates.merge == GateMode.AUTO
+        assert gates.review == GateMode.AUTO  # default
+
+    def test_parse_both_gates_from_yaml(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "a2sdlc.yaml"
+        config_file.write_text(
+            "pipeline:\n  gates:\n    merge: auto\n    review: human\n"
+        )
+        config = load_config_file(tmp_path)
+        gates = config.gate_config()
+        assert gates.merge == GateMode.AUTO
+        assert gates.review == GateMode.HUMAN
+
+    def test_no_pipeline_gates_section_uses_defaults(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "a2sdlc.yaml"
+        config_file.write_text("adapter: github\n")
+        config = load_config_file(tmp_path)
+        gates = config.gate_config()
+        assert gates.merge == GateMode.HUMAN
+        assert gates.review == GateMode.AUTO
+
+    def test_pipeline_section_no_gates_key_uses_defaults(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "a2sdlc.yaml"
+        config_file.write_text("pipeline:\n  default_base: develop\n")
+        config = load_config_file(tmp_path)
+        gates = config.gate_config()
+        assert gates.merge == GateMode.HUMAN
+        assert gates.review == GateMode.AUTO
+
+    def test_auto_spec_independent_of_gates(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "a2sdlc.yaml"
+        config_file.write_text(
+            "pipeline:\n  auto_spec: true\n  gates:\n    merge: auto\n"
+        )
+        config = load_config_file(tmp_path)
+        assert config.auto_spec is True
+        assert config.gate_config().merge == GateMode.AUTO

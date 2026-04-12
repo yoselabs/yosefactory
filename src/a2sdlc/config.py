@@ -10,6 +10,8 @@ from pathlib import Path
 
 import yaml
 
+from a2sdlc.models import GateConfig, GateMode
+
 logger = logging.getLogger("a2sdlc.config")
 
 # ── Stage configuration ───────────────────────────────────────────────
@@ -65,48 +67,11 @@ def load_config(stage: str, **overrides: object) -> StageConfig:
 # ── Session helpers ──────────────────────────────────────────────────
 
 
-def get_session_id(ticket_key: str, stage: str) -> str:
-    """Deterministic UUID from ticket key + stage name."""
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"a2sdlc:{ticket_key}:{stage}"))
-
-
-# ── Pipeline flags ────────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class PipelineFlags:
-    """Boolean flags controlling pipeline autonomy.
-
-    Set via project config defaults, overridden by issue labels or CLI flags.
-    """
-
-    auto_spec: bool = False  # true = skip Q&A, agent self-answers
-    auto_proceed: bool = True  # true = spec→implement without approval
-    auto_merge: bool = False  # true = merge after review passes
-
-
-# Label → (flag_name, value) mapping
-_LABEL_FLAG_MAP: dict[str, tuple[str, bool]] = {
-    "auto-spec": ("auto_spec", True),
-    "auto-merge": ("auto_merge", True),
-    "spec-only": ("auto_proceed", False),
-}
-
-
-def resolve_flags(defaults: PipelineFlags, labels: list[str]) -> PipelineFlags:
-    """Build a new PipelineFlags from defaults + label overrides.
-
-    Labels matching ``_LABEL_FLAG_MAP`` set the corresponding flag value.
-    Unknown labels are silently ignored.
-    """
-    patches: dict[str, bool] = {}
-    for label in labels:
-        if label in _LABEL_FLAG_MAP:
-            flag_name, value = _LABEL_FLAG_MAP[label]
-            patches[flag_name] = value
-    if not patches:
-        return defaults
-    return replace(defaults, **patches)
+def get_session_id(ticket_key: str, stage: str, review_cycles: int = 0) -> str:
+    """Deterministic UUID from ticket key + stage name + review_cycles."""
+    return str(
+        uuid.uuid5(uuid.NAMESPACE_URL, f"a2sdlc:{ticket_key}:{stage}:{review_cycles}")
+    )
 
 
 # ── Project configuration ─────────────────────────────────────────────
@@ -118,19 +83,14 @@ class ProjectConfig:
 
     adapter: str = "github"
     auto_spec: bool = False
-    auto_proceed: bool = True
-    auto_merge: bool = False
     default_base: str = "main"
     test_command: str = "make test"
     stage_overrides: dict[str, dict[str, object]] = field(default_factory=dict)
+    _gates: GateConfig = field(default_factory=GateConfig, repr=False, compare=False)
 
-    def pipeline_flags(self) -> PipelineFlags:
-        """Build PipelineFlags from project config."""
-        return PipelineFlags(
-            auto_spec=self.auto_spec,
-            auto_proceed=self.auto_proceed,
-            auto_merge=self.auto_merge,
-        )
+    def gate_config(self) -> GateConfig:
+        """Return the gate configuration."""
+        return self._gates
 
 
 def load_config_file(project_root: Path) -> ProjectConfig:
@@ -151,6 +111,17 @@ def load_config_file(project_root: Path) -> ProjectConfig:
     pipeline = data.get("pipeline", {})
     pipeline = pipeline if isinstance(pipeline, dict) else {}
 
+    gates_raw = pipeline.get("gates", {})
+    gates_raw = gates_raw if isinstance(gates_raw, dict) else {}
+
+    merge_mode = (
+        GateMode(str(gates_raw["merge"])) if "merge" in gates_raw else GateMode.HUMAN
+    )
+    review_mode = (
+        GateMode(str(gates_raw["review"])) if "review" in gates_raw else GateMode.AUTO
+    )
+    gates = GateConfig(merge=merge_mode, review=review_mode)
+
     stages_raw = data.get("stages", {})
     stage_overrides: dict[str, dict[str, object]] = {}
     if isinstance(stages_raw, dict):
@@ -158,15 +129,15 @@ def load_config_file(project_root: Path) -> ProjectConfig:
             if isinstance(stage_data, dict):
                 stage_overrides[str(stage_name)] = stage_data
 
-    return ProjectConfig(
+    config = ProjectConfig(
         adapter=str(data.get("adapter", "github")),
         auto_spec=bool(pipeline.get("auto_spec", False)),
-        auto_proceed=bool(pipeline.get("auto_proceed", True)),
-        auto_merge=bool(pipeline.get("auto_merge", False)),
         default_base=str(pipeline.get("default_base", "main")),
         test_command=str(data.get("test_command", "make test")),
         stage_overrides=stage_overrides,
     )
+    config._gates = gates  # noqa: SLF001
+    return config
 
 
 def load_stage_config(stage_name: str, project: ProjectConfig) -> StageConfig:
@@ -190,15 +161,3 @@ def load_stage_config(stage_name: str, project: ProjectConfig) -> StageConfig:
     valid_fields = {f.name for f in dataclasses.fields(StageConfig)}
     patches = {k: v for k, v in overrides.items() if k in valid_fields}
     return replace(base, **patches)
-
-
-# ── Backward-compat shim ──────────────────────────────────────────────
-
-
-def load_project(project_root: Path) -> ProjectConfig:
-    """Backward-compatible shim: delegates to ``load_config_file``.
-
-    .. deprecated::
-        Use ``load_config_file`` directly.
-    """
-    return load_config_file(project_root)

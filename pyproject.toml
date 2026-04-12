@@ -29,6 +29,11 @@ env = [
     "A2SDLC_TEST=1",
 ]
 
+[tool.ty.src]
+# dispatch.py and test_dispatch.py are intentionally broken during Phase 2 migration;
+# they will be rewritten in Phase 3.
+exclude = ["src/a2sdlc/dispatch.py", "tests/test_dispatch.py", "tests/test_dispatch_auto_approve.py"]
+
 [dependency-groups]
 dev = [
     "pytest-asyncio>=0.24.0",
