@@ -69,8 +69,11 @@ class FakeWorkAdapter:
     def finalize_comment(self, comment_id: str, body: str) -> None:
         self.finalized_comments.append((comment_id, body))
 
-    def set_label(self, key: str, label: str) -> None:
-        self.label_history.append((key, label))
+    def set_stage_label(self, key: str, stage: StageName) -> None:
+        self.label_history.append((key, f"stage:{stage.value}"))
+
+    def set_done_label(self, key: str) -> None:
+        self.label_history.append((key, "stage:done"))
 
     def set_blocked(self, key: str, reason: str) -> None:
         self.blocked.append((key, reason))
@@ -98,45 +101,47 @@ class FakeReviewAdapter:
         # Call records
         self.created_prs: list[
             tuple[str, str, str, str]
-        ] = []  # (title, body, head, base)
-        self.updated_prs: list[tuple[int, str, str]] = []  # (pr_number, title, body)
+        ] = []  # (branch, base, title, ticket_key)
+        self.updated_prs: list[
+            tuple[int, str, str, str]
+        ] = []  # (pr_number, title, body, ticket_key)
         self.ready_prs: list[int] = []  # pr_numbers
         self.merged_prs: list[tuple[int, str]] = []  # (pr_number, method)
-        self.reviews: list[tuple[int, str, str]] = []  # (pr_number, body, event)
+        self.reviews: list[tuple[int, str, str]] = []  # (pr_number, body, verdict)
 
         self._pr_counter = 0
 
-    def get_diff(self, pr_number: int) -> str:
-        return self._pr_diff
+    def create_draft_pr(
+        self,
+        branch: str,
+        base: str,
+        title: str,
+        ticket_key: str,
+    ) -> int:
+        self._pr_counter += 1
+        self.created_prs.append((branch, base, title, ticket_key))
+        return self._pr_counter
 
-    def get_comments(self, pr_number: int) -> list[ReviewComment]:
-        return list(self._pr_comments)
+    def update_pr(self, pr_number: int, title: str, body: str, ticket_key: str) -> None:
+        self.updated_prs.append((pr_number, title, body, ticket_key))
+
+    def mark_pr_ready(self, pr_number: int) -> None:
+        self.ready_prs.append(pr_number)
+
+    def merge_pr(self, pr_number: int, method: str = "squash") -> None:
+        self.merged_prs.append((pr_number, method))
 
     def get_approvals(self, pr_number: int) -> list[Approval]:
         return list(self._approvals)
 
-    def create_draft_pr(
-        self,
-        title: str,
-        body: str,
-        head: str,
-        base: str,
-    ) -> int:
-        self._pr_counter += 1
-        self.created_prs.append((title, body, head, base))
-        return self._pr_counter
+    def post_review(self, pr_number: int, body: str, verdict: str) -> None:
+        self.reviews.append((pr_number, body, verdict))
 
-    def update_pr(self, pr_number: int, title: str, body: str) -> None:
-        self.updated_prs.append((pr_number, title, body))
+    def read_pr_diff(self, pr_number: int) -> str:
+        return self._pr_diff
 
-    def mark_ready(self, pr_number: int) -> None:
-        self.ready_prs.append(pr_number)
-
-    def post_review(self, pr_number: int, body: str, event: str) -> None:
-        self.reviews.append((pr_number, body, event))
-
-    def merge_pr(self, pr_number: int, method: str = "squash") -> None:
-        self.merged_prs.append((pr_number, method))
+    def read_pr_comments(self, pr_number: int) -> list[ReviewComment]:
+        return list(self._pr_comments)
 
 
 # ── FakeGitAdapter ────────────────────────────────────────────────────

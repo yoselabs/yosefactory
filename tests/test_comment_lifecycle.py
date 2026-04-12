@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pytest
 
+from a2sdlc.models import StageName
 from tests.fakes_v2 import FakeWorkAdapter
 
 
@@ -144,14 +145,14 @@ def test_format_branch_works_for_various_keys(adapter: FakeWorkAdapter) -> None:
 # ── label_history ──────────────────────────────────────────────────────
 
 
-def test_set_label_records_key_and_label(adapter: FakeWorkAdapter) -> None:
-    adapter.set_label("PROJ-1", "stage:implement")
+def test_set_stage_label_records_key_and_label(adapter: FakeWorkAdapter) -> None:
+    adapter.set_stage_label("PROJ-1", StageName.IMPLEMENT)
     assert ("PROJ-1", "stage:implement") in adapter.label_history
 
 
-def test_set_label_records_multiple_calls(adapter: FakeWorkAdapter) -> None:
-    adapter.set_label("PROJ-1", "stage:spec")
-    adapter.set_label("PROJ-1", "stage:implement")
+def test_set_stage_label_records_multiple_calls(adapter: FakeWorkAdapter) -> None:
+    adapter.set_stage_label("PROJ-1", StageName.SPEC)
+    adapter.set_stage_label("PROJ-1", StageName.IMPLEMENT)
     assert len(adapter.label_history) == 2
 
 
