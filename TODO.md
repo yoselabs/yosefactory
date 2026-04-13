@@ -59,7 +59,7 @@
 
 - [ ] Docker image for CI (eliminate 2-min install overhead per stage)
 - [ ] Retry/backoff on GitHub API calls (PyGithub)
-- [ ] Engine CI — run tests on push to agentic-eng/a2sdlc
+- [ ] Engine CI — run tests on push to yoselabs/a2sdlc
 - [ ] Flow trace review step — walk through each UC end-to-end across systems before shipping
 
 ## Status Block Robustness

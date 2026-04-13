@@ -102,7 +102,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - run: pip install git+https://...@github.com/agentic-eng/a2sdlc.git
+      - run: pip install git+https://...@github.com/yoselabs/a2sdlc.git
       - run: a2sdlc dispatch
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
