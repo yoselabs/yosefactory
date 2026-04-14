@@ -143,7 +143,16 @@ Each stage posts a handover comment on the issue (REVIEW posts on the PR). The f
 
 **Footer**: existing collapsible Stats block — status bar table, milestones with timestamps, task checkpoints. No changes to the stats format.
 
-The engine identifies handover comments by regex: `a2sdlc:(spec|implement|review|merge)` anywhere in the comment. No tag-specific parsing needed. Works on every platform.
+The engine identifies handover comments by a regex pattern **compiled from the `StageName` enum**:
+
+```python
+HANDOVER_PREFIX = "a2sdlc:"
+HANDOVER_PATTERN = re.compile(
+    rf"{HANDOVER_PREFIX}({'|'.join(s.value for s in StageName)})"
+)
+```
+
+Adding a new stage to `StageName` automatically updates the pattern. No hardcoded stage lists anywhere — `StageName` is the single source of truth for stage names, label names, handover markers, and routing.
 
 ### How Context Flows Between Stages
 
@@ -160,7 +169,7 @@ Issue body: "Add drag and drop support"
 
 The engine builds each stage's input by reading this thread:
 
-1. **Find last handover** — scan issue comments AND PR comments for the `a2sdlc:(spec|implement|review|merge)` regex pattern. Most recent match across both locations wins.
+1. **Find last handover** — scan issue comments AND PR comments using `HANDOVER_PATTERN` (compiled from `StageName` enum). Most recent match across both locations wins.
 2. **Collect post-handover feedback** — all comments after the handover's timestamp that contain `@a2sdlc` or are PR review submissions. From both issue and PR.
 3. **Collect PR state** (if PR exists) — diff summary, inline review comments with file/line metadata.
 4. **Build agent prompt**:
