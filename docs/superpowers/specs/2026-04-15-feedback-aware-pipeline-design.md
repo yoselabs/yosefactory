@@ -107,18 +107,10 @@ Jira: no CI integration. Future path: Jira Automation webhook or JQL-based cron 
 
 ### Comment Format
 
-Each stage posts a handover comment on the issue (REVIEW posts on the PR). The comment starts with a **status bar** — a collapsible `<details>` block that serves double duty: telemetry for humans and machine-readable marker for the engine.
+Each stage posts a handover comment on the issue (REVIEW posts on the PR). The format follows the existing progress comment structure with the handover marker added to the header:
 
 ```
-<details><summary><b>a2sdlc:spec</b> · 45s · 48K tokens · opus-4 · 8 turns</summary>
-
-tokens_in: 32000
-tokens_out: 16000
-cost: $0.42
-context_window: 200000
-run_id: abc123
-
-</details>
+### ✅ a2sdlc:spec
 
 ## Specification Complete
 
@@ -127,11 +119,31 @@ run_id: abc123
 
 ### Technical Approach
 ...
+
+<details>
+<summary>Stats</summary>
+
+| Model | Branch | Context | Cost | Tokens | Duration | Turns |
+|-------|--------|---------|------|--------|----------|-------|
+| claude-sonnet-4-6 | feat/T-1 | 45k/200k (22%) | $0.72 | 45k in / 12k out | 2m 15s | 12/120 |
+
+📌 0:42 — brainstorming invoked
+📌 2:10 — requesting-code-review invoked
+
+✅ Analyze requirements
+✅ Write implementation plan
+✅ Draft acceptance criteria
+
+</details>
 ```
 
-The engine identifies handover comments by matching `a2sdlc:` followed by a known stage name (`spec`, `implement`, `review`, `merge`) inside a `<summary>` tag. The status bar's expanded section holds telemetry metadata. The rest of the comment is human-readable stage output.
+**Header**: `### ✅ a2sdlc:{stage}` — visible stage name at the top, doubles as the handover marker. During execution: `### ⏳ a2sdlc:{stage}`. On failure: `### 🚨 a2sdlc:{stage}`.
 
-On GitHub/GitLab/Forgejo, the status bar renders as a single collapsible line. On platforms that don't support `<details>` (Jira), it falls back to visible text — still parseable.
+**Body**: human-readable stage output (spec, implementation report, review feedback).
+
+**Footer**: existing collapsible Stats block — status bar table, milestones with timestamps, task checkpoints. No changes to the stats format.
+
+The engine identifies handover comments by regex: `a2sdlc:(spec|implement|review|merge)` anywhere in the comment. No tag-specific parsing needed. Works on every platform.
 
 ### How Context Flows Between Stages
 
@@ -139,16 +151,16 @@ The issue's comment thread IS the context chain:
 
 ```
 Issue body: "Add drag and drop support"
-  Comment 1: <b>a2sdlc:spec</b> · 45s · ...     [spec output]
-  Comment 2: <b>a2sdlc:implement</b> · 3m · ...  [impl report]
-  PR Comment: <b>a2sdlc:review</b> · 1m · ...    [review feedback]
-  Comment 3: Human: "@a2sdlc drag and drop broken" [feedback]
-  Comment 4: <b>a2sdlc:implement</b> · 2m · ...   [fix report]
+  Comment 1: ### ✅ a2sdlc:spec         [spec output + stats]
+  Comment 2: ### ✅ a2sdlc:implement    [impl report + stats]
+  PR Comment: ### ✅ a2sdlc:review      [review feedback + stats]
+  Comment 3: Human: "@a2sdlc drag and drop broken"
+  Comment 4: ### ✅ a2sdlc:implement    [fix report + stats]
 ```
 
 The engine builds each stage's input by reading this thread:
 
-1. **Find last handover** — scan issue comments AND PR comments for the `a2sdlc:{stage}` marker in the status bar. Most recent across both locations wins.
+1. **Find last handover** — scan issue comments AND PR comments for the `a2sdlc:(spec|implement|review|merge)` regex pattern. Most recent match across both locations wins.
 2. **Collect post-handover feedback** — all comments after the handover's timestamp that contain `@a2sdlc` or are PR review submissions. From both issue and PR.
 3. **Collect PR state** (if PR exists) — diff summary, inline review comments with file/line metadata.
 4. **Build agent prompt**:
