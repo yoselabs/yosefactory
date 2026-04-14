@@ -137,9 +137,9 @@ The HTML comment marker (`<!-- a2sdlc:handover ... -->`) is machine-readable. Th
 
 The engine assembles context for each stage using one uniform algorithm:
 
-1. **Find last handover comment** — scan issue comments for the `<!-- a2sdlc:handover -->` marker. This is the primary context.
-2. **Collect post-handover comments** — all comments posted AFTER the last handover that contain `@a2sdlc` or are from the engine's own review. These are the feedback items.
-3. **Collect PR state** (if PR exists) — diff summary, PR review comments with file/line metadata.
+1. **Find last handover comment** — scan BOTH issue comments AND PR comments for the `<!-- a2sdlc:handover -->` marker. Take the most recent across both locations. This is the primary context. (REVIEW posts handover on the PR; all other stages post on the issue.)
+2. **Collect post-handover feedback** — all comments posted AFTER the last handover's `created_at` timestamp that either (a) contain the trigger phrase (`@a2sdlc`) or (b) are PR review submissions. Collected from both issue and PR. These are the feedback items.
+3. **Collect PR state** (if PR exists) — diff summary, PR inline review comments with file/line metadata.
 4. **Set system prompt mode hint** — one line: "You are implementing a fresh specification" vs "You are addressing review feedback on your previous implementation."
 
 This is one code path regardless of whether it is a first run, a review cycle, or a human feedback cycle. The handover comment is the cursor — everything before it is history, everything after it is new input.
@@ -343,20 +343,65 @@ The REVIEW stage posts feedback as a PR comment (like CodeRabbit or Copilot code
 
 This creates a uniform interface: human review feedback, AI review feedback, and CodeRabbit feedback all look the same on the PR.
 
+## Data Models
+
+### FeedbackItem
+
+```python
+@dataclass
+class FeedbackItem:
+    id: str                # Platform-native ID (e.g., GitHub comment ID)
+    author: str            # Username of commenter
+    author_type: str       # "human" | "bot"
+    source: str            # "issue_comment" | "pr_comment" | "pr_inline" | "pr_review"
+    body: str              # Comment text
+    file_path: str | None  # For pr_inline: file path
+    line_range: tuple[int, int] | None  # For pr_inline: start/end lines
+    created_at: datetime   # When the comment was posted
+```
+
+### HandoverComment
+
+```python
+@dataclass
+class HandoverComment:
+    stage: StageName       # Which stage produced this
+    run_id: str            # Unique run identifier
+    body: str              # Full comment body (markdown)
+    created_at: datetime   # When posted — used as the "since" timestamp for feedback collection
+    location: str          # "issue" | "pr" — where the comment lives
+```
+
 ## Configuration
+
+### Mapping to Existing Code
+
+The existing `ProjectConfig` has `GateConfig` with `review` and `merge` fields, and `StageConfig` with `max_review_cycles` (default: 2). The existing `auto_spec` boolean on `ProjectConfig` controls whether SPEC self-answers questions.
+
+New and changed config fields:
+
+| Spec field | Existing code field | Status |
+|-----------|-------------------|--------|
+| `gates.spec` | (none) | **New** — adds gate between SPEC and IMPLEMENT |
+| `gates.review` | `GateConfig.review` | **Preserved** — keeps existing AUTO/HUMAN gate between IMPLEMENT and REVIEW |
+| `gates.merge` | `GateConfig.merge` | **Preserved** — no change |
+| `spec.self_answer` | `ProjectConfig.auto_spec` | **Renamed** — same behavior, clearer name |
+| `review.max_cycles` | `StageConfig.max_review_cycles` | **Preserved** — default remains 2 |
+| `trigger.mention` | (none) | **New** — configurable trigger phrase, default "@a2sdlc" |
 
 ```yaml
 # a2sdlc.yaml
 pipeline:
   gates:
-    spec: auto          # auto | human
-    merge: human        # auto | human (human = require PR approval)
+    spec: auto          # auto | human (NEW — default auto)
+    review: auto        # auto | human (EXISTING — preserved)
+    merge: human        # auto | human (EXISTING — preserved)
   spec:
-    self_answer: true   # if spec has questions, agent makes assumptions
+    self_answer: true   # renamed from auto_spec — agent makes assumptions
   review:
-    max_cycles: 3       # circuit breaker for review loops
+    max_cycles: 2       # circuit breaker for review loops (EXISTING — default 2)
   trigger:
-    mention: "@a2sdlc"  # configurable trigger phrase
+    mention: "@a2sdlc"  # configurable trigger phrase (NEW)
 ```
 
 ## State Machine
@@ -381,12 +426,38 @@ Transitions:
 | SPEC | complete | spec: human | wait for human |
 | SPEC | questions | spec.self_answer: true | SPEC (self-answer, same run) |
 | SPEC | questions | spec.self_answer: false | wait for human |
-| IMPLEMENT | complete | review: auto (hardcoded, no human gate between impl and review) | REVIEW |
+| IMPLEMENT | complete | review: auto | REVIEW |
+| IMPLEMENT | complete | review: human | wait for human (existing gate, preserved) |
 | REVIEW | approved | merge: auto | MERGE |
 | REVIEW | approved | merge: human | wait for human approval |
 | REVIEW | changes_requested | - | IMPLEMENT |
-| any gate | @a2sdlc comment | - | IMPLEMENT (feedback is always treated as implementation-level; if it is truly a spec change, the agent can flag it in its handover comment) |
+| SPEC or no stage | @a2sdlc comment | - | SPEC (no code exists yet, feedback is spec-level) |
+| IMPLEMENT+ | @a2sdlc comment | - | IMPLEMENT (feedback is implementation-level; if truly a spec change, agent can flag it) |
 | MERGE gate | PR approved | - | MERGE |
+
+## Current State vs Target State
+
+| Component | Current | Target | Status |
+|-----------|---------|--------|--------|
+| Label-driven stage transitions | Yes | Yes | **Preserved** |
+| `parse_event()` handles labels | Yes | Yes + comment/review events | **Extended** |
+| `PipelineEvent.is_resume` | Yes | Yes (backward-compatible) | **Preserved** |
+| `PipelineEvent.is_feedback` | No | Yes | **New** |
+| `GateConfig.review` | Yes (AUTO/HUMAN) | Yes | **Preserved** |
+| `GateConfig.merge` | Yes (HUMAN default) | Yes | **Preserved** |
+| `GateConfig.spec` | No | Yes (AUTO default) | **New** |
+| `auto_spec` config | Yes (boolean) | Renamed to `spec.self_answer` | **Renamed** |
+| `max_review_cycles` | Yes (default 2) | Yes (default 2) | **Preserved** |
+| Trigger phrase config | No | `trigger.mention` | **New** |
+| Handover comment format | Ad-hoc per stage | Standardized with HTML marker | **Changed** |
+| Context assembly | Per-stage custom | Uniform handover algorithm | **Changed** |
+| Feedback collection from PR | `read_pr_comments()` exists | Extended with `collect_pr_feedback()` | **Extended** |
+| Feedback collection from issue | Not implemented | `collect_issue_feedback()` | **New** |
+| REVIEW posts PR comment | Via `post_review()` | Same + handover marker | **Extended** |
+| CI workflow events | `issues.labeled` only | + comment, review events | **Extended** |
+| CI concurrency groups | Not configured | Per-ticket groups | **New** |
+| Stage runner (runner.py) | As-is | As-is | **Not changed** |
+| Stage tool configs | As-is | As-is | **Not changed** |
 
 ## What Changes in Existing Code
 
@@ -400,8 +471,12 @@ Transitions:
 ### Changed in Dispatch
 
 - Context assembly uses the handover pattern (find last handover + collect post-handover feedback)
-- `parse_event()` extended to handle new event types: `issue_comment` (extracts ticket key from issue, sets `is_feedback=True`), `pull_request_review` and `pull_request_review_comment` (extracts ticket key from PR, sets `is_feedback=True`)
-- When `is_feedback=True`, the engine routes to IMPLEMENT regardless of current stage (feedback always re-enters the pipeline through implementation)
+- `parse_event()` extended to handle new event types: `issue_comment` (extracts ticket key from issue), `pull_request_review` and `pull_request_review_comment` (extracts ticket key from PR)
+- New `PipelineEvent` field: `is_feedback: bool` — True for comment/review events, False for label events. This is distinct from the existing `is_resume` field, which handles the specific case of human answering SPEC questions via `needs-input` label. The relationship: `is_resume` is a special case where feedback re-enters SPEC; `is_feedback` is the general case where feedback re-enters the pipeline
+- Feedback routing by current stage (determined from the `stage` field of the last handover comment, which is the authoritative source; falls back to issue labels if no handover exists):
+  - Current stage is SPEC or no stage yet → re-run SPEC
+  - Current stage is IMPLEMENT, REVIEW, or at merge gate → re-run IMPLEMENT
+  - The `is_resume` flow (needs-input label + issue comment) is preserved as-is for backward compatibility
 - Feedback items injected into agent user prompt as structured markdown
 
 ### Changed in Stages
