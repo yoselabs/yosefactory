@@ -105,12 +105,21 @@ Jira: no CI integration. Future path: Jira Automation webhook or JQL-based cron 
 
 ## Handover Pattern
 
-### How It Works
+### Comment Format
 
-Each stage posts a structured handover comment on the issue (REVIEW posts on the PR). The comment has an HTML marker for machine parsing and human-readable markdown for audit.
+Each stage posts a handover comment on the issue (REVIEW posts on the PR). The comment starts with a **status bar** — a collapsible `<details>` block that serves double duty: telemetry for humans and machine-readable marker for the engine.
 
 ```
-<!-- a2sdlc:handover stage=spec run_id=abc123 -->
+<details><summary><b>a2sdlc:spec</b> · 45s · 48K tokens · opus-4 · 8 turns</summary>
+
+tokens_in: 32000
+tokens_out: 16000
+cost: $0.42
+context_window: 200000
+run_id: abc123
+
+</details>
+
 ## Specification Complete
 
 ### Acceptance Criteria
@@ -118,10 +127,11 @@ Each stage posts a structured handover comment on the issue (REVIEW posts on the
 
 ### Technical Approach
 ...
-
----
-*a2sdlc | spec | 45s | 12K tokens*
 ```
+
+The engine identifies handover comments by matching `a2sdlc:` followed by a known stage name (`spec`, `implement`, `review`, `merge`) inside a `<summary>` tag. The status bar's expanded section holds telemetry metadata. The rest of the comment is human-readable stage output.
+
+On GitHub/GitLab/Forgejo, the status bar renders as a single collapsible line. On platforms that don't support `<details>` (Jira), it falls back to visible text — still parseable.
 
 ### How Context Flows Between Stages
 
@@ -129,16 +139,16 @@ The issue's comment thread IS the context chain:
 
 ```
 Issue body: "Add drag and drop support"
-  Comment 1: <!-- a2sdlc:handover stage=spec -->     [spec output]
-  Comment 2: <!-- a2sdlc:handover stage=implement --> [impl report]
-  PR Comment: <!-- a2sdlc:handover stage=review -->   [review feedback]
-  Comment 3: Human: "@a2sdlc drag and drop broken"    [feedback]
-  Comment 4: <!-- a2sdlc:handover stage=implement --> [fix report]
+  Comment 1: <b>a2sdlc:spec</b> · 45s · ...     [spec output]
+  Comment 2: <b>a2sdlc:implement</b> · 3m · ...  [impl report]
+  PR Comment: <b>a2sdlc:review</b> · 1m · ...    [review feedback]
+  Comment 3: Human: "@a2sdlc drag and drop broken" [feedback]
+  Comment 4: <b>a2sdlc:implement</b> · 2m · ...   [fix report]
 ```
 
 The engine builds each stage's input by reading this thread:
 
-1. **Find last handover** — scan issue comments AND PR comments for the `<!-- a2sdlc:handover -->` marker. Most recent across both locations wins.
+1. **Find last handover** — scan issue comments AND PR comments for the `a2sdlc:{stage}` marker in the status bar. Most recent across both locations wins.
 2. **Collect post-handover feedback** — all comments after the handover's timestamp that contain `@a2sdlc` or are PR review submissions. From both issue and PR.
 3. **Collect PR state** (if PR exists) — diff summary, inline review comments with file/line metadata.
 4. **Build agent prompt**:
