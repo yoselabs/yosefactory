@@ -1,26 +1,26 @@
 # Feedback-Aware Pipeline with Handover Pattern
 
-Design for extending the a2sdlc pipeline to handle human and AI tool feedback, with stages as independently deployable products and a uniform context model.
+Design for the a2sdlc pipeline: feedback handling, handover-based context, stages as independent products.
 
 ## Context
 
 ### Problem
 
-The current pipeline runs SPEC -> IMPLEMENT -> REVIEW -> MERGE linearly, with one feedback loop (REVIEW.changes_requested -> IMPLEMENT). But real-world feedback comes from many sources:
+The pipeline runs SPEC -> IMPLEMENT -> REVIEW -> MERGE with one feedback loop (REVIEW.changes_requested -> IMPLEMENT). Real-world feedback comes from many sources:
 
-- Human engineers leaving PR inline comments or general PR comments
-- Human QA/BA leaving comments on the issue/ticket
-- AI tools (CodeRabbit, Copilot) posting PR review comments
-- Human code reviewers submitting PR reviews with "changes requested"
+- Human engineers: PR inline comments, PR general comments
+- Human QA/BA: comments on the issue/ticket
+- AI tools (CodeRabbit, Copilot): PR review comments
+- Human code reviewers: PR reviews with "changes requested"
 
-The engine has no mechanism to collect this feedback, route it to the agent, or distinguish "this comment is for the AI" from "this is a human-to-human conversation."
+The engine cannot collect this feedback, route it to the agent, or distinguish "this is for the AI" from human-to-human conversation.
 
 ### Goals
 
-1. Agent can receive and act on feedback from any source (human, AI tool)
-2. Each stage remains independently observable (separate CI job, separate comment, separate log)
-3. Stages can be deployed standalone (e.g., REVIEW as a GitHub Action on any repo)
-4. Architecture supports GitHub, GitLab, Forgejo, and Jira (build for GitHub first)
+1. Agent receives and acts on feedback from any source
+2. Each stage is independently observable (separate CI job, comment, log)
+3. Stages can be deployed standalone (e.g., REVIEW as a GitHub Action)
+4. Architecture supports GitHub, GitLab, Forgejo, Jira (build for GitHub first)
 5. No external server or queue — everything runs inside CI
 
 ### Non-Goals (Backlog)
@@ -32,29 +32,27 @@ The engine has no mechanism to collect this feedback, route it to the agent, or 
 - GitLab cron sweep (design supports it, build later)
 - Jira adapter implementation (design supports it, build later)
 
-## Architecture Overview
+## Architecture
 
 ### Core Principles
 
-1. **CI is the execution layer.** No external server, no queue, no webhook receiver. The engine runs inside CI jobs triggered by native platform events.
-2. **One stage per CI job.** Each stage has its own log, its own comment, its own timing. Always.
-3. **Event-triggered, state-reconciled.** Events (labels, comments) wake the engine. The engine reads full current state and decides what to do. It doesn't react to the event content — it reconciles.
-4. **@mention gating for comments.** Comments only trigger the engine if they contain `@a2sdlc`. PR review submissions always trigger (no @mention needed). Label events always trigger.
-5. **Handover comments as inter-stage contracts.** Each stage produces a structured comment that becomes the primary input for the next stage.
-6. **Stages are functions, not deployment units.** The same stage code runs standalone (thin Action wrapper) or in the pipeline (engine calls it). The caller decides context and routing.
+1. **CI is the execution layer.** No external server, no queue, no webhook receiver.
+2. **One stage per CI job.** Each stage has its own log, comment, and timing. Always.
+3. **Event-triggered, state-reconciled.** Events wake the engine. The engine reads full current state and decides what to do.
+4. **@mention gating.** Comments trigger the engine only if they contain `@a2sdlc`. PR review submissions always trigger. Label events always trigger.
+5. **Handover comments as contracts.** Each stage produces a structured comment that becomes the input for the next stage.
+6. **Stages are functions.** Same code runs standalone or in the pipeline. The caller decides context and routing.
 
 ### Trigger Model
 
-Two event paths in the CI workflow:
-
 | Event | Filter | Purpose |
 |-------|--------|---------|
-| `issues.labeled` | None (always process) | Stage transitions via labels |
-| `issue_comment.created` | `contains(body, '@a2sdlc')` | Human/tool feedback on issues |
-| `pull_request_review.submitted` | `sender.type != 'Bot'` | Code review submissions (always actionable) |
+| `issues.labeled` | None (always) | Stage transitions via labels |
+| `issue_comment.created` | `contains(body, '@a2sdlc')` | Feedback on issues |
+| `pull_request_review.submitted` | `sender.type != 'Bot'` | Code review submissions |
 | `pull_request_review_comment.created` | `contains(body, '@a2sdlc')` | Inline PR feedback |
 
-Label events include bot-set labels (intentional stage transitions). Comment events require @mention to filter noise. PR review submissions are always actionable because submitting a review is a deliberate act directed at the PR (and by extension, the agent).
+Label events always fire (including bot-set labels for stage transitions). Comment events require @mention. PR review submissions are always actionable — submitting a review is a deliberate act.
 
 Reference CI workflow:
 
@@ -78,40 +76,38 @@ jobs:
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@a2sdlc'))
     concurrency:
       group: a2sdlc-${{ github.event.issue.number || github.event.pull_request.number }}
-      cancel-in-progress: false
+      cancel-in-progress: false   # queue, don't cancel — pull-based model reads all state
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: a2sdlc dispatch
 ```
 
-Concurrency: one group per ticket/PR. At most 1 running + 1 pending. Intermediate triggers are dropped, but nothing is lost because the pending run reads all current state (pull-based model).
+### Bot Filtering
 
-### Bot Comment Filtering
+Bot-authored comments are filtered by the `if:` condition — bot comments don't contain `@a2sdlc`. Bot label changes are intentional (stage transitions) and always processed. Single `a2sdlc` bot identity.
 
-The engine already filters bot-authored comments (github.py line 66). For label events, bot actions are intentional (stage transitions) and are always processed. The @mention filter on comment events provides the additional "is this for the AI?" signal. No separate bot identity per stage — single `a2sdlc` identity.
-
-GitHub Apps do not receive webhook events for actions performed with their own installation token by default. But since we use GitHub Actions (not App webhooks), ALL events fire including bot-generated ones. The `if:` condition in the workflow handles filtering.
+Since we use GitHub Actions (not App webhooks), ALL events fire including bot-generated ones. The workflow `if:` condition handles filtering.
 
 ### Platform Compatibility
 
 | Capability | GitHub | Forgejo | GitLab (future) | Jira (future) |
 |-----------|--------|---------|-----------------|---------------|
 | Label triggers | `issues.labeled` | `issues.labeled` | Webhook -> trigger API | N/A (use status) |
-| Comment triggers | `issue_comment` | `issue_comment` | Webhook -> trigger API, or cron sweep | Cron sweep or Jira Automation webhook |
+| Comment triggers | `issue_comment` | `issue_comment` | Webhook -> trigger API, or cron | Cron or Jira Automation |
 | PR review triggers | `pull_request_review` | `pull_request_review` (partial) | MR approval event | N/A |
-| Concurrency | `concurrency` group | `concurrency` group | `resource_group` (queues, better) | N/A (CI-side) |
+| Concurrency | `concurrency` group | `concurrency` group | `resource_group` | N/A (CI-side) |
 | Programmatic trigger | `repository_dispatch` | `workflow_dispatch` | Pipeline trigger API | N/A |
 
-GitLab lacks native CI triggers for MR comments. The future path is either a lightweight webhook-to-trigger bridge or a cron sweep pipeline. The engine's pull-based model works with both — it reads current state regardless of how it was triggered.
+GitLab: no native CI triggers for MR comments. Future path: webhook-to-trigger bridge or cron sweep.
 
-Jira has no CI integration. The future path is Jira Automation (Cloud) posting a `repository_dispatch` webhook to GitHub/GitLab, or a cron sweep via JQL query scoped to tracked tickets only.
+Jira: no CI integration. Future path: Jira Automation webhook or JQL-based cron sweep scoped to tracked tickets.
 
 ## Handover Pattern
 
 ### How It Works
 
-Each stage produces a structured handover comment on the issue. The next stage reads the last handover comment as its primary context, plus any comments posted after it (feedback).
+Each stage posts a structured handover comment on the issue (REVIEW posts on the PR). The comment has an HTML marker for machine parsing and human-readable markdown for audit.
 
 ```
 <!-- a2sdlc:handover stage=spec run_id=abc123 -->
@@ -119,108 +115,102 @@ Each stage produces a structured handover comment on the issue. The next stage r
 
 ### Acceptance Criteria
 1. ...
-2. ...
 
 ### Technical Approach
 ...
-
-### Open Questions
-None — all self-resolved with assumptions noted above.
 
 ---
 *a2sdlc | spec | 45s | 12K tokens*
 ```
 
-The HTML comment marker (`<!-- a2sdlc:handover ... -->`) is machine-readable. The rest is human-readable markdown.
+### How Context Flows Between Stages
 
-### Context Assembly
+The issue's comment thread IS the context chain:
 
-The engine assembles context for each stage using one uniform algorithm:
+```
+Issue body: "Add drag and drop support"
+  Comment 1: <!-- a2sdlc:handover stage=spec -->     [spec output]
+  Comment 2: <!-- a2sdlc:handover stage=implement --> [impl report]
+  PR Comment: <!-- a2sdlc:handover stage=review -->   [review feedback]
+  Comment 3: Human: "@a2sdlc drag and drop broken"    [feedback]
+  Comment 4: <!-- a2sdlc:handover stage=implement --> [fix report]
+```
 
-1. **Find last handover comment** — scan BOTH issue comments AND PR comments for the `<!-- a2sdlc:handover -->` marker. Take the most recent across both locations. This is the primary context. (REVIEW posts handover on the PR; all other stages post on the issue.)
-2. **Collect post-handover feedback** — all comments posted AFTER the last handover's `created_at` timestamp that either (a) contain the trigger phrase (`@a2sdlc`) or (b) are PR review submissions. Collected from both issue and PR. These are the feedback items.
-3. **Collect PR state** (if PR exists) — diff summary, PR inline review comments with file/line metadata.
-4. **Set system prompt mode hint** — one line: "You are implementing a fresh specification" vs "You are addressing review feedback on your previous implementation."
+The engine builds each stage's input by reading this thread:
 
-This is one code path regardless of whether it is a first run, a review cycle, or a human feedback cycle. The handover comment is the cursor — everything before it is history, everything after it is new input.
+1. **Find last handover** — scan issue comments AND PR comments for the `<!-- a2sdlc:handover -->` marker. Most recent across both locations wins.
+2. **Collect post-handover feedback** — all comments after the handover's timestamp that contain `@a2sdlc` or are PR review submissions. From both issue and PR.
+3. **Collect PR state** (if PR exists) — diff summary, inline review comments with file/line metadata.
+4. **Build agent prompt**:
+   ```
+   [ticket body — always included as ground truth]
+   [last handover comment body — primary context]
+   [feedback comments — what to address]
+   [PR diff summary — current code state]
+   ```
+5. **Set system prompt hint** — "You are implementing a fresh specification" vs "You are addressing feedback."
 
-### No Separate "Modes" for IMPLEMENT
-
-The IMPLEMENT stage does not need a "feedback mode" vs "fresh mode." The context assembly is uniform. What changes is the content:
-
-- **First run**: handover = spec from SPEC stage, no post-handover comments. Agent implements from spec.
-- **After AI review**: handover = implement report, post-handover = review feedback comment. Agent addresses review findings.
-- **After human feedback**: handover = last implement report, post-handover = human's @a2sdlc comment. Agent addresses human feedback.
-
-The system prompt hint tells the agent what to expect, but the context structure is identical.
+This is one code path regardless of scenario. The handover is the cursor — everything before it is history, everything after it is new input.
 
 ### Avoiding the Telephone Game
 
-Each handover comment is a checkpoint, not a summary of a summary. The original ticket body is always available as ground truth. Handover comments reference acceptance criteria by ID, not by re-describing them. The engine can detect drift by comparing handover content against the ticket body.
-
-If the feedback loop runs 3 times, the agent sees: its most recent handover (not all 3) + the latest feedback. Context doesn't grow unboundedly.
+Each handover is a checkpoint, not a summary of a summary. The ticket body is always included as ground truth. If the feedback loop runs 3 times, the agent sees: its most recent handover + the latest feedback. Context doesn't grow unboundedly.
 
 ## Human Gates
 
-### Two Optional Gates
+### Two Gates
 
 ```
-SPEC ──(optional: human reviews spec)──> IMPLEMENT -> REVIEW -> ... -> (pre-merge gate) -> MERGE
+SPEC ──(optional gate)──> IMPLEMENT ──> REVIEW ──(gate)──> MERGE
 ```
 
-**1. Post-SPEC gate (optional)**
+**1. Post-SPEC gate (optional, default: auto)**
 
-After SPEC completes, the engine checks `gates.spec`:
-- `AUTO` (default): advance to IMPLEMENT immediately
-- `HUMAN`: stop. Human reviews the spec comment. To proceed, human applies `proceed` label or leaves an @a2sdlc comment with approval.
+- `auto`: advance to IMPLEMENT immediately
+- `human`: stop. Human reviews spec. Proceed via `proceed` label or @a2sdlc comment.
 
-If SPEC produces questions, behavior is configurable:
-- `spec.self_answer: true` — agent makes assumptions and notes them
-- `spec.self_answer: false` — waits for human answers (sets `needs-input` label)
+If SPEC has questions:
+- `self_answer: true` (default) — agent makes assumptions and notes them
+- `self_answer: false` — waits for human answers (sets `needs-input` label)
 
-**2. Pre-MERGE gate (required by default)**
+**2. Pre-MERGE gate (default: human)**
 
-After all automated stages pass (REVIEW approved, any future security/QA gates), the engine stops before MERGE. The human reviews:
-- The code (PR diff)
-- The test results
-- A preview deployment (if configured)
+After REVIEW passes, engine stops before MERGE. Human reviews code, tests, preview.
 
-The gate signal is configurable per adapter:
+Gate signal per adapter:
 
 | Adapter | Gate signal |
 |---------|-----------|
 | GitHub | PR approval (non-bot reviewer) |
 | GitLab | MR approval |
-| Jira (future) | Ticket status = "QA Approved" or similar |
+| Jira (future) | Ticket status change |
 | Label-based | `proceed` label on issue |
+
+No gate between IMPLEMENT and REVIEW — review always runs automatically.
 
 ### Feedback During Human Gate
 
-When the human finds issues during pre-merge review:
-
-1. Human leaves a comment: "@a2sdlc drag and drop doesn't work, please fix"
+1. Human: "@a2sdlc drag and drop doesn't work, please fix"
 2. Comment event triggers CI job (passes @mention filter)
-3. Engine reads TicketState: ticket is at pre-merge gate
-4. Engine collects feedback (the human's comment)
-5. Engine runs IMPLEMENT (context = last handover + human feedback)
-6. IMPLEMENT fixes the code, produces handover comment
-7. Engine advances: REVIEW runs (same CI job? NO — sets label, new CI job)
-8. REVIEW passes, reaches pre-merge gate again
+3. Engine reads last handover → determines current stage
+4. Engine collects feedback
+5. IMPLEMENT runs (context = last handover + human feedback)
+6. IMPLEMENT posts handover comment, sets `stage:review` label
+7. New CI job: REVIEW runs, posts handover
+8. Reaches pre-merge gate again
 9. Human reviews again
 
-Each step is a separate CI job with its own log and comment.
+Each step is a separate CI job.
 
 ## Feedback Collection
 
 ### What the Engine Collects
 
-When a comment-triggered run fires, the engine collects:
-
-**From the issue/ticket:**
-- All comments containing `@a2sdlc` posted after the last handover comment
+**From the issue:**
+- All comments containing `@a2sdlc` posted after the last handover
 
 **From the PR (if exists):**
-- PR review submissions (all, regardless of @mention — reviews are inherently directed at the PR)
+- PR review submissions (all — reviews are inherently directed at the PR)
 - PR inline comments containing `@a2sdlc`, with file path + line range metadata
 
 **Format injected into agent context:**
@@ -230,44 +220,47 @@ When a comment-triggered run fires, the engine collects:
 
 ### PR Review by @jane (changes_requested)
 General: "The error handling in the retry logic needs work."
-- `src/a2sdlc/stages/implement.py` lines 45-52: "This swallows the original exception. Use `raise ... from`."
+- `src/a2sdlc/stages/implement.py` lines 45-52: "This swallows the original exception."
 - `src/a2sdlc/stages/implement.py` line 78: "Missing timeout parameter."
 
 ### Issue Comment by @pm-bob
 "When I test the preview, drag and drop doesn't work on mobile."
 ```
 
-Human-readable, structured enough for the agent to act on. No JSON, no special parsing needed.
-
 ### What the Agent Produces
 
-The agent fixes code and produces a handover comment summarizing what it did. The engine posts this comment. The engine does NOT post individual replies to each feedback item (backlog — would require the `respond_to_feedback` tool).
-
-For now: one summary comment. Future: per-item responses.
+The agent fixes code and the engine posts a handover comment summarizing what was done. Individual replies to each feedback item are backlog.
 
 ### Noise Handling
 
-The @mention filter eliminates most noise. For PR reviews (which don't require @mention): the engine includes them all, and the agent is smart enough to skip emoji-only or "LGTM" reviews. This costs a few tokens but avoids building a fragile heuristic pre-filter.
+@mention filter eliminates most noise. PR reviews (no @mention required) are all included — the agent skips emoji-only or "LGTM" reviews. A few wasted tokens is better than a fragile pre-filter.
+
+## Feedback Routing
+
+When a comment/review event fires, the engine determines the current stage from the last handover comment's `stage` attribute (authoritative source). If no handover exists, falls back to issue labels.
+
+| Current stage | Feedback routes to |
+|--------------|-------------------|
+| No stage yet / SPEC | SPEC |
+| IMPLEMENT or later | IMPLEMENT |
+
+Feedback always re-enters through the natural entry point for the current pipeline position. If feedback during IMPLEMENT+ is truly a spec change, the agent flags it in its handover comment.
 
 ## Stages as Independent Products
 
 ### The Boundary
 
-A stage is a function:
-
 ```
 StageInput -> Stage -> StageResult + SideEffects
 ```
 
-- **StageInput**: system prompt + user prompt (assembled by caller) + tool configuration
-- **StageResult**: structured result (status, output text, metrics)
-- **SideEffects**: comments posted, labels changed, code pushed (via adapters passed by caller)
+- **StageInput**: system prompt + user prompt + tool configuration
+- **StageResult**: status, output text, metrics
+- **SideEffects**: comments posted, labels changed, code pushed
 
-The stage does not know whether it is running standalone or in a pipeline. The caller (engine or Action wrapper) handles context assembly, adapter wiring, and result routing.
+The stage does not know whether it runs standalone or in a pipeline.
 
 ### Standalone Deployment
-
-A stage deployed as a standalone GitHub Action:
 
 ```yaml
 # .github/workflows/review.yml
@@ -281,67 +274,42 @@ jobs:
       - uses: yoselabs/a2sdlc-review@v1
 ```
 
-The Action wrapper:
-1. Reads the PR diff and comments
-2. Assembles context for the REVIEW stage
-3. Calls the stage function
-4. Posts the review as a PR comment
-5. Exits (no state machine, no labels, no pipeline)
+Wrapper reads PR diff, assembles context, calls stage, posts review comment, exits. No state machine, no labels.
 
 ### Pipeline Deployment
 
-The same stage code, called by the engine:
-1. Engine assembles context (handover + feedback + PR state)
-2. Engine calls the stage function
-3. Engine reads the StageResult for routing decisions
-4. Engine posts the handover comment
-5. Engine sets label for next stage
+Engine assembles context (handover + feedback), calls stage, reads StageResult for routing, posts handover comment, sets label for next stage.
 
 ### Packaging
 
-- `a2sdlc` (core): stage definitions, adapter protocols, contracts
-- `a2sdlc` (engine): orchestrator, state machine, dispatch logic
-- `a2sdlc-review`, `a2sdlc-implement`, etc. (Actions): thin wrappers (~50 lines) that import stage from core and wire to CI events
+- `a2sdlc`: core package — stage definitions, adapter protocols, contracts, engine, state machine
+- `a2sdlc-review`, `a2sdlc-implement`, etc.: thin Action wrappers (~50 lines) that import from core
 
-## Concurrency and Reliability
+## Concurrency
 
 ### CI Concurrency Groups
 
-One group per ticket: `a2sdlc-${{ issue_number }}`. At most 1 running + 1 pending. Intermediate triggers are dropped.
+One group per ticket: `a2sdlc-${{ issue_number }}`. At most 1 running + 1 pending.
 
-**Why dropped triggers are OK:** The pull-based model means the engine reads ALL current state on each run. If 5 comments arrive and only 2 CI jobs run, the second job sees all 5 comments. The trigger is just a wake-up signal — the data is in the comments, not in the trigger.
+**Why dropped triggers are OK:** Pull-based model reads ALL current state. If 5 comments arrive and only 2 CI jobs run, the second job sees all 5 comments. The trigger is a wake-up signal — the data is in the comments.
 
-### The Dead-Zone Edge Case
+### Dead-Zone Edge Case
 
-If the last comment in a burst arrives after the pending job's slot is already occupied AND after the running job has finished reading comments, that comment is orphaned until the next trigger.
+If the last comment in a burst arrives after the pending slot is occupied and the running job finished reading, that comment waits until the next trigger.
 
-**Mitigations:**
-1. The pending job (when it runs) will read that comment too — it reads ALL comments since last handover, not since its trigger event.
-2. If a human is actively reviewing, they'll likely trigger another event soon.
-3. For critical cases: the human can re-trigger by applying a label or posting another @mention.
+Mitigations:
+1. The pending job reads ALL comments since last handover, not since its trigger event.
+2. Human can re-trigger by posting another @mention or applying a label.
 
-This is a latency failure, not a data loss failure. The comment is never lost — it's always readable on the next run.
+This is a latency failure, not data loss. The comment is always readable on the next run.
 
-### Self-Re-Trigger (Future Enhancement)
+### Self-Re-Trigger (Future)
 
-At the end of a run, the engine could check: "did new @a2sdlc comments appear since I started reading?" If yes, fire a `repository_dispatch` to re-check. This closes the dead-zone gap but adds complexity. Deferred — the pull-based model is sufficient for current usage patterns.
+End-of-run check: "did new @a2sdlc comments appear since I started?" If yes, fire `repository_dispatch`. Deferred — pull-based model is sufficient now.
 
-## Review Stage Contract
+## Review Stage
 
-### Current Behavior (verdict-based)
-
-The REVIEW stage currently produces a verdict (approved/changes_requested) that the engine interprets for routing.
-
-### New Behavior (comment-based + verdict)
-
-The REVIEW stage posts feedback as a PR comment (like CodeRabbit or Copilot code review) AND returns a structured verdict to the engine. This means:
-
-- Humans see the review feedback as a normal PR comment
-- The engine uses the verdict for routing (advance or loop back)
-- If running standalone, the PR comment is the only output (verdict is ignored)
-- The review comment follows the same handover format with the `<!-- a2sdlc:handover -->` marker
-
-This creates a uniform interface: human review feedback, AI review feedback, and CodeRabbit feedback all look the same on the PR.
+REVIEW posts feedback as a PR comment (like CodeRabbit) AND returns a structured verdict. Humans see review feedback as a normal PR comment. The engine uses the verdict for routing. Standalone mode ignores the verdict. The review comment uses the handover marker.
 
 ## Data Models
 
@@ -350,14 +318,14 @@ This creates a uniform interface: human review feedback, AI review feedback, and
 ```python
 @dataclass
 class FeedbackItem:
-    id: str                # Platform-native ID (e.g., GitHub comment ID)
-    author: str            # Username of commenter
-    author_type: str       # "human" | "bot"
-    source: str            # "issue_comment" | "pr_comment" | "pr_inline" | "pr_review"
-    body: str              # Comment text
-    file_path: str | None  # For pr_inline: file path
-    line_range: tuple[int, int] | None  # For pr_inline: start/end lines
-    created_at: datetime   # When the comment was posted
+    id: str                              # Platform-native ID
+    author: str                          # Username
+    author_type: str                     # "human" | "bot"
+    source: str                          # "issue_comment" | "pr_comment" | "pr_inline" | "pr_review"
+    body: str                            # Comment text
+    file_path: str | None                # For pr_inline only
+    line_range: tuple[int, int] | None   # For pr_inline only
+    created_at: datetime
 ```
 
 ### HandoverComment
@@ -368,120 +336,75 @@ class HandoverComment:
     stage: StageName       # Which stage produced this
     run_id: str            # Unique run identifier
     body: str              # Full comment body (markdown)
-    created_at: datetime   # When posted — used as the "since" timestamp for feedback collection
-    location: str          # "issue" | "pr" — where the comment lives
+    created_at: datetime   # Used as "since" timestamp for feedback collection
+    location: str          # "issue" | "pr"
+```
+
+### PipelineEvent
+
+```python
+@dataclass
+class PipelineEvent:
+    key: str               # Ticket/issue key
+    stage: StageName | None  # Target stage (from label) or None (for feedback)
+    is_feedback: bool      # True for comment/review events
+    pr_number: int | None  # If event is PR-related
 ```
 
 ## Configuration
-
-### Mapping to Existing Code
-
-The existing `ProjectConfig` has `GateConfig` with `review` and `merge` fields, and `StageConfig` with `max_review_cycles` (default: 2). The existing `auto_spec` boolean on `ProjectConfig` controls whether SPEC self-answers questions.
-
-New and changed config fields:
-
-| Spec field | Existing code field | Status |
-|-----------|-------------------|--------|
-| `gates.spec` | (none) | **New** — adds gate between SPEC and IMPLEMENT |
-| `gates.review` | `GateConfig.review` | **Preserved** — keeps existing AUTO/HUMAN gate between IMPLEMENT and REVIEW |
-| `gates.merge` | `GateConfig.merge` | **Preserved** — no change |
-| `spec.self_answer` | `ProjectConfig.auto_spec` | **Renamed** — same behavior, clearer name |
-| `review.max_cycles` | `StageConfig.max_review_cycles` | **Preserved** — default remains 2 |
-| `trigger.mention` | (none) | **New** — configurable trigger phrase, default "@a2sdlc" |
 
 ```yaml
 # a2sdlc.yaml
 pipeline:
   gates:
-    spec: auto          # auto | human (NEW — default auto)
-    review: auto        # auto | human (EXISTING — preserved)
-    merge: human        # auto | human (EXISTING — preserved)
+    spec: auto           # auto | human
+    merge: human         # auto | human
   spec:
-    self_answer: true   # renamed from auto_spec — agent makes assumptions
+    self_answer: true    # agent makes assumptions when questions arise
   review:
-    max_cycles: 2       # circuit breaker for review loops (EXISTING — default 2)
+    max_cycles: 2        # circuit breaker for review loops
   trigger:
-    mention: "@a2sdlc"  # configurable trigger phrase (NEW)
+    mention: "@a2sdlc"  # configurable trigger phrase
 ```
 
 ## State Machine
 
 ```
-                    ┌─────────────────────────────────────────┐
-                    │                                         │
-SPEC ──(gate)──> IMPLEMENT ──(auto)──> REVIEW ──(gate)──> MERGE
-                    ^                     |
-                    |                     |
-                    └── changes_requested ┘
+SPEC ──(gate)──> IMPLEMENT ──> REVIEW ──(gate)──> MERGE
+                    ^              |
+                    └── changes ───┘
                     ^
-                    |
-                    └── human feedback (@a2sdlc comment)
+                    └── @a2sdlc feedback
 ```
 
-Transitions:
+| From | Trigger | Next |
+|------|---------|------|
+| SPEC | complete, gate auto | IMPLEMENT |
+| SPEC | complete, gate human | wait |
+| SPEC | questions, self_answer on | SPEC (self-answer) |
+| SPEC | questions, self_answer off | wait |
+| IMPLEMENT | complete | REVIEW |
+| REVIEW | approved, gate auto | MERGE |
+| REVIEW | approved, gate human | wait for PR approval |
+| REVIEW | changes_requested | IMPLEMENT |
+| no stage / SPEC | @a2sdlc comment | SPEC |
+| IMPLEMENT+ | @a2sdlc comment | IMPLEMENT |
+| merge gate | PR approved | MERGE |
 
-| From | Result | Gate | Next |
-|------|--------|------|------|
-| SPEC | complete | spec: auto | IMPLEMENT |
-| SPEC | complete | spec: human | wait for human |
-| SPEC | questions | spec.self_answer: true | SPEC (self-answer, same run) |
-| SPEC | questions | spec.self_answer: false | wait for human |
-| IMPLEMENT | complete | review: auto | REVIEW |
-| IMPLEMENT | complete | review: human | wait for human (existing gate, preserved) |
-| REVIEW | approved | merge: auto | MERGE |
-| REVIEW | approved | merge: human | wait for human approval |
-| REVIEW | changes_requested | - | IMPLEMENT |
-| SPEC or no stage | @a2sdlc comment | - | SPEC (no code exists yet, feedback is spec-level) |
-| IMPLEMENT+ | @a2sdlc comment | - | IMPLEMENT (feedback is implementation-level; if truly a spec change, agent can flag it) |
-| MERGE gate | PR approved | - | MERGE |
+## Adapter Changes
 
-## Current State vs Target State
+### New Methods
 
-| Component | Current | Target | Status |
-|-----------|---------|--------|--------|
-| Label-driven stage transitions | Yes | Yes | **Preserved** |
-| `parse_event()` handles labels | Yes | Yes + comment/review events | **Extended** |
-| `PipelineEvent.is_resume` | Yes | Yes (backward-compatible) | **Preserved** |
-| `PipelineEvent.is_feedback` | No | Yes | **New** |
-| `GateConfig.review` | Yes (AUTO/HUMAN) | Yes | **Preserved** |
-| `GateConfig.merge` | Yes (HUMAN default) | Yes | **Preserved** |
-| `GateConfig.spec` | No | Yes (AUTO default) | **New** |
-| `auto_spec` config | Yes (boolean) | Renamed to `spec.self_answer` | **Renamed** |
-| `max_review_cycles` | Yes (default 2) | Yes (default 2) | **Preserved** |
-| Trigger phrase config | No | `trigger.mention` | **New** |
-| Handover comment format | Ad-hoc per stage | Standardized with HTML marker | **Changed** |
-| Context assembly | Per-stage custom | Uniform handover algorithm | **Changed** |
-| Feedback collection from PR | `read_pr_comments()` exists | Extended with `collect_pr_feedback()` | **Extended** |
-| Feedback collection from issue | Not implemented | `collect_issue_feedback()` | **New** |
-| REVIEW posts PR comment | Via `post_review()` | Same + handover marker | **Extended** |
-| CI workflow events | `issues.labeled` only | + comment, review events | **Extended** |
-| CI concurrency groups | Not configured | Per-ticket groups | **New** |
-| Stage runner (runner.py) | As-is | As-is | **Not changed** |
-| Stage tool configs | As-is | As-is | **Not changed** |
+- `ReviewAdapter.collect_pr_feedback(since: datetime) -> list[FeedbackItem]`
+- `WorkAdapter.collect_issue_feedback(key, since: datetime) -> list[FeedbackItem]`
+- `WorkAdapter.find_last_handover(key) -> HandoverComment | None`
+- `ReviewAdapter.find_last_handover(pr_number) -> HandoverComment | None`
 
-## What Changes in Existing Code
+### Changed
 
-### New in Adapters
-
-- `ReviewAdapter.collect_pr_feedback(since: datetime) -> list[FeedbackItem]` — reads PR review comments and inline comments with metadata (author, file, line range, body)
-- `WorkAdapter.collect_issue_feedback(key, since: datetime) -> list[FeedbackItem]` — reads issue comments containing the trigger phrase
-- `WorkAdapter.find_last_handover(key) -> HandoverComment | None` — finds the last comment with the `<!-- a2sdlc:handover -->` marker on the issue
-- `ReviewAdapter.find_last_handover(pr_number) -> HandoverComment | None` — finds the last handover comment on the PR (REVIEW stage posts on PR, not issue; engine searches both locations)
-
-### Changed in Dispatch
-
-- Context assembly uses the handover pattern (find last handover + collect post-handover feedback)
-- `parse_event()` extended to handle new event types: `issue_comment` (extracts ticket key from issue), `pull_request_review` and `pull_request_review_comment` (extracts ticket key from PR)
-- New `PipelineEvent` field: `is_feedback: bool` — True for comment/review events, False for label events. This is distinct from the existing `is_resume` field, which handles the specific case of human answering SPEC questions via `needs-input` label. The relationship: `is_resume` is a special case where feedback re-enters SPEC; `is_feedback` is the general case where feedback re-enters the pipeline
-- Feedback routing by current stage (determined from the `stage` field of the last handover comment, which is the authoritative source; falls back to issue labels if no handover exists):
-  - Current stage is SPEC or no stage yet → re-run SPEC
-  - Current stage is IMPLEMENT, REVIEW, or at merge gate → re-run IMPLEMENT
-  - The `is_resume` flow (needs-input label + issue comment) is preserved as-is for backward compatibility
-- Feedback items injected into agent user prompt as structured markdown
-
-### Changed in Stages
-
-- REVIEW stage posts feedback as PR comment (in addition to returning verdict)
+- `parse_event()` handles `issue_comment`, `pull_request_review`, `pull_request_review_comment` events
+- Context assembly uses handover algorithm
+- REVIEW stage posts PR comment with handover marker
 - Handover comment format standardized across all stages
 
 ### New CI Workflow Events
@@ -490,10 +413,3 @@ Transitions:
 - `pull_request_review.submitted` with bot filter
 - `pull_request_review_comment.created` with @mention filter
 - `concurrency` group per ticket
-
-### Not Changed
-
-- Stage execution logic (runner.py)
-- Tool configuration per stage
-- State machine transitions (stages/__init__.py) — only extended, not restructured
-- One stage per CI job model
