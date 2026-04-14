@@ -152,7 +152,19 @@ HANDOVER_PATTERN = re.compile(
 )
 ```
 
-Adding a new stage to `StageName` automatically updates the pattern. No hardcoded stage lists anywhere — `StageName` is the single source of truth for stage names, label names, handover markers, and routing.
+Adding a new stage to `StageName` automatically updates the handover pattern.
+
+### Adding a New Stage
+
+`StageName` is the single source of truth for identifiers, but adding a stage touches more than the enum:
+
+1. Add value to `StageName` enum — updates handover pattern, labels, markers
+2. Create stage module in `stages/` — system prompt, tool config, stage logic
+3. Add to transition table in `next_stage()` — define when it runs and what follows
+4. Add rows to dispatch routing — stage-specific context assembly if needed
+5. Add `StageStatus` values if the stage has unique outcomes
+
+Handover pattern, comment scanning, and label management update automatically from the enum. Routing and transitions require explicit wiring.
 
 ### How Context Flows Between Stages
 
@@ -169,7 +181,7 @@ Issue body: "Add drag and drop support"
 
 The engine builds each stage's input by reading this thread:
 
-1. **Find last handover** — scan issue comments AND PR comments using `HANDOVER_PATTERN` (compiled from `StageName` enum). Most recent match across both locations wins.
+1. **Find last handover** — the engine calls `WorkAdapter.find_last_handover(key)` and `ReviewAdapter.find_last_handover(pr_number)`, compares timestamps, and takes the most recent. Both use `HANDOVER_PATTERN` (compiled from `StageName` enum). The engine owns this coordination — adapters just search their own platform.
 2. **Collect post-handover feedback** — all comments after the handover's timestamp that contain `@a2sdlc` or are PR review submissions. From both issue and PR.
 3. **Collect PR state** (if PR exists) — diff summary, inline review comments with file/line metadata.
 4. **Build agent prompt**:
@@ -217,7 +229,7 @@ Gate signal per adapter:
 | Jira (future) | Ticket status change |
 | Label-based | `proceed` label on issue |
 
-No gate between IMPLEMENT and REVIEW — review always runs automatically.
+No gate between IMPLEMENT and REVIEW — review always runs automatically. The existing `gates.review` configuration is removed.
 
 ### Feedback During Human Gate
 
@@ -270,24 +282,26 @@ The agent fixes code and the engine posts a handover comment summarizing what wa
 
 When a comment/review event fires, the engine determines the current stage from the last handover comment's `stage` attribute (authoritative source). If no handover exists, falls back to issue labels.
 
-| Current stage | Feedback routes to |
-|--------------|-------------------|
-| No stage yet / SPEC | SPEC |
-| IMPLEMENT or later | IMPLEMENT |
+| Current stage | Feedback routes to | Rationale |
+|--------------|-------------------|-----------|
+| No stage / SPEC | SPEC | No code exists yet |
+| IMPLEMENT | IMPLEMENT | Code exists, fix it |
+| REVIEW | IMPLEMENT | Review-phase feedback = "fix the code" |
+| Merge gate | IMPLEMENT | Same — code needs changes |
 
-Feedback always re-enters through the natural entry point for the current pipeline position. If feedback during IMPLEMENT+ is truly a spec change, the agent flags it in its handover comment.
+REVIEW never receives @mention feedback directly — it only runs as an automated stage after IMPLEMENT. If someone posts @a2sdlc feedback while the last handover is from REVIEW, that feedback means "the code needs changes," so it routes to IMPLEMENT.
+
+If feedback is truly a spec change, the IMPLEMENT agent flags it in its handover comment.
 
 ## Stages as Independent Products
 
 ### The Boundary
 
 ```
-StageInput -> Stage -> StageResult + SideEffects
+StageInput -> Stage -> StageResult
 ```
 
-- **StageInput**: system prompt + user prompt + tool configuration
-- **StageResult**: status, output text, metrics
-- **SideEffects**: comments posted, labels changed, code pushed
+The stage receives input, does work, returns a result. Side effects (posting comments, setting labels, pushing code) are the **engine's responsibility**, not the stage's. The stage produces output text; the engine decides where to post it.
 
 The stage does not know whether it runs standalone or in a pipeline.
 
@@ -344,6 +358,31 @@ REVIEW posts feedback as a PR comment (like CodeRabbit) AND returns a structured
 
 ## Data Models
 
+### StageInput
+
+```python
+@dataclass
+class StageInput:
+    system_prompt: str                   # Stage-specific system prompt
+    user_prompt: str                     # Assembled context (ticket + handover + feedback + PR state)
+    allowed_tools: list[str]             # Tool whitelist for this stage
+    feedback: list[FeedbackItem]         # Structured feedback items (empty on first run)
+```
+
+The engine assembles `StageInput`. The stage never calls adapters or reads comments — it receives everything it needs.
+
+### StageResult
+
+```python
+@dataclass
+class StageResult:
+    status: StageStatus                  # complete | questions | approved | changes_requested
+    output: str                          # Stage output text (becomes handover comment body)
+    metrics: RunMetrics                  # tokens, cost, duration, turns
+```
+
+No stage-specific fields. The output is freeform markdown — the engine doesn't parse it. Stage-specific data (PR title, spec path) is extracted by the engine from the output if needed, not embedded in the result type.
+
 ### FeedbackItem
 
 ```python
@@ -365,7 +404,7 @@ class FeedbackItem:
 @dataclass
 class HandoverComment:
     stage: StageName       # Which stage produced this
-    run_id: str            # Unique run identifier
+    run_id: str            # For idempotency — prevents re-processing the same stage run
     body: str              # Full comment body (markdown)
     created_at: datetime   # Used as "since" timestamp for feedback collection
     location: str          # "issue" | "pr"
@@ -424,7 +463,9 @@ SPEC ──(gate)──> IMPLEMENT ──> REVIEW ──(gate)──> MERGE
 
 ## Adapter Changes
 
-### New Methods
+### New Protocol Methods
+
+Added to `WorkAdapter` and `ReviewAdapter` protocols. The GitHub adapter (`adapters/github.py`) must implement all new methods.
 
 - `ReviewAdapter.collect_pr_feedback(since: datetime) -> list[FeedbackItem]`
 - `WorkAdapter.collect_issue_feedback(key, since: datetime) -> list[FeedbackItem]`
