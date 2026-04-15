@@ -63,7 +63,7 @@ class TestParseArgs:
                 "--key",
                 "PROJ-42",
                 "--flag",
-                "auto_spec",
+                "self_answer",
                 "--flag",
                 "auto_merge",
             ]
@@ -72,7 +72,7 @@ class TestParseArgs:
         assert args.project_root == Path("/tmp/proj")
         assert args.stage == "implement"
         assert args.key == "PROJ-42"
-        assert args.flag == ["auto_spec", "auto_merge"]
+        assert args.flag == ["self_answer", "auto_merge"]
 
 
 # ── assemble_system_prompt ───────────────────────────────────────────

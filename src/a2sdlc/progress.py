@@ -194,7 +194,7 @@ def format_progress(
     if elapsed is None:
         elapsed = time.time() - progress.start_time
 
-    parts = [f"\u23f3 **{stage}** in progress...\n"]
+    parts = [f"\u23f3 **a2sdlc:{stage}** in progress...\n"]
 
     parts.append(
         _format_status_bar(
@@ -300,7 +300,7 @@ def format_final(
     stats_body = "\n".join(stats_lines)
 
     parts = [
-        f"### \u2705 {stage}\n",
+        f"### \u2705 a2sdlc:{stage}\n",
         body,
         f"\n\n<details>\n<summary>Stats</summary>\n\n{stats_body}\n\n</details>",
     ]
@@ -330,7 +330,7 @@ def format_error(
         max_turns=max_turns,
         context_window=context_window,
     )
-    parts = [f"\U0001f6a8 **{stage}** failed: `{error}`", "\n---\n", bar]
+    parts = [f"\U0001f6a8 **a2sdlc:{stage}** failed: `{error}`", "\n---\n", bar]
     ms_text = _format_milestones(milestones)
     if ms_text:
         parts.append(f"\n{ms_text}")

@@ -85,7 +85,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--flag",
         action="append",
         default=[],
-        help="Override flags (e.g. --flag auto_spec)",
+        help="Override flags (e.g. --flag self_answer)",
     )
 
     return parser.parse_args(argv)
@@ -118,7 +118,9 @@ def main(argv: list[str] | None = None) -> None:
             token = os.environ.get("GITHUB_TOKEN", os.environ.get("GH_TOKEN", ""))
             repo_name = os.environ.get("GITHUB_REPOSITORY", "")
             repo = connect(repo_name, token)
-            work_adapter = GitHubWorkAdapter(repo)
+            work_adapter = GitHubWorkAdapter(
+                repo, trigger_mention=config.trigger_mention
+            )
             review_adapter = GitHubReviewAdapter(repo)
         else:
             logger.error("Unknown adapter: %s", config.adapter)

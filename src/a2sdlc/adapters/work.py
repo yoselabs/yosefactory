@@ -3,18 +3,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 
+from a2sdlc.handover import FeedbackItem, HandoverComment
 from a2sdlc.models import StageName
 
 
 @dataclass
 class PipelineEvent:
-    """Normalized pipeline event from a work adapter."""
+    """Normalized pipeline event from a work adapter.
+
+    trigger_stage: what the event literally says (label value, or None for feedback/proceed).
+    is_feedback: True for comment/review events, False for label events.
+    The engine resolves the actual target stage via the routing table.
+    """
 
     key: str
-    stage: StageName
-    is_resume: bool = False
+    trigger_stage: StageName | None = None
+    is_feedback: bool = False
     pr_number: int | None = None
 
 
@@ -31,6 +38,10 @@ class WorkAdapter(Protocol):
     def set_done_label(self, key: str) -> None: ...
     def set_blocked(self, key: str, reason: str) -> None: ...
     def format_branch(self, ticket_key: str) -> str: ...
+    def collect_issue_feedback(
+        self, key: str, since: datetime
+    ) -> list[FeedbackItem]: ...
+    def find_last_handover(self, key: str) -> HandoverComment | None: ...
 
 
 __all__ = ["PipelineEvent", "WorkAdapter"]

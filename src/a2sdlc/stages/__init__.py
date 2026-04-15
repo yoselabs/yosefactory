@@ -42,10 +42,10 @@ def next_stage(
     Returns the next stage name, or None if the pipeline should wait for a human.
 
     Transition table:
-    - Spec + complete → IMPLEMENT (always auto)
+    - Spec + complete + gates.spec=AUTO → IMPLEMENT
+    - Spec + complete + gates.spec=HUMAN → None
     - Spec + questions → None
-    - Implement + complete + gates.review=AUTO → REVIEW
-    - Implement + complete + gates.review=HUMAN → None
+    - Implement + complete → REVIEW (always auto — no gate)
     - Implement + questions → None
     - Review + approved + gates.merge=AUTO → MERGE
     - Review + approved + gates.merge=HUMAN → None
@@ -53,11 +53,11 @@ def next_stage(
     """
     match (current, status):
         case (StageName.SPEC, StageStatus.COMPLETE):
-            return StageName.IMPLEMENT
+            return StageName.IMPLEMENT if gates.spec == GateMode.AUTO else None
         case (StageName.SPEC, StageStatus.QUESTIONS):
             return None
         case (StageName.IMPLEMENT, StageStatus.COMPLETE):
-            return StageName.REVIEW if gates.review == GateMode.AUTO else None
+            return StageName.REVIEW  # Always auto — no gate
         case (StageName.IMPLEMENT, StageStatus.QUESTIONS):
             return None
         case (StageName.REVIEW, StageStatus.APPROVED):

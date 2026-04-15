@@ -81,11 +81,27 @@ class TestLoadConfigFile:
         config = load_config_file(tmp_path)
         assert config.adapter == "github"
 
-    def test_auto_spec_still_works(self, tmp_path: Path) -> None:
+    def test_self_answer_still_works(self, tmp_path: Path) -> None:
         config_file = tmp_path / "a2sdlc.yaml"
-        config_file.write_text("pipeline:\n  auto_spec: true\n")
+        config_file.write_text("pipeline:\n  spec:\n    self_answer: true\n")
         config = load_config_file(tmp_path)
-        assert config.auto_spec is True
+        assert config.self_answer is True
+
+    def test_trigger_mention_default(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "a2sdlc.yaml"
+        config_file.write_text("adapter: github\n")
+        config = load_config_file(tmp_path)
+        assert config.trigger_mention == "@a2sdlc"
+
+    def test_trigger_mention_from_yaml(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "a2sdlc.yaml"
+        config_file.write_text("pipeline:\n  trigger:\n    mention: '@mybot'\n")
+        config = load_config_file(tmp_path)
+        assert config.trigger_mention == "@mybot"
+
+    def test_trigger_mention_missing_file_defaults(self, tmp_path: Path) -> None:
+        config = load_config_file(tmp_path)
+        assert config.trigger_mention == "@a2sdlc"
 
 
 # ── load_stage_config ─────────────────────────────────────────────────
@@ -171,11 +187,11 @@ class TestGetSessionId:
 
 @pytest.mark.unit
 class TestGateConfig:
-    def test_defaults_merge_human_review_auto(self) -> None:
+    def test_defaults_merge_human_spec_auto(self) -> None:
         config = ProjectConfig()
         gates = config.gate_config()
         assert gates.merge == GateMode.HUMAN
-        assert gates.review == GateMode.AUTO
+        assert gates.spec == GateMode.AUTO
 
     def test_parse_merge_auto_from_yaml(self, tmp_path: Path) -> None:
         config_file = tmp_path / "a2sdlc.yaml"
@@ -183,17 +199,17 @@ class TestGateConfig:
         config = load_config_file(tmp_path)
         gates = config.gate_config()
         assert gates.merge == GateMode.AUTO
-        assert gates.review == GateMode.AUTO  # default
+        assert gates.spec == GateMode.AUTO  # default
 
     def test_parse_both_gates_from_yaml(self, tmp_path: Path) -> None:
         config_file = tmp_path / "a2sdlc.yaml"
         config_file.write_text(
-            "pipeline:\n  gates:\n    merge: auto\n    review: human\n"
+            "pipeline:\n  gates:\n    merge: auto\n    spec: human\n"
         )
         config = load_config_file(tmp_path)
         gates = config.gate_config()
         assert gates.merge == GateMode.AUTO
-        assert gates.review == GateMode.HUMAN
+        assert gates.spec == GateMode.HUMAN
 
     def test_no_pipeline_gates_section_uses_defaults(self, tmp_path: Path) -> None:
         config_file = tmp_path / "a2sdlc.yaml"
@@ -201,7 +217,7 @@ class TestGateConfig:
         config = load_config_file(tmp_path)
         gates = config.gate_config()
         assert gates.merge == GateMode.HUMAN
-        assert gates.review == GateMode.AUTO
+        assert gates.spec == GateMode.AUTO
 
     def test_pipeline_section_no_gates_key_uses_defaults(self, tmp_path: Path) -> None:
         config_file = tmp_path / "a2sdlc.yaml"
@@ -209,13 +225,20 @@ class TestGateConfig:
         config = load_config_file(tmp_path)
         gates = config.gate_config()
         assert gates.merge == GateMode.HUMAN
-        assert gates.review == GateMode.AUTO
+        assert gates.spec == GateMode.AUTO
 
     def test_auto_spec_independent_of_gates(self, tmp_path: Path) -> None:
         config_file = tmp_path / "a2sdlc.yaml"
         config_file.write_text(
-            "pipeline:\n  auto_spec: true\n  gates:\n    merge: auto\n"
+            "pipeline:\n  spec:\n    self_answer: true\n  gates:\n    merge: auto\n"
         )
         config = load_config_file(tmp_path)
-        assert config.auto_spec is True
+        assert config.self_answer is True
         assert config.gate_config().merge == GateMode.AUTO
+
+    def test_self_answer_loaded_from_new_yaml_path(self, tmp_path: Path) -> None:
+        """New YAML path pipeline.spec.self_answer sets self_answer=True."""
+        config_file = tmp_path / "a2sdlc.yaml"
+        config_file.write_text("pipeline:\n  spec:\n    self_answer: true\n")
+        config = load_config_file(tmp_path)
+        assert config.self_answer is True

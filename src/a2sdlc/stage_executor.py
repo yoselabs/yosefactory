@@ -15,7 +15,7 @@ from a2sdlc.stats import StageRunStats
 _FOLLOWUP_PROMPT = (
     "Work phase complete. Provide your structured handover now. "
     "Respond with ONLY a ```a2sdlc block containing: "
-    '{{"status": "...", "ticket_summary": "..."}}. '
+    '{{"status": "...", "output": "..."}}. '
     "Valid statuses: complete, questions, approved, changes_requested."
 )
 

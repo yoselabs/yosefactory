@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+from datetime import datetime
 
 from github import Github
 from github.Repository import Repository
@@ -12,6 +14,12 @@ from github.Repository import Repository
 from a2sdlc.adapters.review import Approval, ReviewComment
 from a2sdlc.adapters.work import PipelineEvent
 from a2sdlc.exceptions import SkipEvent
+from a2sdlc.handover import (
+    HANDOVER_PATTERN,
+    FeedbackItem,
+    HandoverComment,
+    parse_handover,
+)
 from a2sdlc.models import StageName
 
 logger = logging.getLogger("a2sdlc.adapters.github")
@@ -44,8 +52,9 @@ def connect(repo_name: str, token: str) -> Repository:
 class GitHubWorkAdapter:
     """WorkAdapter backed by GitHub Issues via PyGithub."""
 
-    def __init__(self, repo: Repository) -> None:
+    def __init__(self, repo: Repository, trigger_mention: str = "@a2sdlc") -> None:
         self._repo = repo
+        self._trigger_mention = trigger_mention
 
     # ── parse_event ──────────────────────────────────────────────────
 
@@ -60,18 +69,18 @@ class GitHubWorkAdapter:
         with open(event_path) as f:
             event = json.load(f)
 
-        # Only filter bot senders on comment events (prevents infinite comment loops).
-        # Bot label events are intentional — they're the stage chain trigger.
         sender_type = event.get("sender", {}).get("type", "")
-        if event_name == "issue_comment" and sender_type == "Bot":
-            raise SkipEvent("bot comment sender")
 
         if event_name == "issues":
             return self._parse_issues_event(event)
         elif event_name == "issue_comment":
-            return self._parse_issue_comment_event(event)
+            return self._parse_issue_comment_event(event, sender_type)
         elif event_name == "pull_request":
             return self._parse_pull_request_event(event)
+        elif event_name == "pull_request_review":
+            return self._parse_pr_review_event(event, sender_type)
+        elif event_name == "pull_request_review_comment":
+            return self._parse_pr_review_comment_event(event, sender_type)
         else:
             raise SkipEvent(f"unsupported event name: {event_name!r}")
 
@@ -84,10 +93,12 @@ class GitHubWorkAdapter:
         issue_number = str(event["issue"]["number"])
 
         if label_name == TRIGGER_LABEL:
-            return PipelineEvent(key=issue_number, stage=StageName.SPEC)
+            return PipelineEvent(key=issue_number, trigger_stage=StageName.SPEC)
 
         if label_name == PROCEED_LABEL:
-            return PipelineEvent(key=issue_number, stage=StageName.IMPLEMENT)
+            return PipelineEvent(
+                key=issue_number, trigger_stage=None, is_feedback=False
+            )
 
         if label_name in _LABEL_TO_STAGE:
             stage = _LABEL_TO_STAGE[label_name]
@@ -103,21 +114,73 @@ class GitHubWorkAdapter:
                     "review triggered from issue label, resolved PR #%d",
                     pr_number,
                 )
-            return PipelineEvent(key=issue_number, stage=stage, pr_number=pr_number)
+            return PipelineEvent(
+                key=issue_number, trigger_stage=stage, pr_number=pr_number
+            )
 
         raise SkipEvent(f"label {label_name!r} is not a stage label")
 
-    def _parse_issue_comment_event(self, event: dict) -> PipelineEvent:
-        issue_labels = {lbl["name"] for lbl in event.get("issue", {}).get("labels", [])}
+    def _parse_issue_comment_event(
+        self, event: dict, sender_type: str
+    ) -> PipelineEvent:
+        if sender_type == "Bot":
+            raise SkipEvent("bot comment sender")
+
+        comment_body = event.get("comment", {}).get("body", "")
         issue_number = str(event["issue"]["number"])
 
-        if NEEDS_INPUT_LABEL not in issue_labels:
-            raise SkipEvent("issue_comment but issue does not have needs-input label")
+        if self._trigger_mention not in comment_body:
+            raise SkipEvent(f"comment does not contain {self._trigger_mention}")
 
         return PipelineEvent(
             key=issue_number,
-            stage=StageName.SPEC,
-            is_resume=True,
+            trigger_stage=None,
+            is_feedback=True,
+        )
+
+    def _get_issue_key_for_pr(self, pr_number: int) -> str:
+        """Extract the linked issue number from a PR's body.
+
+        The adapter writes 'Closes #N' in the PR body when creating drafts.
+        Falls back to the PR number if no linked issue is found.
+        """
+        pr = self._repo.get_pull(pr_number)
+        body = str(pr.body) if pr.body else ""
+        match = re.search(r"Closes #(\d+)", body)
+        if match:
+            return match.group(1)
+        return str(pr_number)
+
+    def _parse_pr_review_event(self, event: dict, sender_type: str) -> PipelineEvent:
+        if sender_type == "Bot":
+            raise SkipEvent("bot PR review sender")
+
+        pr_number = event["pull_request"]["number"]
+        key = self._get_issue_key_for_pr(pr_number)
+        return PipelineEvent(
+            key=key,
+            trigger_stage=None,
+            is_feedback=True,
+            pr_number=pr_number,
+        )
+
+    def _parse_pr_review_comment_event(
+        self, event: dict, sender_type: str
+    ) -> PipelineEvent:
+        if sender_type == "Bot":
+            raise SkipEvent("bot PR review comment sender")
+
+        comment_body = event.get("comment", {}).get("body", "")
+        if self._trigger_mention not in comment_body:
+            raise SkipEvent(f"PR comment does not contain {self._trigger_mention}")
+
+        pr_number = event["pull_request"]["number"]
+        key = self._get_issue_key_for_pr(pr_number)
+        return PipelineEvent(
+            key=key,
+            trigger_stage=None,
+            is_feedback=True,
+            pr_number=pr_number,
         )
 
     def _parse_pull_request_event(self, event: dict) -> PipelineEvent:
@@ -136,7 +199,7 @@ class GitHubWorkAdapter:
         pr_number = event["pull_request"]["number"]
         return PipelineEvent(
             key=str(pr_number),
-            stage=StageName.REVIEW,
+            trigger_stage=StageName.REVIEW,
             pr_number=pr_number,
         )
 
@@ -214,6 +277,47 @@ class GitHubWorkAdapter:
     def format_branch(self, ticket_key: str) -> str:
         """Return branch name for a ticket."""
         return f"agent/{ticket_key}"
+
+    def collect_issue_feedback(self, key: str, since: datetime) -> list[FeedbackItem]:
+        """Collect feedback comments on an issue since a given time."""
+        issue = self._repo.get_issue(int(key))
+        items: list[FeedbackItem] = []
+        for comment in issue.get_comments(since=since):
+            body = comment.body or ""
+            if self._trigger_mention not in body:
+                continue
+            if HANDOVER_PATTERN.search(body):
+                continue  # Skip handover comments
+            sender_type = (
+                "bot" if (comment.user and comment.user.type == "Bot") else "human"
+            )
+            items.append(
+                FeedbackItem(
+                    id=str(comment.id),
+                    author=comment.user.login if comment.user else "",
+                    author_type=sender_type,
+                    source="issue_comment",
+                    body=body,
+                    created_at=comment.created_at,
+                )
+            )
+        return items
+
+    def find_last_handover(self, key: str) -> HandoverComment | None:
+        """Find the last handover comment on an issue."""
+        issue = self._repo.get_issue(int(key))
+        best: HandoverComment | None = None
+        for comment in issue.get_comments():
+            parsed = parse_handover(
+                comment.body or "",
+                str(comment.id),
+                comment.created_at,
+                "issue",
+            )
+            if parsed is not None:
+                if best is None or parsed.created_at > best.created_at:
+                    best = parsed
+        return best
 
 
 # ── ReviewAdapter ────────────────────────────────────────────────────
@@ -299,3 +403,69 @@ class GitHubReviewAdapter:
                 )
             )
         return comments
+
+    def collect_pr_feedback(
+        self, pr_number: int, since: datetime
+    ) -> list[FeedbackItem]:
+        """Collect feedback comments on a PR since a given time."""
+        pull = self._repo.get_pull(pr_number)
+        items: list[FeedbackItem] = []
+
+        # PR reviews (always included — no mention filter needed)
+        for review in pull.get_reviews():
+            submitted = review.submitted_at
+            if submitted and submitted <= since:
+                continue
+            user = review.user
+            if user and user.type == "Bot":
+                continue
+            if not review.body:
+                continue
+            items.append(
+                FeedbackItem(
+                    id=str(review.id),
+                    author=user.login if user else "",
+                    author_type="human",
+                    source="pr_review",
+                    body=review.body,
+                    created_at=submitted or since,
+                )
+            )
+
+        # PR review comments (inline — file/line metadata)
+        for comment in pull.get_review_comments():
+            if comment.created_at <= since:
+                continue
+            user = comment.user
+            if user and user.type == "Bot":
+                continue
+            items.append(
+                FeedbackItem(
+                    id=str(comment.id),
+                    author=user.login if user else "",
+                    author_type="human",
+                    source="pr_inline",
+                    body=comment.body or "",
+                    file_path=comment.path,
+                    line_range=(comment.line or 0, comment.line or 0),
+                    created_at=comment.created_at,
+                )
+            )
+
+        return items
+
+    def find_last_handover(self, pr_number: int) -> HandoverComment | None:
+        """Find the last handover comment on a PR."""
+        issue = self._repo.get_issue(pr_number)
+        best: HandoverComment | None = None
+        for comment in issue.get_comments():
+            parsed = parse_handover(
+                comment.body or "",
+                str(comment.id),
+                comment.created_at,
+                "pr",
+            )
+            if parsed is not None:
+                if best is None or parsed.created_at > best.created_at:
+                    best = parsed
+        return best

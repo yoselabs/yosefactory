@@ -38,8 +38,8 @@ class GateMode(StrEnum):
 class GateConfig(BaseModel):
     """Gate configuration for the pipeline."""
 
+    spec: GateMode = GateMode.AUTO
     merge: GateMode = GateMode.HUMAN
-    review: GateMode = GateMode.AUTO
 
 
 # ── Structured output ─────────────────────────────────────────────
@@ -49,12 +49,7 @@ class StageResult(BaseModel):
     """Structured output from an agent stage."""
 
     status: StageStatus
-    pr_title: str | None = None
-    pr_summary: str | None = None
-    ticket_summary: str | None = None
-    spec_path: str | None = None
-    plan_path: str | None = None
-    questions: list[str] | None = None
+    output: str = ""
 
 
 class TicketState(BaseModel):

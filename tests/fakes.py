@@ -7,13 +7,15 @@ assert on the exact sequence of adapter interactions.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 
 from a2sdlc.adapters.review import Approval, ReviewComment
 from a2sdlc.adapters.work import PipelineEvent
 from a2sdlc.config import StageConfig
 from a2sdlc.exceptions import BlockedError, SkipEvent
+from a2sdlc.handover import FeedbackItem, HandoverComment
 from a2sdlc.models import StageName
 from a2sdlc.runner import RunResult
 
@@ -29,10 +31,14 @@ class FakeWorkAdapter:
         event: PipelineEvent | None = None,
         ticket_body: str = "",
         labels: list[str] | None = None,
+        issue_feedback: Sequence[FeedbackItem] = (),
+        last_handover: HandoverComment | None = None,
     ) -> None:
         self._event = event
         self._ticket_body = ticket_body
         self._labels: list[str] = labels or []
+        self._issue_feedback = issue_feedback
+        self._last_handover = last_handover
 
         # Call records
         self.created_comments: list[str] = []  # comment IDs from begin_comment
@@ -78,6 +84,12 @@ class FakeWorkAdapter:
     def format_branch(self, ticket_key: str) -> str:
         return f"agent/{ticket_key}"
 
+    def collect_issue_feedback(self, key: str, since: datetime) -> list[FeedbackItem]:
+        return list(self._issue_feedback)
+
+    def find_last_handover(self, key: str) -> HandoverComment | None:
+        return self._last_handover
+
 
 # ── FakeReviewAdapter ─────────────────────────────────────────────────
 
@@ -90,10 +102,14 @@ class FakeReviewAdapter:
         pr_diff: str = "",
         pr_comments: list[ReviewComment] | None = None,
         approvals: list[Approval] | None = None,
+        pr_feedback: Sequence[FeedbackItem] = (),
+        pr_handover: HandoverComment | None = None,
     ) -> None:
         self._pr_diff = pr_diff
         self._pr_comments: list[ReviewComment] = pr_comments or []
         self._approvals: list[Approval] = approvals or []
+        self._pr_feedback = pr_feedback
+        self._pr_handover = pr_handover
 
         # Call records
         self.created_prs: list[
@@ -139,6 +155,14 @@ class FakeReviewAdapter:
 
     def read_pr_comments(self, pr_number: int) -> list[ReviewComment]:
         return list(self._pr_comments)
+
+    def collect_pr_feedback(
+        self, pr_number: int, since: datetime
+    ) -> list[FeedbackItem]:
+        return list(self._pr_feedback)
+
+    def find_last_handover(self, pr_number: int) -> HandoverComment | None:
+        return self._pr_handover
 
 
 # ── FakeGitAdapter ────────────────────────────────────────────────────
@@ -216,7 +240,7 @@ class FakeRunner:
         self._call_index = 0
         self.calls: list[RunnerCall] = []
 
-    async def run(
+    async def run(  # noqa: PLR0913
         self,
         user_prompt: str,
         system_prompt: str,

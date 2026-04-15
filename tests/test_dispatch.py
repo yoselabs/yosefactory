@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ import pytest
 from a2sdlc.adapters.work import PipelineEvent
 from a2sdlc.config import ProjectConfig
 from a2sdlc.dispatch import DispatchContext, dispatch
+from a2sdlc.handover import FeedbackItem, HandoverComment
 from a2sdlc.models import StageName, StageStatus
 from a2sdlc.runner import RunResult
 from tests.fakes import (
@@ -19,8 +21,8 @@ from tests.fakes import (
     FakeWorkAdapter,
 )
 
-_COMPLETE_OUTPUT = '```a2sdlc\n{"status": "complete", "ticket_summary": "Done"}\n```'
-_APPROVED_OUTPUT = '```a2sdlc\n{"status": "approved", "ticket_summary": "LGTM"}\n```'
+_COMPLETE_OUTPUT = '```a2sdlc\n{"status": "complete", "output": "Done"}\n```'
+_APPROVED_OUTPUT = '```a2sdlc\n{"status": "approved", "output": "LGTM"}\n```'
 
 
 def _ctx(
@@ -32,7 +34,7 @@ def _ctx(
 ) -> tuple[
     DispatchContext, FakeWorkAdapter, FakeGitAdapter, FakeReviewAdapter, FakeRunner
 ]:
-    event = PipelineEvent(key="35", stage=stage)
+    event = PipelineEvent(key="35", trigger_stage=stage)
     work = FakeWorkAdapter(event=event, ticket_body=ticket_body, labels=None)
     git = FakeGitAdapter()
     review = FakeReviewAdapter()
@@ -121,6 +123,51 @@ class TestErrors:
         result = await dispatch(ctx)
         assert result.error is not None
 
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_blocks_after_max_review_cycles(self) -> None:
+        """Review stage blocked when review_cycles exceed max."""
+        import json
+
+        state = {
+            "stage": "review",
+            "status": "changes_requested",
+            "base_branch": "main",
+            "branch": "agent/35",
+            "pr_number": 1,
+            "stage_run_id": "run-old",
+            "review_cycles": 99,
+            "accumulated_cost_usd": 0.0,
+            "accumulated_tokens_in": 0,
+            "accumulated_tokens_out": 0,
+            "accumulated_duration_ms": 0,
+            "last_updated": "2026-04-12T00:00:00Z",
+        }
+        ctx, work, git, *_ = _ctx(stage=StageName.REVIEW, run_id="run-new")
+        git._state_json = json.dumps(state)
+        result = await dispatch(ctx)
+        assert result.blocked is True
+        assert "Circuit breaker" in (result.error or "")
+
+    @pytest.mark.asyncio
+    async def test_git_blocked_returns_blocked(self) -> None:
+        """Git branch setup failure blocks the dispatch."""
+        ctx, work, *_ = _ctx(stage=StageName.SPEC)
+        ctx.git = FakeGitAdapter(conflict_on_setup=True)
+        result = await dispatch(ctx)
+        assert result.blocked is True
+
+    @pytest.mark.asyncio
+    async def test_no_status_block_blocks(self) -> None:
+        """No status block in output after follow-ups blocks."""
+        no_block_output = "Some output with no status block."
+        ctx, work, *_ = _ctx(
+            stage=StageName.SPEC,
+            results=[RunResult(success=True, output=no_block_output)] * 4,
+        )
+        result = await dispatch(ctx)
+        assert result.blocked is True
+        assert result.error == "no_status_block"
+
 
 class TestReviewLoop:
     @pytest.mark.asyncio
@@ -142,7 +189,7 @@ class TestReviewLoop:
     async def test_changes_requested_posts_review(self) -> None:
         """changes_requested posts REQUEST_CHANGES review on PR."""
         changes_output = '```a2sdlc\n{"status": "changes_requested"}\n```'
-        event = PipelineEvent(key="35", stage=StageName.REVIEW, pr_number=42)
+        event = PipelineEvent(key="35", trigger_stage=StageName.REVIEW, pr_number=42)
         work = FakeWorkAdapter(event=event, ticket_body="Review this", labels=None)
         git = FakeGitAdapter()
         review = FakeReviewAdapter()
@@ -175,9 +222,9 @@ class TestReviewLoop:
 class TestAutoSpec:
     @pytest.mark.asyncio
     async def test_auto_spec_prepends_system_prompt(self) -> None:
-        """auto_spec config injects 'do not ask questions' into system prompt."""
+        """self_answer config injects 'do not ask questions' into system prompt."""
         ctx, _, _, _, runner = _ctx(stage=StageName.SPEC)
-        ctx.config = ProjectConfig(auto_spec=True)
+        ctx.config = ProjectConfig(self_answer=True)
         await dispatch(ctx)
         assert len(runner.calls) >= 1
         assert "Do not ask questions" in runner.calls[0].system_prompt
@@ -229,15 +276,11 @@ class TestStatsInFinalComment:
         assert "2k out" in final_body
 
 
-class TestImplementUpdatingPR:
+class TestImplementComplete:
     @pytest.mark.asyncio
-    async def test_implement_complete_updates_pr(self) -> None:
-        """Implement complete with pr_title updates the PR."""
-        impl_output = (
-            '```a2sdlc\n{"status": "complete", "pr_title": "feat: patient form", '
-            '"pr_summary": "Adds form"}\n```'
-        )
-        # Set up with existing state that has a pr_number
+    async def test_implement_complete_does_not_update_pr(self) -> None:
+        """Implement complete no longer calls update_from_result on the PR."""
+        impl_output = '```a2sdlc\n{"status": "complete", "output": "Done"}\n```'
         import json
 
         state = {
@@ -262,9 +305,8 @@ class TestImplementUpdatingPR:
         git._state_json = json.dumps(state)
         result = await dispatch(ctx)
         assert result.status == StageStatus.COMPLETE
-        # PR should have been updated with the title/summary
-        assert len(review.updated_prs) == 1
-        assert review.updated_prs[0][1] == "feat: patient form"
+        # PR should NOT have been updated — agent handles PR title/body directly
+        assert len(review.updated_prs) == 0
 
     @pytest.mark.asyncio
     async def test_implement_transitions_to_review_with_auto_gate(self) -> None:
@@ -299,3 +341,155 @@ class TestDirectives:
         await dispatch(ctx)
         assert len(runner.calls) >= 1
         assert "[a2sdlc" not in runner.calls[0].user_prompt
+
+
+_T1 = datetime(2026, 4, 10, tzinfo=timezone.utc)
+_T2 = datetime(2026, 4, 11, tzinfo=timezone.utc)
+_T3 = datetime(2026, 4, 12, tzinfo=timezone.utc)
+
+_DEFAULT_RUN = RunResult(
+    success=True,
+    output=_COMPLETE_OUTPUT,
+    total_cost_usd=0.5,
+    input_tokens=1000,
+    output_tokens=2000,
+    duration_ms=5000,
+    num_turns=10,
+)
+
+
+def _feedback_ctx(
+    *,
+    issue_handover: HandoverComment | None = None,
+    issue_feedback: list[FeedbackItem] | None = None,
+) -> tuple[DispatchContext, FakeRunner]:
+    event = PipelineEvent(key="42", is_feedback=True)
+    work = FakeWorkAdapter(
+        event=event,
+        ticket_body="Build form",
+        labels=None,
+        last_handover=issue_handover,
+        issue_feedback=issue_feedback or [],
+    )
+    runner = FakeRunner(_DEFAULT_RUN)
+    ctx = DispatchContext(
+        work=work,
+        git=FakeGitAdapter(),
+        review=FakeReviewAdapter(),
+        runner=runner,
+        config=ProjectConfig(),
+        project_root=Path("/tmp/test"),
+        logger=logging.getLogger("test"),
+        run_id="run-fb-1",
+    )
+    return ctx, runner
+
+
+def _ho(stage: StageName, t: datetime) -> HandoverComment:
+    return HandoverComment(
+        stage=stage,
+        run_id="r",
+        body="done",
+        created_at=t,
+        location="issue",
+    )
+
+
+def _fb(body: str, t: datetime) -> FeedbackItem:
+    return FeedbackItem(
+        id="fb",
+        author="human",
+        author_type="human",
+        source="issue_comment",
+        body=body,
+        created_at=t,
+    )
+
+
+class TestFeedbackRouting:
+    @pytest.mark.asyncio
+    async def test_feedback_routes_to_implement_when_last_handover_is_review(
+        self,
+    ) -> None:
+        ctx, _ = _feedback_ctx(
+            issue_handover=_ho(StageName.REVIEW, _T1),
+            issue_feedback=[_fb("Fix it", _T2)],
+        )
+        assert (await dispatch(ctx)).stage == StageName.IMPLEMENT
+
+    @pytest.mark.asyncio
+    async def test_feedback_routes_to_spec_when_no_handover(self) -> None:
+        ctx, _ = _feedback_ctx(issue_feedback=[_fb("Clarify", _T2)])
+        assert (await dispatch(ctx)).stage == StageName.SPEC
+
+    @pytest.mark.asyncio
+    async def test_feedback_dedup_skips_when_handover_newer(self) -> None:
+        ctx, runner = _feedback_ctx(
+            issue_handover=_ho(StageName.IMPLEMENT, _T3),
+            issue_feedback=[_fb("Old", _T1)],
+        )
+        result = await dispatch(ctx)
+        assert result.error == "feedback_already_addressed"
+        assert len(runner.calls) == 0
+
+    @pytest.mark.asyncio
+    async def test_feedback_system_prompt_hint(self) -> None:
+        ctx, runner = _feedback_ctx(issue_feedback=[_fb("Fix", _T2)])
+        await dispatch(ctx)
+        assert "addressing feedback" in runner.calls[0].system_prompt
+
+
+def _proceed_ctx(
+    handover: HandoverComment | None = None,
+    state_json: str | None = None,
+) -> tuple[DispatchContext, FakeGitAdapter]:
+    event = PipelineEvent(key="42", trigger_stage=None, is_feedback=False)
+    work = FakeWorkAdapter(
+        event=event,
+        ticket_body="Build form",
+        labels=None,
+        last_handover=handover,
+    )
+    git = FakeGitAdapter(state_json=state_json)
+    runner = FakeRunner(_DEFAULT_RUN)
+    ctx = DispatchContext(
+        work=work,
+        git=git,
+        review=FakeReviewAdapter(),
+        runner=runner,
+        config=ProjectConfig(),
+        project_root=Path("/tmp/test"),
+        logger=logging.getLogger("test"),
+        run_id="run-proceed",
+    )
+    return ctx, git
+
+
+class TestProceedRouting:
+    @pytest.mark.asyncio
+    async def test_proceed_at_spec_advances_to_implement(self) -> None:
+        ctx, _ = _proceed_ctx(handover=_ho(StageName.SPEC, _T1))
+        assert (await dispatch(ctx)).stage == StageName.IMPLEMENT
+
+    @pytest.mark.asyncio
+    async def test_proceed_at_review_advances_to_merge(self) -> None:
+        import json
+
+        state = json.dumps(
+            {
+                "stage": "review",
+                "status": "approved",
+                "base_branch": "main",
+                "branch": "agent/42",
+                "pr_number": 1,
+                "stage_run_id": "run-old",
+                "review_cycles": 0,
+                "accumulated_cost_usd": 0.0,
+                "accumulated_tokens_in": 0,
+                "accumulated_tokens_out": 0,
+                "accumulated_duration_ms": 0,
+                "last_updated": "2026-04-10T00:00:00Z",
+            }
+        )
+        ctx, _ = _proceed_ctx(handover=_ho(StageName.REVIEW, _T1), state_json=state)
+        assert (await dispatch(ctx)).stage == StageName.MERGE

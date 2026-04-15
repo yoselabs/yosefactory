@@ -47,9 +47,10 @@ class ProjectConfig:
     """Per-repo settings read from ``a2sdlc.yaml`` at the project root."""
 
     adapter: str = "github"
-    auto_spec: bool = False
+    self_answer: bool = False
     default_base: str = "main"
     test_command: str = "make test"
+    trigger_mention: str = "@a2sdlc"
     stage_overrides: dict[str, dict[str, object]] = field(default_factory=dict)
     _gates: GateConfig = field(default_factory=GateConfig, repr=False, compare=False)
 
@@ -76,16 +77,20 @@ def load_config_file(project_root: Path) -> ProjectConfig:
     pipeline = data.get("pipeline", {})
     pipeline = pipeline if isinstance(pipeline, dict) else {}
 
+    trigger_raw = pipeline.get("trigger", {})
+    trigger_raw = trigger_raw if isinstance(trigger_raw, dict) else {}
+    trigger_mention = str(trigger_raw.get("mention", "@a2sdlc"))
+
     gates_raw = pipeline.get("gates", {})
     gates_raw = gates_raw if isinstance(gates_raw, dict) else {}
 
     merge_mode = (
         GateMode(str(gates_raw["merge"])) if "merge" in gates_raw else GateMode.HUMAN
     )
-    review_mode = (
-        GateMode(str(gates_raw["review"])) if "review" in gates_raw else GateMode.AUTO
+    spec_mode = (
+        GateMode(str(gates_raw["spec"])) if "spec" in gates_raw else GateMode.AUTO
     )
-    gates = GateConfig(merge=merge_mode, review=review_mode)
+    gates = GateConfig(merge=merge_mode, spec=spec_mode)
 
     stages_raw = data.get("stages", {})
     stage_overrides: dict[str, dict[str, object]] = {}
@@ -94,11 +99,16 @@ def load_config_file(project_root: Path) -> ProjectConfig:
             if isinstance(stage_data, dict):
                 stage_overrides[str(stage_name)] = stage_data
 
+    spec_raw = pipeline.get("spec", {})
+    spec_raw = spec_raw if isinstance(spec_raw, dict) else {}
+    self_answer = bool(spec_raw.get("self_answer", False))
+
     config = ProjectConfig(
         adapter=str(data.get("adapter", "github")),
-        auto_spec=bool(pipeline.get("auto_spec", False)),
+        self_answer=self_answer,
         default_base=str(pipeline.get("default_base", "main")),
         test_command=str(data.get("test_command", "make test")),
+        trigger_mention=trigger_mention,
         stage_overrides=stage_overrides,
     )
     config._gates = gates  # noqa: SLF001
