@@ -35,9 +35,9 @@ class FeedbackItem:
     author_type: str  # "human" | "bot"
     source: str  # "issue_comment" | "pr_comment" | "pr_inline" | "pr_review"
     body: str
+    created_at: datetime
     file_path: str | None = None
     line_range: tuple[int, int] | None = None
-    created_at: datetime = datetime.min
 
 
 @dataclass(frozen=True)

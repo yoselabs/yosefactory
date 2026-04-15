@@ -262,12 +262,8 @@ class TestStageResultCleanShape:
     def test_no_plan_path_field(self) -> None:
         assert not hasattr(StageResult.model_fields, "plan_path")
 
-    def test_questions_kept(self) -> None:
-        r = StageResult(
-            status=StageStatus.QUESTIONS,
-            questions=["What about mobile?", "Which framework?"],
-        )
-        assert r.questions == ["What about mobile?", "Which framework?"]
+    def test_no_questions_field(self) -> None:
+        assert "questions" not in StageResult.model_fields
 
     def test_parse_with_output(self) -> None:
         r = StageResult.model_validate_json(
@@ -287,9 +283,8 @@ class TestStageResultCleanShape:
         assert result.status is StageStatus.COMPLETE
         assert result.output == "Implementation done."
 
-    def test_extract_result_backward_compat(self) -> None:
+    def test_extract_result_questions_status(self) -> None:
         output = '```a2sdlc\n{"status": "questions"}\n```'
         result = extract_result(output)
         assert result is not None
         assert result.status is StageStatus.QUESTIONS
-        assert result.questions is None

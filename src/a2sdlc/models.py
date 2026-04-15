@@ -50,7 +50,6 @@ class StageResult(BaseModel):
 
     status: StageStatus
     output: str = ""
-    questions: list[str] | None = None
 
 
 class TicketState(BaseModel):

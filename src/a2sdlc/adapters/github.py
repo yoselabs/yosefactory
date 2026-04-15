@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from datetime import datetime
 
 from github import Github
@@ -137,13 +138,27 @@ class GitHubWorkAdapter:
             is_feedback=True,
         )
 
+    def _get_issue_key_for_pr(self, pr_number: int) -> str:
+        """Extract the linked issue number from a PR's body.
+
+        The adapter writes 'Closes #N' in the PR body when creating drafts.
+        Falls back to the PR number if no linked issue is found.
+        """
+        pr = self._repo.get_pull(pr_number)
+        body = str(pr.body) if pr.body else ""
+        match = re.search(r"Closes #(\d+)", body)
+        if match:
+            return match.group(1)
+        return str(pr_number)
+
     def _parse_pr_review_event(self, event: dict, sender_type: str) -> PipelineEvent:
         if sender_type == "Bot":
             raise SkipEvent("bot PR review sender")
 
         pr_number = event["pull_request"]["number"]
+        key = self._get_issue_key_for_pr(pr_number)
         return PipelineEvent(
-            key=str(pr_number),
+            key=key,
             trigger_stage=None,
             is_feedback=True,
             pr_number=pr_number,
@@ -160,8 +175,9 @@ class GitHubWorkAdapter:
             raise SkipEvent(f"PR comment does not contain {self._trigger_mention}")
 
         pr_number = event["pull_request"]["number"]
+        key = self._get_issue_key_for_pr(pr_number)
         return PipelineEvent(
-            key=str(pr_number),
+            key=key,
             trigger_stage=None,
             is_feedback=True,
             pr_number=pr_number,

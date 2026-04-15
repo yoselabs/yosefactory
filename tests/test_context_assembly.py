@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from a2sdlc.context_assembly import assemble_context, _pick_handover
+from a2sdlc.context_assembly import assemble_context, pick_handover
 from a2sdlc.handover import FeedbackItem, HandoverComment
 from a2sdlc.models import StageName
 
@@ -160,8 +160,8 @@ def test_inline_feedback_includes_file_location():
     assert "lines 45-52" in result.user_prompt
 
 
-def test_pick_handover_issue_newer():
-    """_pick_handover prefers the more recent handover."""
+def testpick_handover_issue_newer():
+    """pick_handover prefers the more recent handover."""
     issue = HandoverComment(
         stage=StageName.IMPLEMENT,
         run_id="r1",
@@ -172,14 +172,14 @@ def test_pick_handover_issue_newer():
     pr = HandoverComment(
         stage=StageName.REVIEW, run_id="r2", body="", created_at=_dt(10), location="pr"
     )
-    assert _pick_handover(issue, pr) == issue
+    assert pick_handover(issue, pr) == issue
 
 
-def test_pick_handover_none_handling():
-    """_pick_handover handles None inputs."""
+def testpick_handover_none_handling():
+    """pick_handover handles None inputs."""
     ho = HandoverComment(
         stage=StageName.SPEC, run_id="r1", body="", created_at=_dt(10), location="issue"
     )
-    assert _pick_handover(ho, None) == ho
-    assert _pick_handover(None, ho) == ho
-    assert _pick_handover(None, None) is None
+    assert pick_handover(ho, None) == ho
+    assert pick_handover(None, ho) == ho
+    assert pick_handover(None, None) is None

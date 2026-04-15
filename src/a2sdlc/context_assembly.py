@@ -18,7 +18,7 @@ class ContextResult:
     is_first_run: bool
 
 
-def _pick_handover(
+def pick_handover(
     issue_ho: HandoverComment | None,
     pr_ho: HandoverComment | None,
 ) -> HandoverComment | None:
@@ -71,7 +71,7 @@ def assemble_context(
     2. Combine all feedback.
     3. Build prompt: ticket body + handover body + feedback + PR diff.
     """
-    handover = _pick_handover(issue_handover, pr_handover)
+    handover = pick_handover(issue_handover, pr_handover)
 
     all_feedback = issue_feedback + pr_feedback
     all_feedback.sort(key=lambda f: f.created_at)

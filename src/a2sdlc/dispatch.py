@@ -12,7 +12,7 @@ from a2sdlc.adapters.review import ReviewAdapter
 from a2sdlc.adapters.work import WorkAdapter
 from a2sdlc.comment_lifecycle import CommentManager
 from a2sdlc.config import ProjectConfig, load_stage_config
-from a2sdlc.context_assembly import assemble_context, _pick_handover
+from a2sdlc.context_assembly import assemble_context, pick_handover
 from a2sdlc.directives import parse_directives
 from a2sdlc.exceptions import BlockedError, SkipEvent
 from a2sdlc.feedback_routing import resolve_target_stage
@@ -79,7 +79,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
             pr_diff = ctx.review.read_pr_diff(event.pr_number)
 
         # Determine the "since" timestamp from the most recent handover
-        handover = _pick_handover(issue_handover, pr_handover)
+        handover = pick_handover(issue_handover, pr_handover)
         since = handover.created_at if handover else datetime.min
 
         # Need ticket body early for context assembly
