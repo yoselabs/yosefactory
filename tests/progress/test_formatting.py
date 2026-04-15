@@ -58,7 +58,7 @@ class TestFormatProgress:
             ToolEntry(timestamp=2.0, name="Edit", target="src/app.py"),
         ]
         text = format_progress("implement", ps, elapsed=135.0)
-        assert "\u23f3 **implement** in progress..." in text
+        assert "\u23f3 **a2sdlc:implement** in progress..." in text
         assert "claude-sonnet-4-6" in text
         assert "feat/T-1" in text
         assert "| Read | src/app.py |" in text
@@ -84,7 +84,7 @@ class TestFormatProgress:
     def test_empty_log(self) -> None:
         ps = _make_progress()
         text = format_progress("spec", ps, elapsed=0.0)
-        assert "\u23f3 **spec** in progress..." in text
+        assert "\u23f3 **a2sdlc:spec** in progress..." in text
 
 
 @pytest.mark.unit
@@ -111,7 +111,7 @@ class TestFormatFinal:
             max_turns=120,
             context_window=200_000,
         )
-        assert "### \u2705 implement" in text
+        assert "### \u2705 a2sdlc:implement" in text
         assert "Done implementing." in text
         assert "<details>" in text
         assert "312k" in text
@@ -181,9 +181,57 @@ class TestFormatFinal:
             max_turns=120,
             context_window=200_000,
         )
-        assert "### \u2705 spec" in text
+        assert "### \u2705 a2sdlc:spec" in text
         assert "Done." in text
         assert "\U0001f4cc" not in text
+
+
+@pytest.mark.unit
+class TestHandoverMarkers:
+    def test_format_final_includes_handover_marker(self) -> None:
+        """format_final output must match HANDOVER_PATTERN for stage detection."""
+        from a2sdlc.handover import HANDOVER_PATTERN
+
+        stats = _make_stats(
+            tokens_in=1000,
+            tokens_out=500,
+            cost_usd=0.05,
+            duration_ms=30000,
+            num_turns=5,
+        )
+        result = format_final(
+            "Some output",
+            stage="implement",
+            stats=stats,
+            milestones=[],
+            model="claude-sonnet-4-6",
+            branch="agent/42",
+            max_turns=25,
+            context_window=200000,
+        )
+        assert HANDOVER_PATTERN.search(result) is not None
+        assert "a2sdlc:implement" in result
+
+    def test_format_error_includes_handover_marker(self) -> None:
+        """format_error output must contain the a2sdlc: prefix for stage detection."""
+        stats = _make_stats()
+        result = format_error(
+            "some error",
+            stage="review",
+            stats=stats,
+            milestones=[],
+            model="claude-sonnet-4-6",
+            branch="agent/42",
+            max_turns=25,
+            context_window=200000,
+        )
+        assert "a2sdlc:review" in result
+
+    def test_format_progress_includes_handover_marker(self) -> None:
+        """format_progress output must contain the a2sdlc: prefix."""
+        ps = _make_progress()
+        result = format_progress("spec", ps, elapsed=60.0)
+        assert "a2sdlc:spec" in result
 
 
 @pytest.mark.unit
@@ -207,7 +255,7 @@ class TestFormatError:
             context_window=200_000,
         )
         assert "\U0001f6a8" in text
-        assert "**implement** failed" in text
+        assert "**a2sdlc:implement** failed" in text
         assert "timeout (60min)" in text
         assert "claude-sonnet-4-6" in text
         assert "\U0001f4cc 0:42 \u2014 brainstorming invoked" in text
