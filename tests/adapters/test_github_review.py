@@ -220,3 +220,21 @@ class TestMergePr:
         adapter.merge_pr(42, method="merge")
 
         mock_pr.merge.assert_called_once_with(merge_method="merge")
+
+
+# ── Feedback stubs (not yet implemented) ────────────────────────────
+
+
+@pytest.mark.unit
+class TestReviewFeedbackStubs:
+    def test_collect_pr_feedback_not_implemented(self) -> None:
+        from datetime import datetime, timezone
+
+        adapter = _make_adapter()
+        with pytest.raises(NotImplementedError):
+            adapter.collect_pr_feedback(42, datetime.now(timezone.utc))
+
+    def test_find_last_handover_not_implemented(self) -> None:
+        adapter = _make_adapter()
+        with pytest.raises(NotImplementedError):
+            adapter.find_last_handover(42)

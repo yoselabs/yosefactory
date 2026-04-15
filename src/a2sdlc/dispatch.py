@@ -64,9 +64,13 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
         ctx.logger.info("dispatch.skip", extra={"reason": e.reason})
         return DispatchResult(stage=StageName.SPEC, error=e.reason)
 
+    # TODO(Task 9): Replace with routing table resolution
+    assert event.trigger_stage is not None, "Feedback events not yet handled"
+    target_stage = event.trigger_stage
+
     ctx.logger.info(
         "dispatch.start",
-        extra={"key": event.key, "stage": event.stage.value},
+        extra={"key": event.key, "stage": target_stage.value},
     )
 
     # 2. Parse ticket directives + build gate config
@@ -87,11 +91,11 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
 
     if ctx.run_id and state_mgr.check_idempotency(ctx.run_id):
         ctx.logger.info("dispatch.duplicate_run_id", extra={"run_id": ctx.run_id})
-        return DispatchResult(stage=event.stage, error="duplicate_run_id")
+        return DispatchResult(stage=target_stage, error="duplicate_run_id")
 
     # 4. Circuit breaker for review stage
-    if event.stage == StageName.REVIEW:
-        stage_config = load_stage_config(event.stage.value, ctx.config)
+    if target_stage == StageName.REVIEW:
+        stage_config = load_stage_config(target_stage.value, ctx.config)
         cycles = state.review_cycles if state else 0
         if cycles >= stage_config.max_review_cycles:
             reason = (
@@ -100,7 +104,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
             )
             ctx.logger.error("dispatch.circuit_breaker", extra={"cycles": cycles})
             ctx.work.set_blocked(event.key, reason)
-            return DispatchResult(stage=event.stage, blocked=True, error=reason)
+            return DispatchResult(stage=target_stage, blocked=True, error=reason)
 
     # 5. Branch setup
     base = directives.base or (state.base_branch if state else ctx.config.default_base)
@@ -111,12 +115,12 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
     except BlockedError as e:
         ctx.logger.error("dispatch.git_blocked", extra={"reason": e.reason})
         ctx.work.set_blocked(event.key, e.reason)
-        return DispatchResult(stage=event.stage, blocked=True, error=e.reason)
+        return DispatchResult(stage=target_stage, blocked=True, error=e.reason)
 
     # 6. Draft PR creation (on spec stage if no PR exists yet)
     pr_lifecycle = PRLifecycle(ctx.review)
     pr_number = state.pr_number if state else None
-    if event.stage == StageName.SPEC and pr_number is None:
+    if target_stage == StageName.SPEC and pr_number is None:
         pr_number = pr_lifecycle.create_draft(branch, base, event.key)
         ctx.logger.info("dispatch.draft_pr_created", extra={"pr": pr_number})
 
@@ -125,10 +129,10 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
 
     # 7. Start comment
     comment = CommentManager(ctx.work, event.key)
-    comment.start(event.stage.value)
+    comment.start(target_stage.value)
 
     # 8. Merge stage — deterministic, no AI
-    if event.stage == StageName.MERGE:
+    if target_stage == StageName.MERGE:
         if pr_number is None:
             reason = f"No PR found for branch {branch}"
             comment.finalize(f"\U0001f6a8 {reason}")
@@ -150,13 +154,13 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
         return DispatchResult(stage=StageName.MERGE)
 
     # 9. Load stage config + assemble prompts
-    stage_config = load_stage_config(event.stage.value, ctx.config)
+    stage_config = load_stage_config(target_stage.value, ctx.config)
 
     system_prompt = assemble_system_prompt(
-        event.stage.value, ctx.project_root / ".a2sdlc"
+        target_stage.value, ctx.project_root / ".a2sdlc"
     )
 
-    if auto_spec and event.stage == StageName.SPEC:
+    if auto_spec and target_stage == StageName.SPEC:
         system_prompt = (
             "IMPORTANT: Make your best judgment for all ambiguous requirements. "
             "Do not ask questions \u2014 produce the spec directly.\n\n" + system_prompt
@@ -164,7 +168,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
 
     # 10. Build user prompt
     user_prompt = clean_body
-    if event.stage == StageName.REVIEW and pr_number is not None:
+    if target_stage == StageName.REVIEW and pr_number is not None:
         pr_context = pr_lifecycle.read_context(pr_number)
         user_prompt = f"{clean_body}\n\n{pr_context}"
 
@@ -175,9 +179,9 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
         system_prompt=system_prompt,
         config=stage_config,
         ticket_key=event.key,
-        stage=event.stage,
+        stage=target_stage,
         project_root=str(ctx.project_root),
-        is_resume=event.is_resume,
+        is_resume=False,
         on_progress=lambda text: comment.update(text),
         branch=branch,
     )
@@ -205,7 +209,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
     if not exec_result.success:
         error_comment = format_error(
             exec_result.error or "unknown",
-            stage=event.stage.value,
+            stage=target_stage.value,
             stats=exec_result.stats,
             milestones=_milestones,
             model=stage_config.model,
@@ -216,14 +220,14 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
         comment.finalize(error_comment)
         _commit_and_push()
         ctx.work.set_blocked(event.key, exec_result.error or "unknown")
-        return DispatchResult(stage=event.stage, blocked=True, error=exec_result.error)
+        return DispatchResult(stage=target_stage, blocked=True, error=exec_result.error)
 
     # 14. No status block even after follow-ups
     if stage_result is None:
         partial = exec_result.output[:2000]
         no_status_footer = format_final(
             partial,
-            stage=event.stage.value,
+            stage=target_stage.value,
             stats=exec_result.stats,
             milestones=_milestones,
             model=stage_config.model,
@@ -232,20 +236,20 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
             context_window=_ctx_window,
         )
         error_msg = (
-            f"\u26a0\ufe0f No status block in **{event.stage.value}** output."
+            f"\u26a0\ufe0f No status block in **{target_stage.value}** output."
             f"\n\n{partial}\n\n{no_status_footer}"
         )
         comment.finalize(error_msg)
         _commit_and_push()
         ctx.work.set_blocked(event.key, "no status block in output")
-        return DispatchResult(stage=event.stage, blocked=True, error="no_status_block")
+        return DispatchResult(stage=target_stage, blocked=True, error="no_status_block")
 
     # 15. Success path
     comment_body = strip_status_block(exec_result.output)
     _tasks = exec_result.progress.tasks if exec_result.progress else None
     final_comment = format_final(
         comment_body,
-        stage=event.stage.value,
+        stage=target_stage.value,
         stats=exec_result.stats,
         milestones=_milestones,
         model=stage_config.model,
@@ -257,7 +261,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
     comment.finalize(final_comment)
 
     # Side effects
-    if event.stage == StageName.REVIEW and pr_number is not None:
+    if target_stage == StageName.REVIEW and pr_number is not None:
         verdict = (
             "APPROVE"
             if stage_result.status == StageStatus.APPROVED
@@ -266,7 +270,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
         pr_lifecycle.post_review(pr_number, comment_body, verdict)
 
     if (
-        event.stage == StageName.IMPLEMENT
+        target_stage == StageName.IMPLEMENT
         and stage_result.status == StageStatus.COMPLETE
         and pr_number is not None
     ):
@@ -277,7 +281,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
     if stage_result.status == StageStatus.CHANGES_REQUESTED:
         review_cycles += 1
     new_state = TicketState(
-        stage=event.stage,
+        stage=target_stage,
         status=stage_result.status,
         base_branch=base,
         branch=branch,
@@ -298,12 +302,12 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
     _commit_and_push()
 
     # 17. Transition
-    next_st = next_stage(event.stage, stage_result.status, gates)
+    next_st = next_stage(target_stage, stage_result.status, gates)
 
     ctx.logger.info(
         "dispatch.transition",
         extra={
-            "from": event.stage.value,
+            "from": target_stage.value,
             "status": stage_result.status.value,
             "to": next_st.value if next_st else None,
         },
@@ -313,7 +317,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
         ctx.work.set_stage_label(event.key, next_st)
 
     return DispatchResult(
-        stage=event.stage,
+        stage=target_stage,
         status=stage_result.status,
         next_stage=next_st,
         blocked=False,

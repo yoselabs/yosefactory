@@ -185,7 +185,7 @@ def test_parse_event_returns_event_when_configured() -> None:
     from a2sdlc.adapters.work import PipelineEvent
     from a2sdlc.models import StageName
 
-    event = PipelineEvent(key="PROJ-1", stage=StageName.SPEC)
+    event = PipelineEvent(key="PROJ-1", trigger_stage=StageName.SPEC)
     adapter = FakeWorkAdapter(event=event, ticket_body="", labels=None)
     result = adapter.parse_event()
     assert result == event

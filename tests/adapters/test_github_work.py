@@ -47,7 +47,7 @@ class TestParseEvent:
         ):
             adapter = _make_work_adapter()
             result = adapter.parse_event()
-        assert result.stage == StageName.SPEC
+        assert result.trigger_stage == StageName.SPEC
         assert result.key == "15"
 
     def test_stage_label_triggers_stage(self, tmp_path: Path) -> None:
@@ -65,10 +65,10 @@ class TestParseEvent:
         ):
             adapter = _make_work_adapter()
             result = adapter.parse_event()
-        assert result.stage == StageName.IMPLEMENT
+        assert result.trigger_stage == StageName.IMPLEMENT
         assert result.key == "15"
 
-    def test_proceed_label_triggers_implement(self, tmp_path: Path) -> None:
+    def test_proceed_label_triggers_proceed(self, tmp_path: Path) -> None:
         path = self._write_event(
             tmp_path,
             {
@@ -83,7 +83,8 @@ class TestParseEvent:
         ):
             adapter = _make_work_adapter()
             result = adapter.parse_event()
-        assert result.stage == StageName.IMPLEMENT
+        assert result.trigger_stage is None
+        assert result.is_feedback is False
 
     def test_unknown_label_raises_skip(self, tmp_path: Path) -> None:
         path = self._write_event(
@@ -118,7 +119,7 @@ class TestParseEvent:
         ):
             adapter = _make_work_adapter()
             result = adapter.parse_event()
-        assert result.stage == StageName.SPEC
+        assert result.trigger_stage == StageName.SPEC
 
     def test_bot_comment_raises_skip(self, tmp_path: Path) -> None:
         """Bot comments should be skipped (prevents infinite loops)."""
@@ -155,9 +156,8 @@ class TestParseEvent:
         ):
             adapter = _make_work_adapter()
             result = adapter.parse_event()
-        assert result.is_resume is True
         assert result.key == "15"
-        assert result.stage == StageName.SPEC
+        assert result.trigger_stage == StageName.SPEC
 
     def test_issue_comment_without_needs_input_skips(self, tmp_path: Path) -> None:
         path = self._write_event(
@@ -192,7 +192,7 @@ class TestParseEvent:
         ):
             adapter = _make_work_adapter()
             result = adapter.parse_event()
-        assert result.stage == StageName.REVIEW
+        assert result.trigger_stage == StageName.REVIEW
         assert result.pr_number == 42
         assert result.key == "42"
 
@@ -219,7 +219,7 @@ class TestParseEvent:
         ):
             result = adapter.parse_event()
 
-        assert result.stage == StageName.REVIEW
+        assert result.trigger_stage == StageName.REVIEW
         assert result.pr_number == 42
         assert result.key == "16"
         mock_repo.get_pulls.assert_called_once_with(state="open", head="agent/16")
@@ -450,3 +450,21 @@ class TestFormatBranch:
         adapter = _make_work_adapter()
         assert adapter.format_branch("15") == "agent/15"
         assert adapter.format_branch("PROJ-42") == "agent/PROJ-42"
+
+
+# ── Feedback stubs (not yet implemented) ────────────────────────────
+
+
+@pytest.mark.unit
+class TestFeedbackStubs:
+    def test_collect_issue_feedback_not_implemented(self) -> None:
+        from datetime import datetime, timezone
+
+        adapter = _make_work_adapter()
+        with pytest.raises(NotImplementedError):
+            adapter.collect_issue_feedback("15", datetime.now(timezone.utc))
+
+    def test_find_last_handover_not_implemented(self) -> None:
+        adapter = _make_work_adapter()
+        with pytest.raises(NotImplementedError):
+            adapter.find_last_handover("15")

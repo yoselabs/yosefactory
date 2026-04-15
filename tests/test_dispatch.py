@@ -32,7 +32,7 @@ def _ctx(
 ) -> tuple[
     DispatchContext, FakeWorkAdapter, FakeGitAdapter, FakeReviewAdapter, FakeRunner
 ]:
-    event = PipelineEvent(key="35", stage=stage)
+    event = PipelineEvent(key="35", trigger_stage=stage)
     work = FakeWorkAdapter(event=event, ticket_body=ticket_body, labels=None)
     git = FakeGitAdapter()
     review = FakeReviewAdapter()
@@ -121,6 +121,51 @@ class TestErrors:
         result = await dispatch(ctx)
         assert result.error is not None
 
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_blocks_after_max_review_cycles(self) -> None:
+        """Review stage blocked when review_cycles exceed max."""
+        import json
+
+        state = {
+            "stage": "review",
+            "status": "changes_requested",
+            "base_branch": "main",
+            "branch": "agent/35",
+            "pr_number": 1,
+            "stage_run_id": "run-old",
+            "review_cycles": 99,
+            "accumulated_cost_usd": 0.0,
+            "accumulated_tokens_in": 0,
+            "accumulated_tokens_out": 0,
+            "accumulated_duration_ms": 0,
+            "last_updated": "2026-04-12T00:00:00Z",
+        }
+        ctx, work, git, *_ = _ctx(stage=StageName.REVIEW, run_id="run-new")
+        git._state_json = json.dumps(state)
+        result = await dispatch(ctx)
+        assert result.blocked is True
+        assert "Circuit breaker" in (result.error or "")
+
+    @pytest.mark.asyncio
+    async def test_git_blocked_returns_blocked(self) -> None:
+        """Git branch setup failure blocks the dispatch."""
+        ctx, work, *_ = _ctx(stage=StageName.SPEC)
+        ctx.git = FakeGitAdapter(conflict_on_setup=True)
+        result = await dispatch(ctx)
+        assert result.blocked is True
+
+    @pytest.mark.asyncio
+    async def test_no_status_block_blocks(self) -> None:
+        """No status block in output after follow-ups blocks."""
+        no_block_output = "Some output with no status block."
+        ctx, work, *_ = _ctx(
+            stage=StageName.SPEC,
+            results=[RunResult(success=True, output=no_block_output)] * 4,
+        )
+        result = await dispatch(ctx)
+        assert result.blocked is True
+        assert result.error == "no_status_block"
+
 
 class TestReviewLoop:
     @pytest.mark.asyncio
@@ -142,7 +187,7 @@ class TestReviewLoop:
     async def test_changes_requested_posts_review(self) -> None:
         """changes_requested posts REQUEST_CHANGES review on PR."""
         changes_output = '```a2sdlc\n{"status": "changes_requested"}\n```'
-        event = PipelineEvent(key="35", stage=StageName.REVIEW, pr_number=42)
+        event = PipelineEvent(key="35", trigger_stage=StageName.REVIEW, pr_number=42)
         work = FakeWorkAdapter(event=event, ticket_body="Review this", labels=None)
         git = FakeGitAdapter()
         review = FakeReviewAdapter()

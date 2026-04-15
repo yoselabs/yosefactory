@@ -93,7 +93,7 @@ async def test_status_block_on_first_try():
 
 @pytest.mark.asyncio
 async def test_no_block_sends_followup_as_resume():
-    """No status block → follow-up sent with is_resume=True."""
+    """No status block -> follow-up sent with is_resume=True."""
     runner = FakeRunner([_success_no_block(), _success_with_block("complete")])
     await _run(runner)
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from datetime import datetime
 
 from github import Github
 from github.Repository import Repository
@@ -12,6 +13,7 @@ from github.Repository import Repository
 from a2sdlc.adapters.review import Approval, ReviewComment
 from a2sdlc.adapters.work import PipelineEvent
 from a2sdlc.exceptions import SkipEvent
+from a2sdlc.handover import FeedbackItem, HandoverComment
 from a2sdlc.models import StageName
 
 logger = logging.getLogger("a2sdlc.adapters.github")
@@ -84,10 +86,12 @@ class GitHubWorkAdapter:
         issue_number = str(event["issue"]["number"])
 
         if label_name == TRIGGER_LABEL:
-            return PipelineEvent(key=issue_number, stage=StageName.SPEC)
+            return PipelineEvent(key=issue_number, trigger_stage=StageName.SPEC)
 
         if label_name == PROCEED_LABEL:
-            return PipelineEvent(key=issue_number, stage=StageName.IMPLEMENT)
+            return PipelineEvent(
+                key=issue_number, trigger_stage=None, is_feedback=False
+            )
 
         if label_name in _LABEL_TO_STAGE:
             stage = _LABEL_TO_STAGE[label_name]
@@ -103,7 +107,9 @@ class GitHubWorkAdapter:
                     "review triggered from issue label, resolved PR #%d",
                     pr_number,
                 )
-            return PipelineEvent(key=issue_number, stage=stage, pr_number=pr_number)
+            return PipelineEvent(
+                key=issue_number, trigger_stage=stage, pr_number=pr_number
+            )
 
         raise SkipEvent(f"label {label_name!r} is not a stage label")
 
@@ -116,8 +122,7 @@ class GitHubWorkAdapter:
 
         return PipelineEvent(
             key=issue_number,
-            stage=StageName.SPEC,
-            is_resume=True,
+            trigger_stage=StageName.SPEC,
         )
 
     def _parse_pull_request_event(self, event: dict) -> PipelineEvent:
@@ -136,7 +141,7 @@ class GitHubWorkAdapter:
         pr_number = event["pull_request"]["number"]
         return PipelineEvent(
             key=str(pr_number),
-            stage=StageName.REVIEW,
+            trigger_stage=StageName.REVIEW,
             pr_number=pr_number,
         )
 
@@ -214,6 +219,14 @@ class GitHubWorkAdapter:
     def format_branch(self, ticket_key: str) -> str:
         """Return branch name for a ticket."""
         return f"agent/{ticket_key}"
+
+    def collect_issue_feedback(self, key: str, since: datetime) -> list[FeedbackItem]:
+        """Collect feedback comments on an issue since a given time."""
+        raise NotImplementedError("collect_issue_feedback not yet implemented")
+
+    def find_last_handover(self, key: str) -> HandoverComment | None:
+        """Find the last handover comment on an issue."""
+        raise NotImplementedError("find_last_handover not yet implemented")
 
 
 # ── ReviewAdapter ────────────────────────────────────────────────────
@@ -299,3 +312,13 @@ class GitHubReviewAdapter:
                 )
             )
         return comments
+
+    def collect_pr_feedback(
+        self, pr_number: int, since: datetime
+    ) -> list[FeedbackItem]:
+        """Collect feedback comments on a PR since a given time."""
+        raise NotImplementedError("collect_pr_feedback not yet implemented")
+
+    def find_last_handover(self, pr_number: int) -> HandoverComment | None:
+        """Find the last handover comment on a PR."""
+        raise NotImplementedError("find_last_handover not yet implemented")
