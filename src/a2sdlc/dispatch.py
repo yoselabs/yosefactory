@@ -336,13 +336,6 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
         )
         pr_lifecycle.post_review(pr_number, comment_body, verdict)
 
-    if (
-        target_stage == StageName.IMPLEMENT
-        and stage_result.status == StageStatus.COMPLETE
-        and pr_number is not None
-    ):
-        pr_lifecycle.update_from_result(pr_number, stage_result, event.key)
-
     # 16. Write state
     review_cycles = state.review_cycles if state else 0
     if stage_result.status == StageStatus.CHANGES_REQUESTED:

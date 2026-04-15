@@ -21,8 +21,8 @@ from tests.fakes import (
     FakeWorkAdapter,
 )
 
-_COMPLETE_OUTPUT = '```a2sdlc\n{"status": "complete", "ticket_summary": "Done"}\n```'
-_APPROVED_OUTPUT = '```a2sdlc\n{"status": "approved", "ticket_summary": "LGTM"}\n```'
+_COMPLETE_OUTPUT = '```a2sdlc\n{"status": "complete", "output": "Done"}\n```'
+_APPROVED_OUTPUT = '```a2sdlc\n{"status": "approved", "output": "LGTM"}\n```'
 
 
 def _ctx(
@@ -276,15 +276,11 @@ class TestStatsInFinalComment:
         assert "2k out" in final_body
 
 
-class TestImplementUpdatingPR:
+class TestImplementComplete:
     @pytest.mark.asyncio
-    async def test_implement_complete_updates_pr(self) -> None:
-        """Implement complete with pr_title updates the PR."""
-        impl_output = (
-            '```a2sdlc\n{"status": "complete", "pr_title": "feat: patient form", '
-            '"pr_summary": "Adds form"}\n```'
-        )
-        # Set up with existing state that has a pr_number
+    async def test_implement_complete_does_not_update_pr(self) -> None:
+        """Implement complete no longer calls update_from_result on the PR."""
+        impl_output = '```a2sdlc\n{"status": "complete", "output": "Done"}\n```'
         import json
 
         state = {
@@ -309,9 +305,8 @@ class TestImplementUpdatingPR:
         git._state_json = json.dumps(state)
         result = await dispatch(ctx)
         assert result.status == StageStatus.COMPLETE
-        # PR should have been updated with the title/summary
-        assert len(review.updated_prs) == 1
-        assert review.updated_prs[0][1] == "feat: patient form"
+        # PR should NOT have been updated — agent handles PR title/body directly
+        assert len(review.updated_prs) == 0
 
     @pytest.mark.asyncio
     async def test_implement_transitions_to_review_with_auto_gate(self) -> None:

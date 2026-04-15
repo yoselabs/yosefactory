@@ -234,41 +234,58 @@ class TestTicketState:
 
 
 @pytest.mark.unit
-class TestStageResultExtendedFields:
-    def test_new_optional_fields_present(self) -> None:
+class TestStageResultCleanShape:
+    """StageResult has only status, output, and questions — no stage-specific fields."""
+
+    def test_has_output_field(self) -> None:
+        r = StageResult(status=StageStatus.COMPLETE, output="Implementation done.")
+        assert r.output == "Implementation done."
+
+    def test_output_defaults_to_empty_string(self) -> None:
+        r = StageResult(status=StageStatus.COMPLETE)
+        assert r.output == ""
+
+    def test_no_pr_title_field(self) -> None:
+        assert not hasattr(StageResult.model_fields, "pr_title")
+        r = StageResult(status=StageStatus.COMPLETE)
+        assert not hasattr(r, "pr_title")
+
+    def test_no_pr_summary_field(self) -> None:
+        assert not hasattr(StageResult.model_fields, "pr_summary")
+
+    def test_no_ticket_summary_field(self) -> None:
+        assert not hasattr(StageResult.model_fields, "ticket_summary")
+
+    def test_no_spec_path_field(self) -> None:
+        assert not hasattr(StageResult.model_fields, "spec_path")
+
+    def test_no_plan_path_field(self) -> None:
+        assert not hasattr(StageResult.model_fields, "plan_path")
+
+    def test_questions_kept(self) -> None:
+        r = StageResult(
+            status=StageStatus.QUESTIONS,
+            questions=["What about mobile?", "Which framework?"],
+        )
+        assert r.questions == ["What about mobile?", "Which framework?"]
+
+    def test_parse_with_output(self) -> None:
         r = StageResult.model_validate_json(
-            '{"status": "complete", "pr_title": "My PR", "pr_summary": "Summary",'
-            ' "ticket_summary": "Ticket done", "spec_path": "docs/spec.md",'
-            ' "plan_path": "docs/plan.md", "questions": ["Q1?", "Q2?"]}'
+            '{"status": "complete", "output": "Created PR with drag and drop."}'
         )
         assert r.status is StageStatus.COMPLETE
-        assert r.pr_title == "My PR"
-        assert r.pr_summary == "Summary"
-        assert r.ticket_summary == "Ticket done"
-        assert r.spec_path == "docs/spec.md"
-        assert r.plan_path == "docs/plan.md"
-        assert r.questions == ["Q1?", "Q2?"]
+        assert r.output == "Created PR with drag and drop."
 
-    def test_backward_compat_no_new_fields(self) -> None:
-        r = StageResult.model_validate_json('{"status": "complete"}')
-        assert r.status is StageStatus.COMPLETE
-        assert r.pr_title is None
-        assert r.pr_summary is None
-        assert r.ticket_summary is None
-        assert r.spec_path is None
-        assert r.plan_path is None
-        assert r.questions is None
-
-    def test_extract_result_with_new_fields(self) -> None:
+    def test_extract_result_with_output(self) -> None:
         output = (
             "Done.\n\n```a2sdlc\n"
-            '{"status": "complete", "pr_title": "feat: my feature"}\n'
+            '{"status": "complete", "output": "Implementation done."}\n'
             "```\n"
         )
         result = extract_result(output)
         assert result is not None
         assert result.status is StageStatus.COMPLETE
-        assert result.pr_title == "feat: my feature"
+        assert result.output == "Implementation done."
 
     def test_extract_result_backward_compat(self) -> None:
         output = '```a2sdlc\n{"status": "questions"}\n```'

@@ -49,11 +49,7 @@ class StageResult(BaseModel):
     """Structured output from an agent stage."""
 
     status: StageStatus
-    pr_title: str | None = None
-    pr_summary: str | None = None
-    ticket_summary: str | None = None
-    spec_path: str | None = None
-    plan_path: str | None = None
+    output: str = ""
     questions: list[str] | None = None
 
 

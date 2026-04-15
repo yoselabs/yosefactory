@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from a2sdlc.adapters.review import Approval, ReviewComment
-from a2sdlc.models import StageResult, StageStatus
 from a2sdlc.pr_lifecycle import PRLifecycle
 from tests.fakes import FakeReviewAdapter
 
@@ -28,37 +27,6 @@ def test_create_draft_passes_correct_args() -> None:
     assert base == "main"
     assert "35" in title
     assert key == "35"
-
-
-# -- update_from_result ------------------------------------------------
-
-
-def test_update_from_result_with_title_and_summary() -> None:
-    adapter = FakeReviewAdapter()
-    lc = PRLifecycle(adapter)
-    result = StageResult(
-        status=StageStatus.COMPLETE,
-        pr_title="feat: patient API",
-        pr_summary="Added CRUD endpoints",
-    )
-    lc.update_from_result(1, result, "35")
-    assert len(adapter.updated_prs) == 1
-    pr_num, title, body, key = adapter.updated_prs[0]
-    assert pr_num == 1
-    assert title == "feat: patient API"
-    assert body == "Added CRUD endpoints"
-    assert key == "35"
-
-
-def test_update_from_result_with_none_fields() -> None:
-    adapter = FakeReviewAdapter()
-    lc = PRLifecycle(adapter)
-    result = StageResult(status=StageStatus.COMPLETE)
-    lc.update_from_result(1, result, "35")
-    assert len(adapter.updated_prs) == 1
-    _, title, body, _ = adapter.updated_prs[0]
-    assert title == ""
-    assert body == ""
 
 
 # -- check_human_approval ---------------------------------------------

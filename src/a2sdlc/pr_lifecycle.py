@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from a2sdlc.adapters.retry import must_succeed
 from a2sdlc.adapters.review import Approval, ReviewAdapter, ReviewComment
-from a2sdlc.models import StageResult
 
 
 class PRLifecycle:
@@ -24,17 +23,6 @@ class PRLifecycle:
                 ticket_key=ticket_key,
             )
         )
-
-    def update_from_result(
-        self,
-        pr_number: int,
-        stage_result: StageResult,
-        ticket_key: str,
-    ) -> None:
-        """Update PR title and body from a StageResult."""
-        title = stage_result.pr_title or ""
-        body = stage_result.pr_summary or ""
-        must_succeed(lambda: self._review.update_pr(pr_number, title, body, ticket_key))
 
     def post_review(self, pr_number: int, body: str, verdict: str) -> None:
         """Post a review on a PR."""
