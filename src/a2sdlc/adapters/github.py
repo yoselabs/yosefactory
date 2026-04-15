@@ -46,8 +46,9 @@ def connect(repo_name: str, token: str) -> Repository:
 class GitHubWorkAdapter:
     """WorkAdapter backed by GitHub Issues via PyGithub."""
 
-    def __init__(self, repo: Repository) -> None:
+    def __init__(self, repo: Repository, trigger_mention: str = "@a2sdlc") -> None:
         self._repo = repo
+        self._trigger_mention = trigger_mention
 
     # ── parse_event ──────────────────────────────────────────────────
 
@@ -62,18 +63,18 @@ class GitHubWorkAdapter:
         with open(event_path) as f:
             event = json.load(f)
 
-        # Only filter bot senders on comment events (prevents infinite comment loops).
-        # Bot label events are intentional — they're the stage chain trigger.
         sender_type = event.get("sender", {}).get("type", "")
-        if event_name == "issue_comment" and sender_type == "Bot":
-            raise SkipEvent("bot comment sender")
 
         if event_name == "issues":
             return self._parse_issues_event(event)
         elif event_name == "issue_comment":
-            return self._parse_issue_comment_event(event)
+            return self._parse_issue_comment_event(event, sender_type)
         elif event_name == "pull_request":
             return self._parse_pull_request_event(event)
+        elif event_name == "pull_request_review":
+            return self._parse_pr_review_event(event, sender_type)
+        elif event_name == "pull_request_review_comment":
+            return self._parse_pr_review_comment_event(event, sender_type)
         else:
             raise SkipEvent(f"unsupported event name: {event_name!r}")
 
@@ -113,16 +114,52 @@ class GitHubWorkAdapter:
 
         raise SkipEvent(f"label {label_name!r} is not a stage label")
 
-    def _parse_issue_comment_event(self, event: dict) -> PipelineEvent:
-        issue_labels = {lbl["name"] for lbl in event.get("issue", {}).get("labels", [])}
+    def _parse_issue_comment_event(
+        self, event: dict, sender_type: str
+    ) -> PipelineEvent:
+        if sender_type == "Bot":
+            raise SkipEvent("bot comment sender")
+
+        comment_body = event.get("comment", {}).get("body", "")
         issue_number = str(event["issue"]["number"])
 
-        if NEEDS_INPUT_LABEL not in issue_labels:
-            raise SkipEvent("issue_comment but issue does not have needs-input label")
+        if self._trigger_mention not in comment_body:
+            raise SkipEvent(f"comment does not contain {self._trigger_mention}")
 
         return PipelineEvent(
             key=issue_number,
-            trigger_stage=StageName.SPEC,
+            trigger_stage=None,
+            is_feedback=True,
+        )
+
+    def _parse_pr_review_event(self, event: dict, sender_type: str) -> PipelineEvent:
+        if sender_type == "Bot":
+            raise SkipEvent("bot PR review sender")
+
+        pr_number = event["pull_request"]["number"]
+        return PipelineEvent(
+            key=str(pr_number),
+            trigger_stage=None,
+            is_feedback=True,
+            pr_number=pr_number,
+        )
+
+    def _parse_pr_review_comment_event(
+        self, event: dict, sender_type: str
+    ) -> PipelineEvent:
+        if sender_type == "Bot":
+            raise SkipEvent("bot PR review comment sender")
+
+        comment_body = event.get("comment", {}).get("body", "")
+        if self._trigger_mention not in comment_body:
+            raise SkipEvent(f"PR comment does not contain {self._trigger_mention}")
+
+        pr_number = event["pull_request"]["number"]
+        return PipelineEvent(
+            key=str(pr_number),
+            trigger_stage=None,
+            is_feedback=True,
+            pr_number=pr_number,
         )
 
     def _parse_pull_request_event(self, event: dict) -> PipelineEvent:

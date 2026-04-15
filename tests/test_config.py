@@ -87,6 +87,22 @@ class TestLoadConfigFile:
         config = load_config_file(tmp_path)
         assert config.auto_spec is True
 
+    def test_trigger_mention_default(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "a2sdlc.yaml"
+        config_file.write_text("adapter: github\n")
+        config = load_config_file(tmp_path)
+        assert config.trigger_mention == "@a2sdlc"
+
+    def test_trigger_mention_from_yaml(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "a2sdlc.yaml"
+        config_file.write_text("pipeline:\n  trigger:\n    mention: '@mybot'\n")
+        config = load_config_file(tmp_path)
+        assert config.trigger_mention == "@mybot"
+
+    def test_trigger_mention_missing_file_defaults(self, tmp_path: Path) -> None:
+        config = load_config_file(tmp_path)
+        assert config.trigger_mention == "@a2sdlc"
+
 
 # ── load_stage_config ─────────────────────────────────────────────────
 

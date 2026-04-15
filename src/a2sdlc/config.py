@@ -50,6 +50,7 @@ class ProjectConfig:
     auto_spec: bool = False
     default_base: str = "main"
     test_command: str = "make test"
+    trigger_mention: str = "@a2sdlc"
     stage_overrides: dict[str, dict[str, object]] = field(default_factory=dict)
     _gates: GateConfig = field(default_factory=GateConfig, repr=False, compare=False)
 
@@ -76,6 +77,10 @@ def load_config_file(project_root: Path) -> ProjectConfig:
     pipeline = data.get("pipeline", {})
     pipeline = pipeline if isinstance(pipeline, dict) else {}
 
+    trigger_raw = pipeline.get("trigger", {})
+    trigger_raw = trigger_raw if isinstance(trigger_raw, dict) else {}
+    trigger_mention = str(trigger_raw.get("mention", "@a2sdlc"))
+
     gates_raw = pipeline.get("gates", {})
     gates_raw = gates_raw if isinstance(gates_raw, dict) else {}
 
@@ -99,6 +104,7 @@ def load_config_file(project_root: Path) -> ProjectConfig:
         auto_spec=bool(pipeline.get("auto_spec", False)),
         default_base=str(pipeline.get("default_base", "main")),
         test_command=str(data.get("test_command", "make test")),
+        trigger_mention=trigger_mention,
         stage_overrides=stage_overrides,
     )
     config._gates = gates  # noqa: SLF001
