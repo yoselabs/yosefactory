@@ -47,7 +47,7 @@ class ProjectConfig:
     """Per-repo settings read from ``a2sdlc.yaml`` at the project root."""
 
     adapter: str = "github"
-    auto_spec: bool = False
+    self_answer: bool = False
     default_base: str = "main"
     test_command: str = "make test"
     trigger_mention: str = "@a2sdlc"
@@ -99,9 +99,13 @@ def load_config_file(project_root: Path) -> ProjectConfig:
             if isinstance(stage_data, dict):
                 stage_overrides[str(stage_name)] = stage_data
 
+    spec_raw = pipeline.get("spec", {})
+    spec_raw = spec_raw if isinstance(spec_raw, dict) else {}
+    self_answer = bool(spec_raw.get("self_answer", False))
+
     config = ProjectConfig(
         adapter=str(data.get("adapter", "github")),
-        auto_spec=bool(pipeline.get("auto_spec", False)),
+        self_answer=self_answer,
         default_base=str(pipeline.get("default_base", "main")),
         test_command=str(data.get("test_command", "make test")),
         trigger_mention=trigger_mention,

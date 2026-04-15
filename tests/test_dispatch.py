@@ -222,9 +222,9 @@ class TestReviewLoop:
 class TestAutoSpec:
     @pytest.mark.asyncio
     async def test_auto_spec_prepends_system_prompt(self) -> None:
-        """auto_spec config injects 'do not ask questions' into system prompt."""
+        """self_answer config injects 'do not ask questions' into system prompt."""
         ctx, _, _, _, runner = _ctx(stage=StageName.SPEC)
-        ctx.config = ProjectConfig(auto_spec=True)
+        ctx.config = ProjectConfig(self_answer=True)
         await dispatch(ctx)
         assert len(runner.calls) >= 1
         assert "Do not ask questions" in runner.calls[0].system_prompt

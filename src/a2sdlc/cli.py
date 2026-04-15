@@ -85,7 +85,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--flag",
         action="append",
         default=[],
-        help="Override flags (e.g. --flag auto_spec)",
+        help="Override flags (e.g. --flag self_answer)",
     )
 
     return parser.parse_args(argv)

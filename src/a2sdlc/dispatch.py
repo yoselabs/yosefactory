@@ -141,7 +141,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
     if directives.gate_spec is not None:
         gates = GateConfig(merge=gates.merge, spec=directives.gate_spec)
 
-    auto_spec = ctx.config.auto_spec
+    self_answer = ctx.config.self_answer
 
     # 3. Read state + idempotency check
     state_mgr = StateManager(ctx.git)
@@ -224,7 +224,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
             "Focus on the feedback items below.\n\n" + system_prompt
         )
 
-    if auto_spec and target_stage == StageName.SPEC:
+    if self_answer and target_stage == StageName.SPEC:
         system_prompt = (
             "IMPORTANT: Make your best judgment for all ambiguous requirements. "
             "Do not ask questions \u2014 produce the spec directly.\n\n" + system_prompt

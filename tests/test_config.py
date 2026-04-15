@@ -81,11 +81,11 @@ class TestLoadConfigFile:
         config = load_config_file(tmp_path)
         assert config.adapter == "github"
 
-    def test_auto_spec_still_works(self, tmp_path: Path) -> None:
+    def test_self_answer_still_works(self, tmp_path: Path) -> None:
         config_file = tmp_path / "a2sdlc.yaml"
-        config_file.write_text("pipeline:\n  auto_spec: true\n")
+        config_file.write_text("pipeline:\n  spec:\n    self_answer: true\n")
         config = load_config_file(tmp_path)
-        assert config.auto_spec is True
+        assert config.self_answer is True
 
     def test_trigger_mention_default(self, tmp_path: Path) -> None:
         config_file = tmp_path / "a2sdlc.yaml"
@@ -230,8 +230,15 @@ class TestGateConfig:
     def test_auto_spec_independent_of_gates(self, tmp_path: Path) -> None:
         config_file = tmp_path / "a2sdlc.yaml"
         config_file.write_text(
-            "pipeline:\n  auto_spec: true\n  gates:\n    merge: auto\n"
+            "pipeline:\n  spec:\n    self_answer: true\n  gates:\n    merge: auto\n"
         )
         config = load_config_file(tmp_path)
-        assert config.auto_spec is True
+        assert config.self_answer is True
         assert config.gate_config().merge == GateMode.AUTO
+
+    def test_self_answer_loaded_from_new_yaml_path(self, tmp_path: Path) -> None:
+        """New YAML path pipeline.spec.self_answer sets self_answer=True."""
+        config_file = tmp_path / "a2sdlc.yaml"
+        config_file.write_text("pipeline:\n  spec:\n    self_answer: true\n")
+        config = load_config_file(tmp_path)
+        assert config.self_answer is True
