@@ -191,19 +191,176 @@ class TestFormatBranch:
         assert adapter.format_branch("PROJ-42") == "agent/PROJ-42"
 
 
-# ── Feedback stubs (not yet implemented) ────────────────────────────
+# ── Feedback: find_last_handover ────────────────────────────────────
 
 
 @pytest.mark.unit
-class TestFeedbackStubs:
-    def test_collect_issue_feedback_not_implemented(self) -> None:
+class TestWorkFindLastHandover:
+    def test_returns_most_recent_handover(self) -> None:
         from datetime import datetime, timezone
 
         adapter = _make_work_adapter()
-        with pytest.raises(NotImplementedError):
-            adapter.collect_issue_feedback("15", datetime.now(timezone.utc))
+        mock_repo = MagicMock()
+        mock_issue = MagicMock()
 
-    def test_find_last_handover_not_implemented(self) -> None:
+        c1 = MagicMock()
+        c1.body = "a2sdlc:spec\nhandover body 1"
+        c1.id = 100
+        c1.created_at = datetime(2026, 4, 10, tzinfo=timezone.utc)
+
+        c2 = MagicMock()
+        c2.body = "just a regular comment"
+        c2.id = 101
+        c2.created_at = datetime(2026, 4, 11, tzinfo=timezone.utc)
+
+        c3 = MagicMock()
+        c3.body = "a2sdlc:implement\nhandover body 2"
+        c3.id = 102
+        c3.created_at = datetime(2026, 4, 12, tzinfo=timezone.utc)
+
+        mock_issue.get_comments.return_value = [c1, c2, c3]
+        mock_repo.get_issue.return_value = mock_issue
+        adapter._repo = mock_repo
+
+        result = adapter.find_last_handover("15")
+
+        assert result is not None
+        assert result.run_id == "102"
+        assert result.location == "issue"
+
+    def test_returns_none_when_no_handovers(self) -> None:
         adapter = _make_work_adapter()
-        with pytest.raises(NotImplementedError):
-            adapter.find_last_handover("15")
+        mock_repo = MagicMock()
+        mock_issue = MagicMock()
+
+        c1 = MagicMock()
+        c1.body = "just a comment"
+        c1.id = 100
+        c1.created_at = MagicMock()
+
+        mock_issue.get_comments.return_value = [c1]
+        mock_repo.get_issue.return_value = mock_issue
+        adapter._repo = mock_repo
+
+        assert adapter.find_last_handover("15") is None
+
+    def test_returns_none_when_no_comments(self) -> None:
+        adapter = _make_work_adapter()
+        mock_repo = MagicMock()
+        mock_issue = MagicMock()
+        mock_issue.get_comments.return_value = []
+        mock_repo.get_issue.return_value = mock_issue
+        adapter._repo = mock_repo
+
+        assert adapter.find_last_handover("15") is None
+
+
+# ── Feedback: collect_issue_feedback ────────────────────────────────
+
+
+@pytest.mark.unit
+class TestCollectIssueFeedback:
+    def test_returns_comments_with_trigger_after_since(self) -> None:
+        from datetime import datetime, timezone
+
+        adapter = _make_work_adapter(trigger_mention="@a2sdlc")
+        mock_repo = MagicMock()
+        mock_issue = MagicMock()
+
+        since = datetime(2026, 4, 10, tzinfo=timezone.utc)
+
+        c1 = MagicMock()
+        c1.body = "Hey @a2sdlc please look at this"
+        c1.id = 200
+        c1.user = MagicMock()
+        c1.user.login = "alice"
+        c1.user.type = "User"
+        c1.created_at = datetime(2026, 4, 11, tzinfo=timezone.utc)
+
+        mock_issue.get_comments.return_value = [c1]
+        mock_repo.get_issue.return_value = mock_issue
+        adapter._repo = mock_repo
+
+        result = adapter.collect_issue_feedback("15", since)
+
+        assert len(result) == 1
+        assert result[0].id == "200"
+        assert result[0].author == "alice"
+        assert result[0].author_type == "human"
+        assert result[0].source == "issue_comment"
+
+    def test_excludes_comments_without_trigger(self) -> None:
+        from datetime import datetime, timezone
+
+        adapter = _make_work_adapter(trigger_mention="@a2sdlc")
+        mock_repo = MagicMock()
+        mock_issue = MagicMock()
+
+        since = datetime(2026, 4, 10, tzinfo=timezone.utc)
+
+        c1 = MagicMock()
+        c1.body = "Just a normal comment"
+        c1.id = 200
+        c1.user = MagicMock()
+        c1.user.login = "alice"
+        c1.user.type = "User"
+        c1.created_at = datetime(2026, 4, 11, tzinfo=timezone.utc)
+
+        mock_issue.get_comments.return_value = [c1]
+        mock_repo.get_issue.return_value = mock_issue
+        adapter._repo = mock_repo
+
+        result = adapter.collect_issue_feedback("15", since)
+
+        assert result == []
+
+    def test_excludes_handover_comments(self) -> None:
+        from datetime import datetime, timezone
+
+        adapter = _make_work_adapter(trigger_mention="@a2sdlc")
+        mock_repo = MagicMock()
+        mock_issue = MagicMock()
+
+        since = datetime(2026, 4, 10, tzinfo=timezone.utc)
+
+        c1 = MagicMock()
+        c1.body = "@a2sdlc a2sdlc:spec\nhandover content"
+        c1.id = 200
+        c1.user = MagicMock()
+        c1.user.login = "bot-user"
+        c1.user.type = "Bot"
+        c1.created_at = datetime(2026, 4, 11, tzinfo=timezone.utc)
+
+        mock_issue.get_comments.return_value = [c1]
+        mock_repo.get_issue.return_value = mock_issue
+        adapter._repo = mock_repo
+
+        result = adapter.collect_issue_feedback("15", since)
+
+        assert result == []
+
+    def test_bot_author_type(self) -> None:
+        from datetime import datetime, timezone
+
+        adapter = _make_work_adapter(trigger_mention="@a2sdlc")
+        mock_repo = MagicMock()
+        mock_issue = MagicMock()
+
+        since = datetime(2026, 4, 10, tzinfo=timezone.utc)
+
+        c1 = MagicMock()
+        c1.body = "Hey @a2sdlc check this"
+        c1.id = 200
+        c1.user = MagicMock()
+        c1.user.login = "some-bot"
+        c1.user.type = "Bot"
+        c1.created_at = datetime(2026, 4, 11, tzinfo=timezone.utc)
+
+        mock_issue.get_comments.return_value = [c1]
+        mock_repo.get_issue.return_value = mock_issue
+        adapter._repo = mock_repo
+
+        result = adapter.collect_issue_feedback("15", since)
+
+        assert len(result) == 1
+        assert result[0].author_type == "bot"

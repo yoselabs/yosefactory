@@ -13,7 +13,12 @@ from github.Repository import Repository
 from a2sdlc.adapters.review import Approval, ReviewComment
 from a2sdlc.adapters.work import PipelineEvent
 from a2sdlc.exceptions import SkipEvent
-from a2sdlc.handover import FeedbackItem, HandoverComment
+from a2sdlc.handover import (
+    HANDOVER_PATTERN,
+    FeedbackItem,
+    HandoverComment,
+    parse_handover,
+)
 from a2sdlc.models import StageName
 
 logger = logging.getLogger("a2sdlc.adapters.github")
@@ -259,11 +264,44 @@ class GitHubWorkAdapter:
 
     def collect_issue_feedback(self, key: str, since: datetime) -> list[FeedbackItem]:
         """Collect feedback comments on an issue since a given time."""
-        raise NotImplementedError("collect_issue_feedback not yet implemented")
+        issue = self._repo.get_issue(int(key))
+        items: list[FeedbackItem] = []
+        for comment in issue.get_comments(since=since):
+            body = comment.body or ""
+            if self._trigger_mention not in body:
+                continue
+            if HANDOVER_PATTERN.search(body):
+                continue  # Skip handover comments
+            sender_type = (
+                "bot" if (comment.user and comment.user.type == "Bot") else "human"
+            )
+            items.append(
+                FeedbackItem(
+                    id=str(comment.id),
+                    author=comment.user.login if comment.user else "",
+                    author_type=sender_type,
+                    source="issue_comment",
+                    body=body,
+                    created_at=comment.created_at,
+                )
+            )
+        return items
 
     def find_last_handover(self, key: str) -> HandoverComment | None:
         """Find the last handover comment on an issue."""
-        raise NotImplementedError("find_last_handover not yet implemented")
+        issue = self._repo.get_issue(int(key))
+        best: HandoverComment | None = None
+        for comment in issue.get_comments():
+            parsed = parse_handover(
+                comment.body or "",
+                str(comment.id),
+                comment.created_at,
+                "issue",
+            )
+            if parsed is not None:
+                if best is None or parsed.created_at > best.created_at:
+                    best = parsed
+        return best
 
 
 # ── ReviewAdapter ────────────────────────────────────────────────────
@@ -354,8 +392,64 @@ class GitHubReviewAdapter:
         self, pr_number: int, since: datetime
     ) -> list[FeedbackItem]:
         """Collect feedback comments on a PR since a given time."""
-        raise NotImplementedError("collect_pr_feedback not yet implemented")
+        pull = self._repo.get_pull(pr_number)
+        items: list[FeedbackItem] = []
+
+        # PR reviews (always included — no mention filter needed)
+        for review in pull.get_reviews():
+            submitted = review.submitted_at
+            if submitted and submitted <= since:
+                continue
+            user = review.user
+            if user and user.type == "Bot":
+                continue
+            if not review.body:
+                continue
+            items.append(
+                FeedbackItem(
+                    id=str(review.id),
+                    author=user.login if user else "",
+                    author_type="human",
+                    source="pr_review",
+                    body=review.body,
+                    created_at=submitted or since,
+                )
+            )
+
+        # PR review comments (inline — file/line metadata)
+        for comment in pull.get_review_comments():
+            if comment.created_at <= since:
+                continue
+            user = comment.user
+            if user and user.type == "Bot":
+                continue
+            items.append(
+                FeedbackItem(
+                    id=str(comment.id),
+                    author=user.login if user else "",
+                    author_type="human",
+                    source="pr_inline",
+                    body=comment.body or "",
+                    file_path=comment.path,
+                    line_range=(comment.line or 0, comment.line or 0),
+                    created_at=comment.created_at,
+                )
+            )
+
+        return items
 
     def find_last_handover(self, pr_number: int) -> HandoverComment | None:
         """Find the last handover comment on a PR."""
-        raise NotImplementedError("find_last_handover not yet implemented")
+        issue = self._repo.get_issue(pr_number)
+        best: HandoverComment | None = None
+        for comment in issue.get_comments():
+            parsed = parse_handover(
+                comment.body or "",
+                str(comment.id),
+                comment.created_at,
+                "pr",
+            )
+            if parsed is not None:
+                if best is None or parsed.created_at > best.created_at:
+                    best = parsed
+        return best
