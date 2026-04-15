@@ -66,7 +66,11 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
         ctx.logger.info("dispatch.skip", extra={"reason": e.reason})
         return DispatchResult(stage=StageName.SPEC, error=e.reason)
 
-    # Route: feedback, proceed, or normal label event
+    # 2. Shared setup: ticket body + directives
+    ticket_body = ctx.work.get_ticket(event.key)
+    directives, clean_body = parse_directives(ticket_body)
+
+    # ── Route: feedback / proceed / label ──────────────────────
     user_prompt_override: str | None = None
 
     if event.is_feedback:
@@ -78,16 +82,11 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
             pr_handover = ctx.review.find_last_handover(event.pr_number)
             pr_diff = ctx.review.read_pr_diff(event.pr_number)
 
-        # Determine the "since" timestamp from the most recent handover
         handover = pick_handover(issue_handover, pr_handover)
         since = handover.created_at if handover else datetime.min
 
-        # Need ticket body early for context assembly
-        ticket_body = ctx.work.get_ticket(event.key)
-        _, fb_clean_body = parse_directives(ticket_body)
-
         context = assemble_context(
-            ticket_body=fb_clean_body,
+            ticket_body=clean_body,
             issue_handover=issue_handover,
             pr_handover=pr_handover,
             issue_feedback=ctx.work.collect_issue_feedback(event.key, since),
@@ -126,14 +125,11 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
     else:
         target_stage = event.trigger_stage
 
+    # ── Shared setup continues ────────────────────────────────
     ctx.logger.info(
         "dispatch.start",
         extra={"key": event.key, "stage": target_stage.value},
     )
-
-    # 2. Parse ticket directives + build gate config
-    ticket_body = ctx.work.get_ticket(event.key)
-    directives, clean_body = parse_directives(ticket_body)
 
     gates = ctx.config.gate_config()
     if directives.gate_merge is not None:
