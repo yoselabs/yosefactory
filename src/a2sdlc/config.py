@@ -82,10 +82,10 @@ def load_config_file(project_root: Path) -> ProjectConfig:
     merge_mode = (
         GateMode(str(gates_raw["merge"])) if "merge" in gates_raw else GateMode.HUMAN
     )
-    review_mode = (
-        GateMode(str(gates_raw["review"])) if "review" in gates_raw else GateMode.AUTO
+    spec_mode = (
+        GateMode(str(gates_raw["spec"])) if "spec" in gates_raw else GateMode.AUTO
     )
-    gates = GateConfig(merge=merge_mode, review=review_mode)
+    gates = GateConfig(merge=merge_mode, spec=spec_mode)
 
     stages_raw = data.get("stages", {})
     stage_overrides: dict[str, dict[str, object]] = {}

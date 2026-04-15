@@ -38,8 +38,8 @@ class GateMode(StrEnum):
 class GateConfig(BaseModel):
     """Gate configuration for the pipeline."""
 
+    spec: GateMode = GateMode.AUTO
     merge: GateMode = GateMode.HUMAN
-    review: GateMode = GateMode.AUTO
 
 
 # ── Structured output ─────────────────────────────────────────────

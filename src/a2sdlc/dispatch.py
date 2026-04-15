@@ -75,9 +75,9 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
 
     gates = ctx.config.gate_config()
     if directives.gate_merge is not None:
-        gates = GateConfig(merge=directives.gate_merge, review=gates.review)
-    if directives.gate_review is not None:
-        gates = GateConfig(merge=gates.merge, review=directives.gate_review)
+        gates = GateConfig(merge=directives.gate_merge, spec=gates.spec)
+    if directives.gate_spec is not None:
+        gates = GateConfig(merge=gates.merge, spec=directives.gate_spec)
 
     auto_spec = ctx.config.auto_spec
 

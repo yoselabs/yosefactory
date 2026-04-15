@@ -141,23 +141,27 @@ class TestGateConfig:
     def test_defaults(self) -> None:
         cfg = GateConfig()
         assert cfg.merge is GateMode.HUMAN
-        assert cfg.review is GateMode.AUTO
+        assert cfg.spec is GateMode.AUTO
+
+    def test_has_no_review_field(self) -> None:
+        cfg = GateConfig()
+        assert not hasattr(cfg, "review")
 
     def test_override_merge(self) -> None:
         cfg = GateConfig(merge=GateMode.AUTO)
         assert cfg.merge is GateMode.AUTO
-        assert cfg.review is GateMode.AUTO
+        assert cfg.spec is GateMode.AUTO
 
-    def test_override_review(self) -> None:
-        cfg = GateConfig(review=GateMode.HUMAN)
-        assert cfg.review is GateMode.HUMAN
+    def test_override_spec(self) -> None:
+        cfg = GateConfig(spec=GateMode.HUMAN)
+        assert cfg.spec is GateMode.HUMAN
         assert cfg.merge is GateMode.HUMAN
 
     def test_roundtrip(self) -> None:
-        cfg = GateConfig(merge=GateMode.AUTO, review=GateMode.HUMAN)
+        cfg = GateConfig(merge=GateMode.AUTO, spec=GateMode.HUMAN)
         restored = GateConfig.model_validate_json(cfg.model_dump_json())
         assert restored.merge is GateMode.AUTO
-        assert restored.review is GateMode.HUMAN
+        assert restored.spec is GateMode.HUMAN
 
 
 @pytest.mark.unit

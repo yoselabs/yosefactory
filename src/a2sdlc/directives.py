@@ -20,7 +20,7 @@ class TicketDirectives(BaseModel):
 
     base: str | None = None
     gate_merge: GateMode | None = None
-    gate_review: GateMode | None = None
+    gate_spec: GateMode | None = None
     model: str | None = None
 
 
@@ -33,9 +33,9 @@ def _apply_kv(directives: TicketDirectives, key: str, value: str) -> None:
             directives.gate_merge = GateMode(value)
         except ValueError:
             pass
-    elif key == "gate:review":
+    elif key == "gate:spec":
         try:
-            directives.gate_review = GateMode(value)
+            directives.gate_spec = GateMode(value)
         except ValueError:
             pass
     elif key == "model":

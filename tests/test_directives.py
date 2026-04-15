@@ -45,15 +45,15 @@ class TestParseDirectivesGate:
         directives, _ = parse_directives(body)
         assert directives.gate_merge is GateMode.HUMAN
 
-    def test_gate_review_auto(self) -> None:
-        body = "[a2sdlc gate:review=auto]"
+    def test_gate_spec_auto(self) -> None:
+        body = "[a2sdlc gate:spec=auto]"
         directives, _ = parse_directives(body)
-        assert directives.gate_review is GateMode.AUTO
+        assert directives.gate_spec is GateMode.AUTO
 
-    def test_gate_review_human(self) -> None:
-        body = "[a2sdlc gate:review=human]"
+    def test_gate_spec_human(self) -> None:
+        body = "[a2sdlc gate:spec=human]"
         directives, _ = parse_directives(body)
-        assert directives.gate_review is GateMode.HUMAN
+        assert directives.gate_spec is GateMode.HUMAN
 
 
 @pytest.mark.unit

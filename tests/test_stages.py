@@ -37,27 +37,27 @@ class TestTransitionCompleteness:
 class TestNextStage:
     """Test the pure next_stage() function with all 8 gate combinations."""
 
-    def test_spec_complete_always_proceeds_to_implement(self) -> None:
-        gates = GateConfig()
+    def test_spec_complete_spec_auto_proceeds_to_implement(self) -> None:
+        gates = GateConfig(spec=GateMode.AUTO)
         assert (
             next_stage(StageName.SPEC, StageStatus.COMPLETE, gates)
             == StageName.IMPLEMENT
         )
 
+    def test_spec_complete_spec_human_waits(self) -> None:
+        gates = GateConfig(spec=GateMode.HUMAN)
+        assert next_stage(StageName.SPEC, StageStatus.COMPLETE, gates) is None
+
     def test_spec_questions_always_waits(self) -> None:
         gates = GateConfig()
         assert next_stage(StageName.SPEC, StageStatus.QUESTIONS, gates) is None
 
-    def test_implement_complete_review_auto_proceeds_to_review(self) -> None:
-        gates = GateConfig(review=GateMode.AUTO)
+    def test_implement_complete_always_proceeds_to_review(self) -> None:
+        gates = GateConfig()
         assert (
             next_stage(StageName.IMPLEMENT, StageStatus.COMPLETE, gates)
             == StageName.REVIEW
         )
-
-    def test_implement_complete_review_human_waits(self) -> None:
-        gates = GateConfig(review=GateMode.HUMAN)
-        assert next_stage(StageName.IMPLEMENT, StageStatus.COMPLETE, gates) is None
 
     def test_implement_questions_always_waits(self) -> None:
         gates = GateConfig()
