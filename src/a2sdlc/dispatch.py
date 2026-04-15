@@ -12,8 +12,10 @@ from a2sdlc.adapters.review import ReviewAdapter
 from a2sdlc.adapters.work import WorkAdapter
 from a2sdlc.comment_lifecycle import CommentManager
 from a2sdlc.config import ProjectConfig, load_stage_config
+from a2sdlc.context_assembly import assemble_context, _pick_handover
 from a2sdlc.directives import parse_directives
 from a2sdlc.exceptions import BlockedError, SkipEvent
+from a2sdlc.feedback_routing import resolve_target_stage
 from a2sdlc.models import (
     GateConfig,
     GateMode,
@@ -64,9 +66,65 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
         ctx.logger.info("dispatch.skip", extra={"reason": e.reason})
         return DispatchResult(stage=StageName.SPEC, error=e.reason)
 
-    # TODO(Task 9): Replace with routing table resolution
-    assert event.trigger_stage is not None, "Feedback events not yet handled"
-    target_stage = event.trigger_stage
+    # Route: feedback, proceed, or normal label event
+    user_prompt_override: str | None = None
+
+    if event.is_feedback:
+        # Collect handovers from both issue and PR
+        issue_handover = ctx.work.find_last_handover(event.key)
+        pr_handover = None
+        pr_diff = None
+        if event.pr_number:
+            pr_handover = ctx.review.find_last_handover(event.pr_number)
+            pr_diff = ctx.review.read_pr_diff(event.pr_number)
+
+        # Determine the "since" timestamp from the most recent handover
+        handover = _pick_handover(issue_handover, pr_handover)
+        since = handover.created_at if handover else datetime.min
+
+        # Need ticket body early for context assembly
+        ticket_body = ctx.work.get_ticket(event.key)
+        _, fb_clean_body = parse_directives(ticket_body)
+
+        context = assemble_context(
+            ticket_body=fb_clean_body,
+            issue_handover=issue_handover,
+            pr_handover=pr_handover,
+            issue_feedback=ctx.work.collect_issue_feedback(event.key, since),
+            pr_feedback=(
+                ctx.review.collect_pr_feedback(event.pr_number, since)
+                if event.pr_number
+                else []
+            ),
+            pr_diff=pr_diff,
+        )
+
+        # Dedup: skip if handover is newer than all feedback
+        if context.feedback and not context.is_first_run:
+            newest_feedback = max(f.created_at for f in context.feedback)
+            if handover and handover.created_at > newest_feedback:
+                ctx.logger.info("dispatch.feedback_already_addressed")
+                return DispatchResult(
+                    stage=context.current_stage or StageName.SPEC,
+                    error="feedback_already_addressed",
+                )
+
+        target_stage = resolve_target_stage(context.current_stage)
+        user_prompt_override = context.user_prompt
+
+    elif event.trigger_stage is None:
+        # Proceed: advance past current gate
+        issue_handover = ctx.work.find_last_handover(event.key)
+        current_stage = issue_handover.stage if issue_handover else None
+        if current_stage == StageName.SPEC:
+            target_stage = StageName.IMPLEMENT
+        elif current_stage == StageName.REVIEW:
+            target_stage = StageName.MERGE
+        else:
+            target_stage = StageName.IMPLEMENT  # fallback
+
+    else:
+        target_stage = event.trigger_stage
 
     ctx.logger.info(
         "dispatch.start",
@@ -160,6 +218,12 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
         target_stage.value, ctx.project_root / ".a2sdlc"
     )
 
+    if event.is_feedback:
+        system_prompt = (
+            "IMPORTANT: You are addressing feedback on your previous work. "
+            "Focus on the feedback items below.\n\n" + system_prompt
+        )
+
     if auto_spec and target_stage == StageName.SPEC:
         system_prompt = (
             "IMPORTANT: Make your best judgment for all ambiguous requirements. "
@@ -167,10 +231,13 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
         )
 
     # 10. Build user prompt
-    user_prompt = clean_body
-    if target_stage == StageName.REVIEW and pr_number is not None:
-        pr_context = pr_lifecycle.read_context(pr_number)
-        user_prompt = f"{clean_body}\n\n{pr_context}"
+    if user_prompt_override is not None:
+        user_prompt = user_prompt_override
+    else:
+        user_prompt = clean_body
+        if target_stage == StageName.REVIEW and pr_number is not None:
+            pr_context = pr_lifecycle.read_context(pr_number)
+            user_prompt = f"{clean_body}\n\n{pr_context}"
 
     # 11. Execute stage
     executor = StageExecutor(ctx.runner)
