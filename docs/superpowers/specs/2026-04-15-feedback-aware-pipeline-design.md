@@ -76,7 +76,7 @@ jobs:
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@a2sdlc'))
     concurrency:
       group: a2sdlc-${{ github.event.issue.number || github.event.pull_request.number }}
-      cancel-in-progress: false   # queue, don't cancel — pull-based model reads all state
+      cancel-in-progress: false   # 1 running + 1 pending; third trigger replaces pending
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -181,7 +181,7 @@ Issue body: "Add drag and drop support"
 
 The engine builds each stage's input by reading this thread:
 
-1. **Find last handover** — the engine calls `WorkAdapter.find_last_handover(key)` and `ReviewAdapter.find_last_handover(pr_number)`, compares timestamps, and takes the most recent. Both use `HANDOVER_PATTERN` (compiled from `StageName` enum). The engine owns this coordination — adapters just search their own platform.
+1. **Find last handover** — the engine calls `WorkAdapter.find_last_handover(key)` and `ReviewAdapter.find_last_handover(pr_number)`, compares timestamps, and takes the most recent. Tie-breaker: prefer the handover from the later pipeline stage (REVIEW > IMPLEMENT > SPEC). Both use `HANDOVER_PATTERN` (compiled from `StageName` enum). The engine owns this coordination — adapters just search their own platform.
 2. **Collect post-handover feedback** — all comments after the handover's timestamp that contain `@a2sdlc` or are PR review submissions. From both issue and PR.
 3. **Collect PR state** (if PR exists) — diff summary, inline review comments with file/line metadata.
 4. **Build agent prompt**:
@@ -194,6 +194,11 @@ The engine builds each stage's input by reading this thread:
 5. **Set system prompt hint** — "You are implementing a fresh specification" vs "You are addressing feedback."
 
 This is one code path regardless of scenario. The handover is the cursor — everything before it is history, everything after it is new input.
+
+### Invariants
+
+- **Never delete and re-post a handover comment.** Edits are safe (body changes, timestamp stays). Deletion shifts the timestamp and loses the feedback boundary.
+- **Handover comments are append-only.** The engine posts new handovers; it never modifies old ones (except during live progress updates before finalization).
 
 ### Avoiding the Telephone Game
 
@@ -338,6 +343,12 @@ One group per ticket: `a2sdlc-${{ issue_number }}`. At most 1 running + 1 pendin
 
 **Why dropped triggers are OK:** Pull-based model reads ALL current state. If 5 comments arrive and only 2 CI jobs run, the second job sees all 5 comments. The trigger is a wake-up signal — the data is in the comments.
 
+### Double-Trigger Dedup
+
+A PR review with @a2sdlc in an inline comment fires both `pull_request_review.submitted` and `pull_request_review_comment.created`. Two CI jobs enter the concurrency group. The first processes feedback and posts a handover. The second must detect this and skip.
+
+**Dedup rule:** At the start of a feedback run, the engine checks whether a handover comment was posted AFTER the newest feedback item's timestamp. If so, the feedback was already addressed — skip.
+
 ### Dead-Zone Edge Case
 
 If the last comment in a burst arrives after the pending slot is occupied and the running job finished reading, that comment waits until the next trigger.
@@ -381,7 +392,7 @@ class StageResult:
     metrics: RunMetrics                  # tokens, cost, duration, turns
 ```
 
-No stage-specific fields. The output is freeform markdown — the engine doesn't parse it. Stage-specific data (PR title, spec path) is extracted by the engine from the output if needed, not embedded in the result type.
+No stage-specific fields. The output is freeform markdown — the engine doesn't parse it for routing. Stage-specific artifacts (PR title, branch name) are produced as side effects by the stage's tools (e.g., the agent creates a PR via git/GitHub tools during IMPLEMENT), not returned in StageResult. The engine reads these artifacts from the platform (e.g., "find open PR on the agent's branch") rather than extracting them from the agent's text output.
 
 ### FeedbackItem
 
@@ -416,10 +427,14 @@ class HandoverComment:
 @dataclass
 class PipelineEvent:
     key: str               # Ticket/issue key
-    stage: StageName | None  # Target stage (from label) or None (for feedback)
+    trigger_stage: StageName | None  # What the event literally says (label value, or None for feedback/proceed)
     is_feedback: bool      # True for comment/review events
     pr_number: int | None  # If event is PR-related
 ```
+
+The engine always resolves the actual target stage via the routing table — even for label events. `trigger_stage` is raw input from the event; the routing table is authoritative. This separates "what happened" from "what to do."
+
+The `proceed` label sets `trigger_stage=None, is_feedback=False`. The engine reads the last handover to determine the current gate, then advances past it. `proceed` means "advance past the current gate," not "run IMPLEMENT."
 
 ## Configuration
 
@@ -460,6 +475,7 @@ SPEC ──(gate)──> IMPLEMENT ──> REVIEW ──(gate)──> MERGE
 | no stage / SPEC | @a2sdlc comment | SPEC |
 | IMPLEMENT+ | @a2sdlc comment | IMPLEMENT |
 | merge gate | PR approved | MERGE |
+| any gate | `proceed` label | advance past current gate (engine resolves target from last handover) |
 
 ## Adapter Changes
 
