@@ -1,11 +1,11 @@
-"""Tests for a2sdlc.stats — StageRunStats accumulator."""
+"""Tests for a2sdlc.evaluation.stats — StageRunStats accumulator."""
 
 from __future__ import annotations
 
 import pytest
 
-from a2sdlc.runner import RunResult
-from a2sdlc.stats import StageRunStats
+from a2sdlc.pipeline.runner import RunResult
+from a2sdlc.evaluation.stats import StageRunStats
 
 
 @pytest.mark.unit

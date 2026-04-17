@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch, PropertyMock
 import pytest
 
 from a2sdlc.adapters.git import LocalGitAdapter
-from a2sdlc.exceptions import BlockedError
+from a2sdlc.domain.exceptions import BlockedError
 
 
 @pytest.mark.unit

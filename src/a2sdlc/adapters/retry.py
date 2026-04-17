@@ -3,7 +3,7 @@
 Usage::
 
     from a2sdlc.adapters.retry import must_succeed
-    from a2sdlc.exceptions import RetryableError
+    from a2sdlc.domain.exceptions import RetryableError
 
     result = must_succeed(some_adapter_fn, arg1, arg2, kwarg=value)
 
@@ -25,7 +25,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from a2sdlc.exceptions import PermanentError, RetryableError
+from a2sdlc.domain.exceptions import PermanentError, RetryableError
 
 logger = logging.getLogger("a2sdlc.adapters.retry")
 

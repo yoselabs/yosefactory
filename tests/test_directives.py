@@ -1,11 +1,11 @@
-"""Tests for a2sdlc.directives — ticket directive parsing."""
+"""Tests for a2sdlc.domain.directives — ticket directive parsing."""
 
 from __future__ import annotations
 
 import pytest
 
-from a2sdlc.directives import TicketDirectives, parse_directives
-from a2sdlc.models import GateMode
+from a2sdlc.domain.directives import TicketDirectives, parse_directives
+from a2sdlc.domain.models import GateMode
 
 
 @pytest.mark.unit

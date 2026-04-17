@@ -8,9 +8,9 @@ from typing import Any
 
 from a2sdlc.adapters.protocols import StageRunner
 from a2sdlc.config import StageConfig
-from a2sdlc.models import StageName, StageResult, extract_result
-from a2sdlc.progress import ProgressState
-from a2sdlc.stats import StageRunStats
+from a2sdlc.domain.models import StageName, StageResult, extract_result
+from a2sdlc.evaluation.progress import ProgressState
+from a2sdlc.evaluation.stats import StageRunStats
 
 _FOLLOWUP_PROMPT = (
     "Work phase complete. Provide your structured handover now. "

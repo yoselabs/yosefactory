@@ -11,7 +11,7 @@ from a2sdlc.config import (
     load_config_file,
     load_stage_config,
 )
-from a2sdlc.models import GateMode
+from a2sdlc.domain.models import GateMode
 from a2sdlc.stages import STAGES, get_stage
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from a2sdlc.config import StageConfig
-from a2sdlc.models import StageName, StageStatus
+from a2sdlc.domain.models import StageName, StageStatus
 
 
 class Stage(Protocol):

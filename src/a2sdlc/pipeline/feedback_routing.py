@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from a2sdlc.models import StageName
+from a2sdlc.domain.models import StageName
 
 
 def resolve_target_stage(current_stage: StageName | None) -> StageName:

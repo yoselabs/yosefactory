@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from a2sdlc.handover import FeedbackItem, HandoverComment, later_stage
-from a2sdlc.models import StageName
+from a2sdlc.domain.handover import FeedbackItem, HandoverComment, later_stage
+from a2sdlc.domain.models import StageName
 
 
 @dataclass

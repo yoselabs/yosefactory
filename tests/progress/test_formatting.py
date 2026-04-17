@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from a2sdlc.progress import (
+from a2sdlc.evaluation.progress import (
     Milestone,
     ProgressState,
     ToolEntry,
@@ -14,7 +14,7 @@ from a2sdlc.progress import (
     format_final,
     format_progress,
 )
-from a2sdlc.stats import StageRunStats
+from a2sdlc.evaluation.stats import StageRunStats
 
 
 def _make_progress(**overrides: Any) -> ProgressState:
@@ -190,7 +190,7 @@ class TestFormatFinal:
 class TestHandoverMarkers:
     def test_format_final_includes_handover_marker(self) -> None:
         """format_final output must match HANDOVER_PATTERN for stage detection."""
-        from a2sdlc.handover import HANDOVER_PATTERN
+        from a2sdlc.domain.handover import HANDOVER_PATTERN
 
         stats = _make_stats(
             tokens_in=1000,

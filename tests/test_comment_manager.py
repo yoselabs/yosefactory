@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from a2sdlc.comment_lifecycle import CommentManager
-from a2sdlc.exceptions import TransientError
+from a2sdlc.lifecycle.comment import CommentManager
+from a2sdlc.domain.exceptions import TransientError
 from tests.fakes import FakeWorkAdapter
 
 

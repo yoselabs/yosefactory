@@ -2,12 +2,12 @@
 
 from datetime import datetime, timezone
 
-from a2sdlc.handover import (
+from a2sdlc.domain.handover import (
     HANDOVER_PATTERN,
     later_stage,
     parse_handover,
 )
-from a2sdlc.models import StageName
+from a2sdlc.domain.models import StageName
 
 
 def test_pattern_matches_all_stages():

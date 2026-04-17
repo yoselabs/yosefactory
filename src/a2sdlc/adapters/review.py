@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
-from a2sdlc.handover import FeedbackItem, HandoverComment
+from a2sdlc.domain.handover import FeedbackItem, HandoverComment
 
 
 @dataclass(frozen=True)

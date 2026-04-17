@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from a2sdlc.models import GateConfig, GateMode, StageName, StageStatus
+from a2sdlc.domain.models import GateConfig, GateMode, StageName, StageStatus
 from a2sdlc.stages import STAGES, next_stage
 
 
@@ -31,6 +31,17 @@ class TestTransitionCompleteness:
 
         stage = MergeStage()
         assert len(stage.valid_statuses) == 0
+
+    def test_concrete_stages_satisfy_stage_protocol(self) -> None:
+        """Every concrete stage must structurally match the Stage protocol."""
+        from a2sdlc.stages.base import Stage  # noqa: F401 — import verifies module loads
+
+        for stage_cls in STAGES.values():
+            stage = stage_cls()
+            assert isinstance(stage.name, StageName)
+            assert hasattr(stage, "config")
+            assert isinstance(stage.valid_statuses, frozenset)
+            assert isinstance(stage.uses_ai, bool)
 
 
 @pytest.mark.unit

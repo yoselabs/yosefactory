@@ -1,7 +1,7 @@
 """Tests for feedback routing — which stage handles feedback based on pipeline position."""
 
-from a2sdlc.feedback_routing import resolve_target_stage
-from a2sdlc.models import StageName
+from a2sdlc.pipeline.feedback_routing import resolve_target_stage
+from a2sdlc.domain.models import StageName
 
 
 def test_no_stage_routes_to_spec():

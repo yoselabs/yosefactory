@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from a2sdlc.adapters.review import Approval, ReviewComment
-from a2sdlc.pr_lifecycle import PRLifecycle
+from a2sdlc.lifecycle.pr import PRLifecycle
 from tests.fakes import FakeReviewAdapter
 
 

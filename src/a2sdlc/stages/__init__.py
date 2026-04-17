@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from a2sdlc.models import GateConfig, GateMode, StageName, StageStatus
+from a2sdlc.domain.models import GateConfig, GateMode, StageName, StageStatus
 from a2sdlc.stages.implement import ImplementStage
 from a2sdlc.stages.merge import MergeStage
 from a2sdlc.stages.review import ReviewStage

@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 
-from a2sdlc.models import StageName
+from a2sdlc.domain.models import StageName
 
 HANDOVER_PREFIX = "a2sdlc:"
 HANDOVER_PATTERN = re.compile(

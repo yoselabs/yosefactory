@@ -1,4 +1,4 @@
-"""Tests for a2sdlc.models — Pydantic models and structured output parsing."""
+"""Tests for a2sdlc.domain.models — Pydantic models and structured output parsing."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from a2sdlc.models import (
+from a2sdlc.domain.models import (
     GateConfig,
     GateMode,
     StageName,

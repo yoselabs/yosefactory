@@ -6,7 +6,7 @@ import re
 
 from pydantic import BaseModel
 
-from a2sdlc.models import GateMode
+from a2sdlc.domain.models import GateMode
 
 # Matches a full [a2sdlc ...] line including its trailing newline (if any).
 _DIRECTIVE_LINE_RE = re.compile(r"^\[a2sdlc([^\]]*)\]\s*\n?", re.MULTILINE)

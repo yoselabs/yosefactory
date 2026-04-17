@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from a2sdlc.models import StageName
+from a2sdlc.domain.models import StageName
 from tests.fakes import FakeWorkAdapter
 
 
@@ -174,7 +174,7 @@ def test_set_blocked_records_multiple(adapter: FakeWorkAdapter) -> None:
 
 
 def test_parse_event_raises_skip_when_no_event() -> None:
-    from a2sdlc.exceptions import SkipEvent
+    from a2sdlc.domain.exceptions import SkipEvent
 
     adapter = FakeWorkAdapter(event=None, ticket_body="", labels=None)
     with pytest.raises(SkipEvent):
@@ -183,7 +183,7 @@ def test_parse_event_raises_skip_when_no_event() -> None:
 
 def test_parse_event_returns_event_when_configured() -> None:
     from a2sdlc.adapters.work import PipelineEvent
-    from a2sdlc.models import StageName
+    from a2sdlc.domain.models import StageName
 
     event = PipelineEvent(key="PROJ-1", trigger_stage=StageName.SPEC)
     adapter = FakeWorkAdapter(event=event, ticket_body="", labels=None)

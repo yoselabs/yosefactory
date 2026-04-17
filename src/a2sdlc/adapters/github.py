@@ -13,14 +13,14 @@ from github.Repository import Repository
 
 from a2sdlc.adapters.review import Approval, ReviewComment
 from a2sdlc.adapters.work import PipelineEvent
-from a2sdlc.exceptions import SkipEvent
-from a2sdlc.handover import (
+from a2sdlc.domain.exceptions import SkipEvent
+from a2sdlc.domain.handover import (
     HANDOVER_PATTERN,
     FeedbackItem,
     HandoverComment,
     parse_handover,
 )
-from a2sdlc.models import StageName
+from a2sdlc.domain.models import StageName
 
 logger = logging.getLogger("a2sdlc.adapters.github")
 

@@ -2,9 +2,9 @@
 
 from datetime import datetime, timezone
 
-from a2sdlc.context_assembly import assemble_context, pick_handover
-from a2sdlc.handover import FeedbackItem, HandoverComment
-from a2sdlc.models import StageName
+from a2sdlc.pipeline.context_assembly import assemble_context, pick_handover
+from a2sdlc.domain.handover import FeedbackItem, HandoverComment
+from a2sdlc.domain.models import StageName
 
 
 def _dt(day: int) -> datetime:

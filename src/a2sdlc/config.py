@@ -9,7 +9,7 @@ from pathlib import Path
 
 import yaml
 
-from a2sdlc.models import GateConfig, GateMode
+from a2sdlc.domain.models import GateConfig, GateMode
 
 logger = logging.getLogger("a2sdlc.config")
 

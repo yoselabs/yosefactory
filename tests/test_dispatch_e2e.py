@@ -12,10 +12,10 @@ import pytest
 from a2sdlc.adapters.review import Approval
 from a2sdlc.adapters.work import PipelineEvent
 from a2sdlc.config import ProjectConfig
-from a2sdlc.dispatch import DispatchContext, dispatch
-from a2sdlc.handover import FeedbackItem, HandoverComment
-from a2sdlc.models import StageName
-from a2sdlc.runner import RunResult
+from a2sdlc.pipeline.dispatch import DispatchContext, dispatch
+from a2sdlc.domain.handover import FeedbackItem, HandoverComment
+from a2sdlc.domain.models import StageName
+from a2sdlc.pipeline.runner import RunResult
 from tests.fakes import (
     FakeGitAdapter,
     FakeReviewAdapter,

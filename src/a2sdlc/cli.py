@@ -102,7 +102,7 @@ def main(argv: list[str] | None = None) -> None:
         project_root = args.project_root or find_project_root()
 
         from a2sdlc.config import load_config_file  # noqa: PLC0415
-        from a2sdlc.dispatch import DispatchContext, dispatch  # noqa: PLC0415
+        from a2sdlc.pipeline.dispatch import DispatchContext, dispatch  # noqa: PLC0415
 
         config = load_config_file(project_root)
         setup_logging("dispatch", "dispatch", project_root)
@@ -127,7 +127,7 @@ def main(argv: list[str] | None = None) -> None:
             sys.exit(1)
 
         from a2sdlc.adapters.git import LocalGitAdapter  # noqa: PLC0415
-        from a2sdlc.runner import SdkStageRunner  # noqa: PLC0415
+        from a2sdlc.pipeline.runner import SdkStageRunner  # noqa: PLC0415
 
         git = LocalGitAdapter(project_root)
 
@@ -138,7 +138,7 @@ def main(argv: list[str] | None = None) -> None:
             runner=SdkStageRunner(),
             config=config,
             project_root=project_root,
-            logger=logging.getLogger("a2sdlc.dispatch"),
+            logger=logging.getLogger("a2sdlc.pipeline.dispatch"),
         )
 
         try:

@@ -1,4 +1,4 @@
-"""Tests for a2sdlc.runner — SDK-based runner with streaming progress."""
+"""Tests for a2sdlc.pipeline.runner — SDK-based runner with streaming progress."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from a2sdlc.config import StageConfig
-from a2sdlc.progress import Milestone, ProgressState, ToolEntry
-from a2sdlc.runner import RunResult, run_stage
+from a2sdlc.evaluation.progress import Milestone, ProgressState, ToolEntry
+from a2sdlc.pipeline.runner import RunResult, run_stage
 
 
 # ── ToolEntry ───────────────────────────────────────────────────────

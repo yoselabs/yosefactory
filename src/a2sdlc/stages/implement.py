@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from a2sdlc.config import StageConfig
-from a2sdlc.models import StageName, StageStatus
+from a2sdlc.domain.models import StageName, StageStatus
 
 _DEFAULT_TOOLS = [
     "Bash",

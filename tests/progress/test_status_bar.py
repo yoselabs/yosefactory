@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from a2sdlc.progress import (
+from a2sdlc.evaluation.progress import (
     Milestone,
     _format_duration,
     _format_milestones,

@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 
 from a2sdlc.adapters.protocols import GitAdapter
-from a2sdlc.models import TicketState
+from a2sdlc.domain.models import TicketState
 
-logger = logging.getLogger("a2sdlc.state_manager")
+logger = logging.getLogger("a2sdlc.lifecycle.state")
 
 
 class StateManager:

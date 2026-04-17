@@ -10,8 +10,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from a2sdlc.adapters.github import GitHubWorkAdapter
-from a2sdlc.exceptions import SkipEvent
-from a2sdlc.models import StageName
+from a2sdlc.domain.exceptions import SkipEvent
+from a2sdlc.domain.models import StageName
 
 
 # ── Helpers ──────────────────────────────────────────────────────────

@@ -8,7 +8,7 @@ from pathlib import Path
 from git import Repo
 from git.exc import GitCommandError
 
-from a2sdlc.exceptions import BlockedError
+from a2sdlc.domain.exceptions import BlockedError
 
 logger = logging.getLogger("a2sdlc.git")
 

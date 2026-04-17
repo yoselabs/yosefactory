@@ -10,13 +10,13 @@ from pathlib import Path
 from a2sdlc.adapters.protocols import GitAdapter, StageRunner
 from a2sdlc.adapters.review import ReviewAdapter
 from a2sdlc.adapters.work import WorkAdapter
-from a2sdlc.comment_lifecycle import CommentManager
+from a2sdlc.lifecycle.comment import CommentManager
 from a2sdlc.config import ProjectConfig, load_stage_config
-from a2sdlc.context_assembly import assemble_context, pick_handover
-from a2sdlc.directives import parse_directives
-from a2sdlc.exceptions import BlockedError, SkipEvent
-from a2sdlc.feedback_routing import resolve_target_stage
-from a2sdlc.models import (
+from a2sdlc.pipeline.context_assembly import assemble_context, pick_handover
+from a2sdlc.domain.directives import parse_directives
+from a2sdlc.domain.exceptions import BlockedError, SkipEvent
+from a2sdlc.pipeline.feedback_routing import resolve_target_stage
+from a2sdlc.domain.models import (
     GateConfig,
     GateMode,
     StageName,
@@ -24,12 +24,12 @@ from a2sdlc.models import (
     TicketState,
     strip_status_block,
 )
-from a2sdlc.pr_lifecycle import PRLifecycle
-from a2sdlc.progress import format_error, format_final
-from a2sdlc.prompt_assembly import assemble_system_prompt
-from a2sdlc.stage_executor import StageExecutor
+from a2sdlc.lifecycle.pr import PRLifecycle
+from a2sdlc.evaluation.progress import format_error, format_final
+from a2sdlc.assembly.prompt import assemble_system_prompt
+from a2sdlc.pipeline.stage_executor import StageExecutor
 from a2sdlc.stages import next_stage
-from a2sdlc.state_manager import StateManager
+from a2sdlc.lifecycle.state import StateManager
 
 
 @dataclass

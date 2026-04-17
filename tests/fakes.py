@@ -14,10 +14,10 @@ from datetime import datetime
 from a2sdlc.adapters.review import Approval, ReviewComment
 from a2sdlc.adapters.work import PipelineEvent
 from a2sdlc.config import StageConfig
-from a2sdlc.exceptions import BlockedError, SkipEvent
-from a2sdlc.handover import FeedbackItem, HandoverComment
-from a2sdlc.models import StageName
-from a2sdlc.runner import RunResult
+from a2sdlc.domain.exceptions import BlockedError, SkipEvent
+from a2sdlc.domain.handover import FeedbackItem, HandoverComment
+from a2sdlc.domain.models import StageName
+from a2sdlc.pipeline.runner import RunResult
 
 
 # ── FakeWorkAdapter ───────────────────────────────────────────────────

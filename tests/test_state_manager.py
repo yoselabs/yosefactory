@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from a2sdlc.models import StageName, TicketState
+from a2sdlc.domain.models import StageName, TicketState
 from tests.fakes import FakeGitAdapter
 
 
@@ -25,14 +25,14 @@ def _make_state(**kwargs: object) -> TicketState:
 @pytest.mark.unit
 class TestReadState:
     def test_read_state_none_when_no_state(self) -> None:
-        from a2sdlc.state_manager import StateManager
+        from a2sdlc.lifecycle.state import StateManager
 
         git = FakeGitAdapter(state_json=None)
         sm = StateManager(git)
         assert sm.read_state() is None
 
     def test_read_state_parses_stored_json(self) -> None:
-        from a2sdlc.state_manager import StateManager
+        from a2sdlc.lifecycle.state import StateManager
 
         state = _make_state(stage=StageName.IMPLEMENT, stage_run_id="abc-123")
         json_str = state.model_dump_json()
@@ -47,14 +47,14 @@ class TestReadState:
     def test_read_state_invalid_json_returns_none(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        from a2sdlc.state_manager import StateManager
+        from a2sdlc.lifecycle.state import StateManager
 
         git = FakeGitAdapter(state_json="not-valid-json{{{")
         sm = StateManager(git)
 
         import logging
 
-        with caplog.at_level(logging.WARNING, logger="a2sdlc.state_manager"):
+        with caplog.at_level(logging.WARNING, logger="a2sdlc.lifecycle.state"):
             result = sm.read_state()
 
         assert result is None
@@ -67,7 +67,7 @@ class TestReadState:
 @pytest.mark.unit
 class TestWriteState:
     def test_write_state_serializes_and_stores(self) -> None:
-        from a2sdlc.state_manager import StateManager
+        from a2sdlc.lifecycle.state import StateManager
 
         git = FakeGitAdapter()
         sm = StateManager(git)
@@ -85,7 +85,7 @@ class TestWriteState:
 @pytest.mark.unit
 class TestCheckIdempotency:
     def test_matching_run_id_returns_true(self) -> None:
-        from a2sdlc.state_manager import StateManager
+        from a2sdlc.lifecycle.state import StateManager
 
         state = _make_state(stage_run_id="run-42")
         git = FakeGitAdapter(state_json=state.model_dump_json())
@@ -94,7 +94,7 @@ class TestCheckIdempotency:
         assert sm.check_idempotency("run-42") is True
 
     def test_different_run_id_returns_false(self) -> None:
-        from a2sdlc.state_manager import StateManager
+        from a2sdlc.lifecycle.state import StateManager
 
         state = _make_state(stage_run_id="run-42")
         git = FakeGitAdapter(state_json=state.model_dump_json())
@@ -103,7 +103,7 @@ class TestCheckIdempotency:
         assert sm.check_idempotency("run-99") is False
 
     def test_no_prior_state_returns_false(self) -> None:
-        from a2sdlc.state_manager import StateManager
+        from a2sdlc.lifecycle.state import StateManager
 
         git = FakeGitAdapter(state_json=None)
         sm = StateManager(git)

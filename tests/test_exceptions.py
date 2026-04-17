@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from a2sdlc.exceptions import (
+from a2sdlc.domain.exceptions import (
     AdapterError,
     AuthError,
     BlockedError,

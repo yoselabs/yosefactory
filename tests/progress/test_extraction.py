@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from a2sdlc.progress import (
+from a2sdlc.evaluation.progress import (
     extract_target,
     _shorten_path,
     context_window_for_model,

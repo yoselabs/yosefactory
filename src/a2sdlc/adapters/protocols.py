@@ -6,8 +6,8 @@ from collections.abc import Callable
 from typing import Protocol
 
 from a2sdlc.config import StageConfig
-from a2sdlc.models import StageName
-from a2sdlc.runner import RunResult
+from a2sdlc.domain.models import StageName
+from a2sdlc.pipeline.runner import RunResult
 
 
 class GitAdapter(Protocol):

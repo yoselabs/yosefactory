@@ -18,8 +18,8 @@ from claude_agent_sdk.types import (
 from rich.console import Console
 
 from a2sdlc.config import StageConfig, get_session_id
-from a2sdlc.models import StageName
-from a2sdlc.progress import (
+from a2sdlc.domain.models import StageName
+from a2sdlc.evaluation.progress import (
     Milestone,
     ProgressState,
     ToolEntry,
@@ -28,7 +28,7 @@ from a2sdlc.progress import (
     format_progress,
 )
 
-logger = logging.getLogger("a2sdlc.runner")
+logger = logging.getLogger("a2sdlc.pipeline.runner")
 
 console = Console(force_terminal=True, force_interactive=False)
 

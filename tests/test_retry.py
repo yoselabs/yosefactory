@@ -7,7 +7,7 @@ import logging
 import pytest
 
 from a2sdlc.adapters.retry import must_succeed
-from a2sdlc.exceptions import AuthError, TransientError
+from a2sdlc.domain.exceptions import AuthError, TransientError
 
 
 @pytest.mark.unit
