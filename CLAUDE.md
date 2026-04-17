@@ -2,6 +2,17 @@
 
 AI agent pipeline engine. Routes ticket board events through stages (Spec, Implement, Review, Merge) using the Claude Agent SDK. Each stage is a self-contained module in `src/a2sdlc/stages/`. Adapters handle Jira and GitHub I/O. The agent focuses purely on code work — the engine manages orchestration, progress tracking, and post-condition routing.
 
+## Architecture
+
+Hexagonal-lite layout. Read `docs/architecture.md` before adding modules. Summary of the rules:
+
+- **Layers:** `domain/` (pure types, zero I/O) ← `adapters/` ← `lifecycle/` · `assembly/` · `evaluation/` ← `pipeline/` (composition). Dependency arrows point inward.
+- **Folders are product concerns, not tech concerns.** `evaluation/` not `telemetry/`, `lifecycle/` not `managers/`, `pipeline/` not `core/`.
+- **Extract a package the moment two sibling-suffixed files appear** (`*_lifecycle`, `*_assembly`, `*_routing`). The suffix is the package name.
+- **Only `pipeline/dispatch.py` may import from 5+ other a2sdlc packages.** It's the one composition root.
+- **Stays flat at root:** entry points (`cli.py`, `__main__.py`) and `config.py`. Nothing else.
+- **Domain purity is non-negotiable:** `domain/` imports nothing from other a2sdlc packages. CI must fail on violation.
+
 ## Dev Commands
 
 ```bash
