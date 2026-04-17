@@ -104,7 +104,29 @@ Small, stable, universally-imported modules stay at `src/a2sdlc/` root:
 
 Everything else earns its way into a package via the rules above.
 
-## 7. Enforcement
+## 7. Package markers — every package has `__init__.py`
+
+**Every package has an `__init__.py`, even if empty.** a2sdlc uses regular packages
+(PEP 328) consistently, not PEP 420 namespace packages. The file may be empty, a
+docstring, or a public-API re-export — but it must exist.
+
+**Why:** the codebase is a **mix** of packages that hold real content (`adapters/`,
+`stages/`, top-level `a2sdlc/`) and packages that currently don't (`domain/`,
+`pipeline/`, `lifecycle/`, `assembly/`, `evaluation/`). A mixed regular/namespace-package
+state is the one configuration most likely to produce tooling surprises:
+
+- hatchling's `packages = ["src/a2sdlc"]` expects a regular-package tree; missing
+  `__init__.py` files can silently drop subpackages from the wheel.
+- `import-linter` rules (see §7) target importable modules — regular packages are
+  the unambiguous target.
+- Type checkers, test runners, and coverage tools all handle both, but edge cases
+  (re-import priority, `__all__` resolution) diverge.
+
+The gain from dropping empty `__init__.py` files is aesthetic (≤ 0 bytes saved per
+file); the risk is real. Keep them. If an `__init__.py` grows beyond empty, it
+should re-export the package's **public API** (see §7 enforcement).
+
+## 8. Enforcement
 
 - **Lint:** `import-linter` config in `pyproject.toml` enforces the layering table in §2.
   Domain purity (`domain/` imports nothing from other a2sdlc packages) is the critical rule
@@ -115,7 +137,7 @@ Everything else earns its way into a package via the rules above.
 - **Threshold check:** if any package (including the root) exceeds ~15 top-level files, split it
   along product-concern lines before adding a sixteenth.
 
-## 8. When to reconsider this shape
+## 9. When to reconsider this shape
 
 - **Feature-slicing becomes warranted** when 3+ independent feature areas share no code. Example:
   a parallel "release notes" pipeline that doesn't touch `dispatch.py`. Then: `features/release_notes/`,
