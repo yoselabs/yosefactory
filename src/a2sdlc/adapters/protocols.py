@@ -7,7 +7,7 @@ from typing import Protocol
 
 from a2sdlc.config import StageConfig
 from a2sdlc.domain.models import StageName
-from a2sdlc.pipeline.runner import RunResult
+from a2sdlc.domain.run_result import RunResult
 
 
 class GitAdapter(Protocol):

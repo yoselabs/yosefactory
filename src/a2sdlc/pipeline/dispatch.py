@@ -12,7 +12,7 @@ from a2sdlc.adapters.review import ReviewAdapter
 from a2sdlc.adapters.work import WorkAdapter
 from a2sdlc.lifecycle.comment import CommentManager
 from a2sdlc.config import ProjectConfig, load_stage_config
-from a2sdlc.pipeline.context_assembly import assemble_context, pick_handover
+from a2sdlc.pipeline.context import assemble_context, pick_handover
 from a2sdlc.domain.directives import parse_directives
 from a2sdlc.domain.exceptions import BlockedError, SkipEvent
 from a2sdlc.pipeline.feedback_routing import resolve_target_stage

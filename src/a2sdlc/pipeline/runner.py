@@ -6,7 +6,6 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from typing import Any
 
 from claude_agent_sdk.types import (
@@ -19,6 +18,7 @@ from rich.console import Console
 
 from a2sdlc.config import StageConfig, get_session_id
 from a2sdlc.domain.models import StageName
+from a2sdlc.domain.run_result import RunResult
 from a2sdlc.evaluation.progress import (
     Milestone,
     ProgressState,
@@ -31,23 +31,6 @@ from a2sdlc.evaluation.progress import (
 logger = logging.getLogger("a2sdlc.pipeline.runner")
 
 console = Console(force_terminal=True, force_interactive=False)
-
-
-@dataclass
-class RunResult:
-    """Normalized result from a stage execution."""
-
-    success: bool
-    output: str = ""
-    error: str | None = None
-    session_id: str = ""
-    total_cost_usd: float = 0.0
-    duration_ms: int = 0
-    input_tokens: int = 0
-    output_tokens: int = 0
-    num_turns: int = 0
-    tool_log: list[str] = field(default_factory=list)
-    progress: ProgressState | None = None
 
 
 # ── Main runner ─────────────────────────────────────────────────────

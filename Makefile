@@ -1,4 +1,4 @@
-.PHONY: lint fix test check coverage-diff security-audit bootstrap
+.PHONY: lint fix test check coverage-diff security-audit arch bootstrap
 
 lint:
 	agent-harness lint
@@ -15,7 +15,10 @@ coverage-diff:
 security-audit:
 	agent-harness security-audit
 
-check: lint test coverage-diff security-audit
+arch:
+	@uv run lint-imports
+
+check: lint arch test coverage-diff security-audit
 
 bootstrap: ## First-time setup after clone
 	uv sync

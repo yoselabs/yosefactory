@@ -17,9 +17,7 @@ from a2sdlc.config import StageConfig
 from a2sdlc.domain.exceptions import BlockedError, SkipEvent
 from a2sdlc.domain.handover import FeedbackItem, HandoverComment
 from a2sdlc.domain.models import StageName
-from a2sdlc.pipeline.runner import RunResult
-
-
+from a2sdlc.domain.run_result import RunResult
 # ── FakeWorkAdapter ───────────────────────────────────────────────────
 
 

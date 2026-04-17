@@ -8,7 +8,7 @@ import pytest
 
 from a2sdlc.config import StageConfig
 from a2sdlc.domain.models import StageName, StageStatus
-from a2sdlc.pipeline.runner import RunResult
+from a2sdlc.domain.run_result import RunResult
 from tests.fakes import FakeRunner
 
 

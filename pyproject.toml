@@ -40,4 +40,78 @@ dev = [
     "diff-cover>=9.0",
     "ruff>=0.15.9",
     "ty>=0.0.28",
+    "import-linter>=2.0",
 ]
+
+# ─── Architecture rules (enforced in CI) ────────────────────────────────
+# Mirrors docs/architecture.md §2. Run locally with: uv run lint-imports
+#
+# We start with the one rule that matters most: domain purity. The rest are
+# encoded as warnings for now (add when drift shows up in review).
+
+[tool.importlinter]
+root_packages = ["a2sdlc"]
+
+[[tool.importlinter.contracts]]
+name = "domain is pure (no imports from other a2sdlc packages)"
+type = "forbidden"
+source_modules = ["a2sdlc.domain"]
+forbidden_modules = [
+    "a2sdlc.adapters",
+    "a2sdlc.pipeline",
+    "a2sdlc.lifecycle",
+    "a2sdlc.assembly",
+    "a2sdlc.evaluation",
+    "a2sdlc.stages",
+    "a2sdlc.cli",
+    "a2sdlc.config",
+]
+
+[[tool.importlinter.contracts]]
+name = "adapters do not import application layer"
+type = "forbidden"
+source_modules = ["a2sdlc.adapters"]
+forbidden_modules = [
+    "a2sdlc.pipeline",
+    "a2sdlc.lifecycle",
+    "a2sdlc.assembly",
+    "a2sdlc.evaluation",
+    "a2sdlc.stages",
+    "a2sdlc.cli",
+]
+ignore_imports = [
+    # config.py is a glue point (docs/architecture.md §6) — it lazy-imports
+    # stages to merge stage defaults with project overrides. Legit, bounded.
+    "a2sdlc.config -> a2sdlc.stages",
+]
+
+[[tool.importlinter.contracts]]
+name = "lifecycle, assembly, evaluation do not import each other or pipeline"
+type = "forbidden"
+source_modules = [
+    "a2sdlc.lifecycle",
+    "a2sdlc.assembly",
+    "a2sdlc.evaluation",
+]
+forbidden_modules = [
+    "a2sdlc.pipeline",
+    "a2sdlc.cli",
+]
+
+[[tool.importlinter.contracts]]
+name = "lifecycle does not import assembly or evaluation"
+type = "forbidden"
+source_modules = ["a2sdlc.lifecycle"]
+forbidden_modules = ["a2sdlc.assembly", "a2sdlc.evaluation"]
+
+[[tool.importlinter.contracts]]
+name = "assembly does not import lifecycle or evaluation"
+type = "forbidden"
+source_modules = ["a2sdlc.assembly"]
+forbidden_modules = ["a2sdlc.lifecycle", "a2sdlc.evaluation"]
+
+[[tool.importlinter.contracts]]
+name = "evaluation does not import lifecycle or assembly"
+type = "forbidden"
+source_modules = ["a2sdlc.evaluation"]
+forbidden_modules = ["a2sdlc.lifecycle", "a2sdlc.assembly"]

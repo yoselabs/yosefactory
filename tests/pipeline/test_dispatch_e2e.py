@@ -15,7 +15,7 @@ from a2sdlc.config import ProjectConfig
 from a2sdlc.pipeline.dispatch import DispatchContext, dispatch
 from a2sdlc.domain.handover import FeedbackItem, HandoverComment
 from a2sdlc.domain.models import StageName
-from a2sdlc.pipeline.runner import RunResult
+from a2sdlc.domain.run_result import RunResult
 from tests.fakes import (
     FakeGitAdapter,
     FakeReviewAdapter,

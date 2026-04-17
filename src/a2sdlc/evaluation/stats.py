@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from a2sdlc.pipeline.runner import RunResult
+from a2sdlc.domain.run_result import RunResult
 
 
 @dataclass

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from a2sdlc.pipeline.runner import RunResult
+from a2sdlc.domain.run_result import RunResult
 from a2sdlc.evaluation.stats import StageRunStats
 
 
