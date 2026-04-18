@@ -131,11 +131,8 @@ class TestStrictKeyValidation:
             "quality: {}\n"
             "model: claude-sonnet-4-6\n"
             "default_base: main\n"
-            "max_turns_per_stage: 50\n"
             "gates: {}\n"
-            "self_answer: true\n"
-            "resume: false\n"
-            "timeouts: {}\n",
+            "self_answer: true\n",
         )
         # Should not raise.
         config = load_config_file(tmp_path)
@@ -179,6 +176,26 @@ class TestAdaptersAndQualityBlocks:
         _write_config(tmp_path, "model: claude-sonnet-4-6\n")
         cfg = load_config_file(tmp_path)
         assert cfg.quality.check_command == "make check"
+
+    def test_adapters_block_rejects_unknown_nested_key(self, tmp_path: Path) -> None:
+        """GIVEN a config with an unknown key inside adapters:
+        WHEN loaded
+        THEN ConfigError is raised mentioning the bad key."""
+        _write_config(tmp_path, "adapters:\n  nonsense: x\n")
+        from a2sdlc.config import ConfigError
+
+        with pytest.raises(ConfigError, match="nonsense|adapters"):
+            load_config_file(tmp_path)
+
+    def test_quality_block_rejects_unknown_nested_key(self, tmp_path: Path) -> None:
+        """GIVEN a config with an unknown key inside quality:
+        WHEN loaded
+        THEN ConfigError is raised mentioning the bad key."""
+        _write_config(tmp_path, "quality:\n  bogus: y\n")
+        from a2sdlc.config import ConfigError
+
+        with pytest.raises(ConfigError, match="bogus|quality"):
+            load_config_file(tmp_path)
 
 
 # ── load_stage_config ─────────────────────────────────────────────────

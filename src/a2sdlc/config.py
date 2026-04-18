@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import uuid
 from dataclasses import dataclass, field, replace
@@ -21,6 +22,9 @@ class ConfigError(ValueError):
 
 
 # Strict allowlist for the top-level keys in ``.a2sdlc/config.yaml``.
+# Only keys that the loader actually parses appear here — YAGNI. Reserved
+# names (e.g. ``max_turns_per_stage``, ``resume``, ``timeouts``) will be
+# added back when a later task implements their parsing.
 _ALLOWED_TOP_LEVEL_KEYS: frozenset[str] = frozenset(
     {
         "adapters",
@@ -29,11 +33,8 @@ _ALLOWED_TOP_LEVEL_KEYS: frozenset[str] = frozenset(
         "quality",
         "model",
         "default_base",
-        "max_turns_per_stage",
         "gates",
         "self_answer",
-        "resume",
-        "timeouts",
     }
 )
 
@@ -172,11 +173,23 @@ def load_config_file(project_root: Path) -> ProjectConfig:
 
     adapters_raw = data.get("adapters", {})
     adapters_raw = adapters_raw if isinstance(adapters_raw, dict) else {}
-    adapters = AdaptersConfig(**adapters_raw)
+    try:
+        adapters = AdaptersConfig(**adapters_raw)
+    except TypeError as e:
+        valid = {f.name for f in dataclasses.fields(AdaptersConfig)}
+        raise ConfigError(
+            f"Unknown keys in 'adapters' block: {e}. Allowed: {sorted(valid)}"
+        ) from e
 
     quality_raw = data.get("quality", {})
     quality_raw = quality_raw if isinstance(quality_raw, dict) else {}
-    quality = QualityConfig(**quality_raw)
+    try:
+        quality = QualityConfig(**quality_raw)
+    except TypeError as e:
+        valid = {f.name for f in dataclasses.fields(QualityConfig)}
+        raise ConfigError(
+            f"Unknown keys in 'quality' block: {e}. Allowed: {sorted(valid)}"
+        ) from e
 
     config = ProjectConfig(
         self_answer=self_answer,
@@ -206,8 +219,6 @@ def load_stage_config(stage_name: str, project: ProjectConfig) -> StageConfig:
         return base
 
     # Only pass fields that actually exist on StageConfig.
-    import dataclasses  # noqa: PLC0415
-
     valid_fields = {f.name for f in dataclasses.fields(StageConfig)}
     patches = {k: v for k, v in overrides.items() if k in valid_fields}
     return replace(base, **patches)

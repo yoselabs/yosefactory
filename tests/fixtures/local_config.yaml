@@ -3,8 +3,8 @@
 
 model: claude-sonnet-4-6
 default_base: main
-max_turns_per_stage: 150
-resume: false
+
+# max_turns_per_stage, resume, timeouts — reserved for future tasks
 
 adapters:
   work: local_file
@@ -23,4 +23,3 @@ gates:
   spec: auto
 
 stages: {}
-timeouts: {}
