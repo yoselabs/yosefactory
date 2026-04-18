@@ -79,6 +79,11 @@ async def run_stage(
         "max_turns": config.max_turns,
         "model": config.model,
         "cwd": project_root,
+        # Exclude user-level Claude Code settings (~/.claude/CLAUDE.md,
+        # auto-memory) so the agent runs with only project + local context.
+        # a2sdlc is a self-contained pipeline; personal instructions from the
+        # invoking user's global config would bleed unrelated context in.
+        "setting_sources": ["project", "local"],
     }
     if effort is not None:
         sdk_effort = _EFFORT_SDK_MAP.get(effort)
