@@ -16,16 +16,15 @@ from a2sdlc.evaluation.progress import (
 
 
 class _FakeComment:
+    """Mirrors the real ``CommentManager`` surface (``update``/``finalize`` only)
+    so signature drift between subscriber and manager surfaces in tests."""
+
     def __init__(self) -> None:
         self.updates: list[str] = []
-        self.appends: list[str] = []
         self.finalized: str | None = None
 
     def update(self, text: str) -> None:
         self.updates.append(text)
-
-    def append(self, text: str) -> None:
-        self.appends.append(text)
 
     def finalize(self, text: str) -> None:
         self.finalized = text
@@ -57,15 +56,21 @@ async def test_metrics_within_throttle_window_drops_update() -> None:
 
 
 @pytest.mark.asyncio
-async def test_milestone_appends_immediately_no_throttle() -> None:
+async def test_milestone_event_does_not_call_unsupported_append() -> None:
+    """Milestones land in the comment via the next throttled Metrics tick
+    (format_progress already includes the milestones list). The subscriber
+    must NOT call any method beyond update/finalize on the comment handle —
+    CommentManager has no append/post/etc. and silently failing here would
+    disable the subscriber for the rest of the stage."""
     state = _state()
     comment = _FakeComment()
     sub = GhCommentSubscriber(comment, state, throttle_seconds=10.0)
     await sub.handle(StageStart(stage=StageName.SPEC, session_id="sid", started_at=0.0))
     await sub.handle(Milestone(timestamp=0.5, label="brainstorming invoked"))
     await sub.handle(Milestone(timestamp=1.0, label="spec approved"))
-    assert len(comment.appends) == 2
-    assert "brainstorming" in comment.appends[0]
+    # No update/finalize triggered by Milestone.
+    assert comment.updates == []
+    assert comment.finalized is None
 
 
 @pytest.mark.asyncio
@@ -89,6 +94,36 @@ async def test_stage_end_finalizes_with_success_marker() -> None:
     assert "$0.42" in comment.finalized
     assert "5 turns" in comment.finalized
     assert "\u2705" in comment.finalized
+
+
+@pytest.mark.asyncio
+async def test_subscriber_uses_only_real_comment_manager_methods() -> None:
+    """Regression: subscriber must call ONLY methods that CommentManager
+    actually exposes (start/update/finalize). A previous version called
+    .append() — silently disabled the subscriber for the rest of the
+    stage when the AttributeError got swallowed by ProgressState._emit's
+    broad exception handler."""
+    from a2sdlc.lifecycle.comment import CommentManager
+    from tests.fakes import FakeWorkAdapter
+    from a2sdlc.adapters.work import PipelineEvent
+
+    work = FakeWorkAdapter(
+        event=PipelineEvent(key="42", trigger_stage=StageName.SPEC),
+        ticket_body="x",
+    )
+    cm = CommentManager(work, "42")
+    cm.start("spec")
+    state = _state()
+    sub = GhCommentSubscriber(cm, state, throttle_seconds=0.0)
+
+    # Drive every event type the subscriber handles — none should raise.
+    await sub.handle(StageStart(stage=StageName.SPEC, session_id="sid", started_at=0.0))
+    await sub.handle(Metrics(1, 2, 0.05, 1, 0.0))
+    await sub.handle(Milestone(timestamp=0.5, label="brainstorming invoked"))
+    final = Metrics(0, 0, 0.0, 0, 0.0)
+    await sub.handle(
+        StageEnd(stage=StageName.SPEC, success=True, error=None, final_metrics=final)
+    )
 
 
 @pytest.mark.asyncio

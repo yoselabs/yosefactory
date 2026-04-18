@@ -291,12 +291,9 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
 
         stage_result = exec_result.stage_result
 
-        # 12. Log full output to CI
-        await ctx.progress_state.open_group(
-            f"Agent output ({len(exec_result.output)} chars)"
-        )
-        # Output content goes to logging, not the event stream.
-        await ctx.progress_state.close_group()
+        # 12. Log full output to CI (logging only — no progress event;
+        # an empty GroupOpen/GroupClose pair would render as a foldable
+        # block with nothing inside).
         ctx.logger.info("agent.output", extra={"len": len(exec_result.output)})
 
         # Build shared format kwargs

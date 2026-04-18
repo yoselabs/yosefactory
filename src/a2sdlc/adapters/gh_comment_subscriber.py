@@ -5,7 +5,6 @@ from __future__ import annotations
 from a2sdlc.domain.models import StageName
 from a2sdlc.evaluation.progress import (
     Metrics,
-    Milestone,
     ProgressEvent,
     ProgressState,
     StageEnd,
@@ -20,15 +19,16 @@ class GhCommentSubscriber:
 
     - ``StageStart``: caches the stage so ``format_progress`` can render it.
     - ``Metrics``: throttled to ``throttle_seconds`` (default 5s) — protects
-      against GitHub API rate limits.
-    - ``Milestone``: appended immediately (rare events worth posting).
+      against GitHub API rate limits. Each emit re-renders ``format_progress``
+      which already includes the latest milestones list, so milestone events
+      land in the comment via the next throttled tick — no separate handler.
     - ``StageEnd``: never throttled; calls ``comment.finalize`` with a
       definitive summary including cost and turn count.
     """
 
     def __init__(
         self,
-        comment_handle,  # CommentManager-like (has update/append/finalize)
+        comment_handle,  # CommentManager-like (has update/finalize)
         progress_state: ProgressState,
         throttle_seconds: float = 5.0,
     ) -> None:
@@ -46,8 +46,6 @@ class GhCommentSubscriber:
                     self._stage.value if self._stage else "?", self._state
                 )
                 self._comment.update(text)
-        elif isinstance(event, Milestone):
-            self._comment.append(f"\u2728 {event.label}")
         elif isinstance(event, StageEnd):
             icon = "\u2705" if event.success else "\u274c"
             self._comment.finalize(
