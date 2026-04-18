@@ -1740,9 +1740,11 @@ await ctx.progress_state.stage_start(
 
 # Initialize success/error trackers BEFORE the try block so the finally
 # clause can always emit a valid StageEnd, even on early returns or
-# unexpected exceptions.
+# unexpected exceptions. Default error to "unknown" so that an
+# unhandled crash produces an informative StageEnd payload (otherwise
+# subscribers can't distinguish a clean blocked-return from a crash).
 _stage_success: bool = False
-_stage_error: str | None = None
+_stage_error: str | None = "unknown"
 
 try:
     # 8. Merge stage — deterministic, no AI
@@ -1768,6 +1770,7 @@ try:
         ctx.work.set_done_label(event.key)
         ctx.logger.info("dispatch.merged", extra={"pr": pr_number})
         _stage_success = True
+        _stage_error = None
         return DispatchResult(stage=StageName.MERGE)
 
     # ── SPEC/IMPLEMENT/REVIEW path (existing lines 214-end of the function) ──
@@ -1849,8 +1852,11 @@ return DispatchResult(stage=target_stage, blocked=True, error="no_status_block")
 
 # At line ~379, the success exit:
 _stage_success = True
+_stage_error = None  # success path — clear the default
 return DispatchResult(stage=target_stage, status=stage_result.status, ...)
 ```
+
+Same edit pattern in the MERGE branch: each clean-blocked early return assigns `_stage_error = <reason>`; the successful merge return assigns `_stage_success = True; _stage_error = None`.
 
 Verify with `git grep -n "return DispatchResult" src/a2sdlc/pipeline/dispatch.py` that you've covered every return site inside the wrapped block. The `finally` clause will run before each return and emit the correct `StageEnd`.
 
@@ -2128,11 +2134,14 @@ assert isinstance(recorder.events[-1], StageEnd)
 
 - [ ] **Step 3: Same replacement in every test file that references `ProgressAdapter`, `FakeProgressAdapter`, `progress=`, or `on_progress=`**
 
-Run a grep first to enumerate every site:
+Run two greps to enumerate every site:
 
 ```bash
 git grep -nE "ProgressAdapter|FakeProgressAdapter|progress\s*=|on_progress" tests/
+git grep -nE "ProgressState\(.*start_time|ProgressState\(.*model=" tests/
 ```
+
+The second grep catches direct `ProgressState(...)` constructions that pass per-stage config kwargs (e.g. `model=`, `branch=`, `max_turns=`, `start_time=time.time()`). After Task 4 repartitions `__init__`, those constructors raise `TypeError` because the only accepted argument is `project_root`. Rewrite each to `ProgressState(project_root=str(some_path))`; tests that need per-stage config call `await state.stage_start(...)` to set it. **Known sites:** `tests/pipeline/test_stage_executor.py:198-205` and `:222-229`.
 
 Apply the `RecordingSubscriber` + `ProgressState` pattern to every match. Known affected files:
 
