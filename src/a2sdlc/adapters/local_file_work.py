@@ -1,0 +1,169 @@
+"""Local file-backed WorkAdapter — ticket/handover state lives in `.a2sdlc/`.
+
+Stand-in for Jira/GitHub work-item operations when running the engine fully
+offline. Ticket body is copied to `.a2sdlc/ticket.md`. Handover content is
+written per-stage to `.a2sdlc/handover/<stage>.md`. Feedback signal is detected
+by the presence of an unconsumed `.a2sdlc/feedback.json` (written by the
+local review adapter).
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import shutil
+from datetime import datetime, timezone
+from pathlib import Path
+
+from a2sdlc.adapters.work import PipelineEvent
+from a2sdlc.domain.handover import FeedbackItem, HandoverComment
+from a2sdlc.domain.models import StageName
+
+_log = logging.getLogger(__name__)
+
+_TICKET_FILE = "ticket.md"
+_PR_FILE = "pr.json"
+_FEEDBACK_FILE = "feedback.json"
+_HANDOVER_DIR = "handover"
+
+
+class LocalFileWorkAdapter:
+    """File-backed mock of the WorkAdapter protocol."""
+
+    def __init__(
+        self,
+        project_root: Path,
+        session_id: str,
+        stage: StageName,
+        ticket_path: Path | None,
+    ) -> None:
+        self._root = project_root
+        self._session_id = session_id
+        self._stage = stage
+
+        self._a2sdlc_dir = project_root / ".a2sdlc"
+        self._a2sdlc_dir.mkdir(exist_ok=True)
+        self._handover_dir = self._a2sdlc_dir / _HANDOVER_DIR
+        self._handover_dir.mkdir(exist_ok=True)
+
+        if ticket_path is not None:
+            shutil.copyfile(ticket_path, self._a2sdlc_dir / _TICKET_FILE)
+
+        self._comment_counter = 0
+        self._comment_stage: dict[str, StageName] = {}
+
+    # ── internal helpers ─────────────────────────────────────────────
+
+    @property
+    def _ticket_path(self) -> Path:
+        return self._a2sdlc_dir / _TICKET_FILE
+
+    @property
+    def _pr_path(self) -> Path:
+        return self._a2sdlc_dir / _PR_FILE
+
+    @property
+    def _feedback_path(self) -> Path:
+        return self._a2sdlc_dir / _FEEDBACK_FILE
+
+    def _read_pr_number(self) -> int | None:
+        if not self._pr_path.exists():
+            return None
+        try:
+            data = json.loads(self._pr_path.read_text())
+        except json.JSONDecodeError:
+            return None
+        value = data.get("pr_number")
+        if isinstance(value, int):
+            return value
+        return None
+
+    def _is_unconsumed_feedback(self) -> bool:
+        if not self._feedback_path.exists():
+            return False
+        try:
+            data = json.loads(self._feedback_path.read_text())
+        except json.JSONDecodeError:
+            return False
+        return data.get("consumed", False) is False
+
+    # ── protocol methods ─────────────────────────────────────────────
+
+    def parse_event(self) -> PipelineEvent:
+        pr_number = self._read_pr_number()
+        if self._is_unconsumed_feedback():
+            return PipelineEvent(
+                key=self._session_id,
+                trigger_stage=None,
+                is_feedback=True,
+                pr_number=pr_number,
+            )
+        return PipelineEvent(
+            key=self._session_id,
+            trigger_stage=self._stage,
+            is_feedback=False,
+            pr_number=pr_number,
+        )
+
+    def get_ticket(self, key: str) -> str:
+        if not self._ticket_path.exists():
+            return ""
+        return self._ticket_path.read_text()
+
+    def get_labels(self, key: str) -> list[str]:
+        return []
+
+    def begin_comment(self, key: str) -> str:
+        self._comment_counter += 1
+        cid = f"{key}-{self._stage.value}-{self._comment_counter}"
+        self._comment_stage[cid] = self._stage
+        return cid
+
+    def update_progress(self, comment_id: str, body: str) -> None:
+        # Live progress flows through ProgressAdapter, not WorkAdapter.
+        return None
+
+    def finalize_comment(self, comment_id: str, body: str) -> None:
+        stage = self._comment_stage.get(comment_id, self._stage)
+        target = self._handover_dir / f"{stage.value}.md"
+        target.write_text(body)
+
+    def set_stage_label(self, key: str, stage: StageName) -> None:
+        _log.info("set_stage_label key=%s stage=%s", key, stage.value)
+
+    def set_done_label(self, key: str) -> None:
+        _log.info("set_done_label key=%s", key)
+
+    def set_blocked(self, key: str, reason: str) -> None:
+        _log.info("set_blocked key=%s reason=%s", key, reason)
+
+    def format_branch(self, ticket_key: str) -> str:
+        return f"a2sdlc/{ticket_key}"
+
+    def collect_issue_feedback(self, key: str, since: datetime) -> list[FeedbackItem]:
+        return []
+
+    def find_last_handover(self, key: str) -> HandoverComment | None:
+        if not self._handover_dir.exists():
+            return None
+        candidates = [
+            p for p in self._handover_dir.iterdir() if p.is_file() and p.suffix == ".md"
+        ]
+        if not candidates:
+            return None
+        latest = max(candidates, key=lambda p: p.stat().st_mtime)
+        try:
+            stage = StageName(latest.stem)
+        except ValueError:
+            return None
+        mtime = latest.stat().st_mtime
+        return HandoverComment(
+            stage=stage,
+            run_id=str(mtime),
+            body=latest.read_text(),
+            created_at=datetime.fromtimestamp(mtime, tz=timezone.utc),
+            location="issue",
+        )
+
+
+__all__ = ["LocalFileWorkAdapter"]
