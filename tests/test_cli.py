@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from a2sdlc.cli import (
     find_project_root,
+    main,
     parse_args,
     setup_logging,
 )
@@ -180,3 +181,45 @@ class TestSetupLogging:
         assert log_dir.exists()
         log_files = list(log_dir.glob("PROJ-1-implement-*.log"))
         assert len(log_files) == 1
+
+
+# ── main ─────────────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestMainDispatch:
+    def test_main_dispatch_constructs_github_adapters(self, tmp_path: Path) -> None:
+        """main() with 'dispatch' wires GitHub adapters via env-derived token/repo."""
+        (tmp_path / ".a2sdlc").mkdir()
+        (tmp_path / ".a2sdlc" / "config.yaml").write_text("default_base: main\n")
+
+        dispatch_result = MagicMock(blocked=False, error=None)
+
+        with (
+            patch("a2sdlc.adapters.github.connect") as mock_connect,
+            patch("a2sdlc.adapters.github.GitHubWorkAdapter") as mock_work,
+            patch("a2sdlc.adapters.github.GitHubReviewAdapter") as mock_review,
+            patch("a2sdlc.adapters.git.LocalGitAdapter") as mock_git,
+            patch("a2sdlc.pipeline.dispatch.dispatch") as mock_dispatch,
+            patch.dict(
+                "os.environ",
+                {"GITHUB_TOKEN": "tkn", "GITHUB_REPOSITORY": "o/r"},
+                clear=False,
+            ),
+        ):
+            mock_git.return_value = MagicMock(name="git")
+            mock_connect.return_value = MagicMock(name="repo")
+
+            async def _fake_dispatch(_ctx: object) -> object:
+                return dispatch_result
+
+            mock_dispatch.side_effect = _fake_dispatch
+
+            main(["dispatch", "--project-root", str(tmp_path)])
+
+        # connect called with env-derived (repo, token); GitHubWorkAdapter
+        # called with just the repo (no trigger_mention override).
+        mock_connect.assert_called_once_with("o/r", "tkn")
+        assert mock_work.call_count == 1
+        assert "trigger_mention" not in mock_work.call_args.kwargs
+        mock_review.assert_called_once()

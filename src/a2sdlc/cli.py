@@ -108,23 +108,17 @@ def main(argv: list[str] | None = None) -> None:
         setup_logging("dispatch", "dispatch", project_root)
 
         # Construct adapters
-        if config.adapter == "github":
-            from a2sdlc.adapters.github import (  # noqa: PLC0415
-                GitHubReviewAdapter,
-                GitHubWorkAdapter,
-                connect,
-            )
+        from a2sdlc.adapters.github import (  # noqa: PLC0415
+            GitHubReviewAdapter,
+            GitHubWorkAdapter,
+            connect,
+        )
 
-            token = os.environ.get("GITHUB_TOKEN", os.environ.get("GH_TOKEN", ""))
-            repo_name = os.environ.get("GITHUB_REPOSITORY", "")
-            repo = connect(repo_name, token)
-            work_adapter = GitHubWorkAdapter(
-                repo, trigger_mention=config.trigger_mention
-            )
-            review_adapter = GitHubReviewAdapter(repo)
-        else:
-            logger.error("Unknown adapter: %s", config.adapter)
-            sys.exit(1)
+        token = os.environ.get("GITHUB_TOKEN", os.environ.get("GH_TOKEN", ""))
+        repo_name = os.environ.get("GITHUB_REPOSITORY", "")
+        repo = connect(repo_name, token)
+        work_adapter = GitHubWorkAdapter(repo)
+        review_adapter = GitHubReviewAdapter(repo)
 
         from a2sdlc.adapters.git import LocalGitAdapter  # noqa: PLC0415
         from a2sdlc.pipeline.runner import SdkStageRunner  # noqa: PLC0415

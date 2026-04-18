@@ -96,11 +96,8 @@ def get_session_id(ticket_key: str, stage: str, review_cycles: int = 0) -> str:
 class ProjectConfig:
     """Per-repo settings read from ``.a2sdlc/config.yaml``."""
 
-    adapter: str = "github"
     self_answer: bool = False
     default_base: str = "main"
-    test_command: str = "make test"
-    trigger_mention: str = "@a2sdlc"
     model: str = "claude-sonnet-4-6"
     stage_overrides: dict[str, dict[str, object]] = field(default_factory=dict)
     adapters: AdaptersConfig = field(default_factory=AdaptersConfig)
