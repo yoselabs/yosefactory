@@ -13,6 +13,31 @@ from a2sdlc.domain.models import GateConfig, GateMode
 
 logger = logging.getLogger("a2sdlc.config")
 
+# ── Errors ────────────────────────────────────────────────────────────
+
+
+class ConfigError(ValueError):
+    """Raised when the config file is malformed or contains unknown keys."""
+
+
+# Strict allowlist for the top-level keys in ``.a2sdlc/config.yaml``.
+_ALLOWED_TOP_LEVEL_KEYS: frozenset[str] = frozenset(
+    {
+        "adapters",
+        "stages",
+        "spec",
+        "quality",
+        "model",
+        "default_base",
+        "max_turns_per_stage",
+        "gates",
+        "self_answer",
+        "resume",
+        "timeouts",
+    }
+)
+
+
 # ── Stage configuration ───────────────────────────────────────────────
 
 
@@ -27,6 +52,30 @@ class StageConfig:
     allowed_tools: list[str] = field(default_factory=list)
     code_reviews: int = 0
     max_review_cycles: int = 2
+
+
+# ── Adapter / quality blocks ──────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class AdaptersConfig:
+    """Names of the adapters to wire for a run.
+
+    Values are short identifiers resolved by the adapter factory at
+    composition time (e.g. ``"jira"``, ``"github"``, ``"local_file"``).
+    """
+
+    work: str = "jira"
+    review: str = "github"
+    git: str = "github"
+    progress: str = "gh_actions"
+
+
+@dataclass(frozen=True)
+class QualityConfig:
+    """Deterministic quality gate configuration."""
+
+    check_command: str = "make check"
 
 
 # ── Session helpers ──────────────────────────────────────────────────
@@ -44,14 +93,17 @@ def get_session_id(ticket_key: str, stage: str, review_cycles: int = 0) -> str:
 
 @dataclass
 class ProjectConfig:
-    """Per-repo settings read from ``a2sdlc.yaml`` at the project root."""
+    """Per-repo settings read from ``.a2sdlc/config.yaml``."""
 
     adapter: str = "github"
     self_answer: bool = False
     default_base: str = "main"
     test_command: str = "make test"
     trigger_mention: str = "@a2sdlc"
+    model: str = "claude-sonnet-4-6"
     stage_overrides: dict[str, dict[str, object]] = field(default_factory=dict)
+    adapters: AdaptersConfig = field(default_factory=AdaptersConfig)
+    quality: QualityConfig = field(default_factory=QualityConfig)
     _gates: GateConfig = field(default_factory=GateConfig, repr=False, compare=False)
 
     def gate_config(self) -> GateConfig:
@@ -59,31 +111,45 @@ class ProjectConfig:
         return self._gates
 
 
-def load_config_file(project_root: Path) -> ProjectConfig:
-    """Load project config from ``project_root/a2sdlc.yaml``.
+def _validate_keys(data: dict[str, object]) -> None:
+    """Raise ``ConfigError`` if ``data`` has any top-level keys outside the allowlist."""
+    unknown = sorted(set(data.keys()) - _ALLOWED_TOP_LEVEL_KEYS)
+    if unknown:
+        allowed = sorted(_ALLOWED_TOP_LEVEL_KEYS)
+        raise ConfigError(
+            f"Unknown config keys: {unknown}. Allowed top-level keys: {allowed}."
+        )
 
-    Returns defaults when the file is absent.
+
+def load_config_file(project_root: Path) -> ProjectConfig:
+    """Load project config from ``project_root/.a2sdlc/config.yaml``.
+
+    Raises ``FileNotFoundError`` if the file is missing, and ``ConfigError``
+    if any top-level key is not in the allowlist.
     """
-    config_path = project_root / "a2sdlc.yaml"
-    if not config_path.exists():
-        logger.info("No config at %s — using defaults", config_path)
-        return ProjectConfig()
+    config_path = project_root / ".a2sdlc" / "config.yaml"
+    if not config_path.is_file():
+        raise FileNotFoundError(
+            f"Config not found at {config_path}. "
+            f"Create .a2sdlc/config.yaml — see "
+            f"docs/superpowers/specs/2026-04-18-a2sdlc-local-runner-design.md "
+            f"for the schema."
+        )
 
     with config_path.open() as fh:
         data: dict[str, object] = yaml.safe_load(fh) or {}
 
+    if not isinstance(data, dict):
+        raise ConfigError(
+            f"Config at {config_path} must be a YAML mapping at the top level."
+        )
+
+    _validate_keys(data)
+
     logger.info("Loaded config from %s", config_path)
 
-    pipeline = data.get("pipeline", {})
-    pipeline = pipeline if isinstance(pipeline, dict) else {}
-
-    trigger_raw = pipeline.get("trigger", {})
-    trigger_raw = trigger_raw if isinstance(trigger_raw, dict) else {}
-    trigger_mention = str(trigger_raw.get("mention", "@a2sdlc"))
-
-    gates_raw = pipeline.get("gates", {})
+    gates_raw = data.get("gates", {})
     gates_raw = gates_raw if isinstance(gates_raw, dict) else {}
-
     merge_mode = (
         GateMode(str(gates_raw["merge"])) if "merge" in gates_raw else GateMode.HUMAN
     )
@@ -99,17 +165,26 @@ def load_config_file(project_root: Path) -> ProjectConfig:
             if isinstance(stage_data, dict):
                 stage_overrides[str(stage_name)] = stage_data
 
-    spec_raw = pipeline.get("spec", {})
+    spec_raw = data.get("spec", {})
     spec_raw = spec_raw if isinstance(spec_raw, dict) else {}
-    self_answer = bool(spec_raw.get("self_answer", False))
+    # ``self_answer`` may be set either at the top level or inside ``spec:``.
+    self_answer = bool(spec_raw.get("self_answer", data.get("self_answer", False)))
+
+    adapters_raw = data.get("adapters", {})
+    adapters_raw = adapters_raw if isinstance(adapters_raw, dict) else {}
+    adapters = AdaptersConfig(**adapters_raw)
+
+    quality_raw = data.get("quality", {})
+    quality_raw = quality_raw if isinstance(quality_raw, dict) else {}
+    quality = QualityConfig(**quality_raw)
 
     config = ProjectConfig(
-        adapter=str(data.get("adapter", "github")),
         self_answer=self_answer,
-        default_base=str(pipeline.get("default_base", "main")),
-        test_command=str(data.get("test_command", "make test")),
-        trigger_mention=trigger_mention,
+        default_base=str(data.get("default_base", "main")),
+        model=str(data.get("model", "claude-sonnet-4-6")),
         stage_overrides=stage_overrides,
+        adapters=adapters,
+        quality=quality,
     )
     config._gates = gates  # noqa: SLF001
     return config

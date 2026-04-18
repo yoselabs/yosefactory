@@ -15,6 +15,15 @@ from a2sdlc.domain.models import GateMode
 from a2sdlc.stages import STAGES, get_stage
 
 
+def _write_config(tmp_path: Path, text: str) -> Path:
+    """Write ``text`` to ``tmp_path/.a2sdlc/config.yaml`` and return the path."""
+    a2sdlc_dir = tmp_path / ".a2sdlc"
+    a2sdlc_dir.mkdir(exist_ok=True)
+    config_path = a2sdlc_dir / "config.yaml"
+    config_path.write_text(text)
+    return config_path
+
+
 # ── Stage registry ───────────────────────────────────────────────────
 
 
@@ -56,52 +65,120 @@ class TestStageRegistry:
 
 @pytest.mark.unit
 class TestLoadConfigFile:
+    def test_load_config_reads_from_a2sdlc_subdir(self, tmp_path: Path) -> None:
+        """GIVEN a repo with .a2sdlc/config.yaml
+        WHEN load_config_file is called with the repo path
+        THEN the config is loaded from that file."""
+        _write_config(tmp_path, "model: claude-sonnet-4-6\n")
+        cfg = load_config_file(tmp_path)
+        assert cfg.model == "claude-sonnet-4-6"
+
     def test_load_minimal(self, tmp_path: Path) -> None:
-        config_file = tmp_path / "a2sdlc.yaml"
-        config_file.write_text("adapter: github\n")
+        _write_config(tmp_path, "default_base: main\n")
         config = load_config_file(tmp_path)
-        assert config.adapter == "github"
         assert config.default_base == "main"
 
     def test_load_full(self, tmp_path: Path) -> None:
-        config_file = tmp_path / "a2sdlc.yaml"
-        config_file.write_text(
-            "adapter: github\n"
-            "pipeline:\n"
-            "  default_base: develop\n"
+        _write_config(
+            tmp_path,
+            "default_base: develop\n"
             "stages:\n"
             "  implement:\n"
             "    code_reviews: 3\n"
-            "    max_turns: 200\n"
+            "    max_turns: 200\n",
         )
         config = load_config_file(tmp_path)
         assert config.default_base == "develop"
 
-    def test_missing_file_returns_defaults(self, tmp_path: Path) -> None:
-        config = load_config_file(tmp_path)
-        assert config.adapter == "github"
+    def test_missing_file_raises(self, tmp_path: Path) -> None:
+        """GIVEN a repo without .a2sdlc/config.yaml
+        WHEN load_config_file is called
+        THEN FileNotFoundError is raised with a clear message."""
+        with pytest.raises(FileNotFoundError, match=".a2sdlc/config.yaml"):
+            load_config_file(tmp_path)
 
     def test_self_answer_still_works(self, tmp_path: Path) -> None:
-        config_file = tmp_path / "a2sdlc.yaml"
-        config_file.write_text("pipeline:\n  spec:\n    self_answer: true\n")
+        _write_config(tmp_path, "spec:\n  self_answer: true\n")
         config = load_config_file(tmp_path)
         assert config.self_answer is True
 
-    def test_trigger_mention_default(self, tmp_path: Path) -> None:
-        config_file = tmp_path / "a2sdlc.yaml"
-        config_file.write_text("adapter: github\n")
-        config = load_config_file(tmp_path)
-        assert config.trigger_mention == "@a2sdlc"
 
-    def test_trigger_mention_from_yaml(self, tmp_path: Path) -> None:
-        config_file = tmp_path / "a2sdlc.yaml"
-        config_file.write_text("pipeline:\n  trigger:\n    mention: '@mybot'\n")
-        config = load_config_file(tmp_path)
-        assert config.trigger_mention == "@mybot"
+# ── ConfigError / strict validation ──────────────────────────────────
 
-    def test_trigger_mention_missing_file_defaults(self, tmp_path: Path) -> None:
+
+@pytest.mark.unit
+class TestStrictKeyValidation:
+    def test_load_config_rejects_unknown_top_level_keys(self, tmp_path: Path) -> None:
+        """GIVEN a config with a typo'd top-level key
+        WHEN loaded
+        THEN raises ConfigError listing the unknown key."""
+        _write_config(tmp_path, "modell: x\n")  # typo
+
+        from a2sdlc.config import ConfigError
+
+        with pytest.raises(ConfigError, match="modell"):
+            load_config_file(tmp_path)
+
+    def test_all_allowed_keys_accepted(self, tmp_path: Path) -> None:
+        """GIVEN a config containing every allowed top-level key
+        WHEN loaded
+        THEN no ConfigError is raised."""
+        _write_config(
+            tmp_path,
+            "adapters: {}\n"
+            "stages: {}\n"
+            "spec: {}\n"
+            "quality: {}\n"
+            "model: claude-sonnet-4-6\n"
+            "default_base: main\n"
+            "max_turns_per_stage: 50\n"
+            "gates: {}\n"
+            "self_answer: true\n"
+            "resume: false\n"
+            "timeouts: {}\n",
+        )
+        # Should not raise.
         config = load_config_file(tmp_path)
-        assert config.trigger_mention == "@a2sdlc"
+        assert config.model == "claude-sonnet-4-6"
+
+
+# ── AdaptersConfig / QualityConfig ───────────────────────────────────
+
+
+@pytest.mark.unit
+class TestAdaptersAndQualityBlocks:
+    def test_load_config_parses_adapters_block(self, tmp_path: Path) -> None:
+        """GIVEN a config with adapters: {work, review, git, progress}
+        WHEN loaded
+        THEN Config.adapters holds those four names."""
+        _write_config(
+            tmp_path,
+            "adapters:\n  work: local_file\n  review: local_noop\n"
+            "  git: local_branch\n  progress: console\n",
+        )
+        cfg = load_config_file(tmp_path)
+        assert cfg.adapters.work == "local_file"
+        assert cfg.adapters.review == "local_noop"
+        assert cfg.adapters.git == "local_branch"
+        assert cfg.adapters.progress == "console"
+
+    def test_adapters_defaults_when_missing(self, tmp_path: Path) -> None:
+        _write_config(tmp_path, "model: claude-sonnet-4-6\n")
+        cfg = load_config_file(tmp_path)
+        assert cfg.adapters.work == "jira"
+        assert cfg.adapters.review == "github"
+        assert cfg.adapters.git == "github"
+        assert cfg.adapters.progress == "gh_actions"
+
+    def test_quality_parses_check_command(self, tmp_path: Path) -> None:
+        _write_config(tmp_path, "quality:\n  check_command: make ci\n")
+        cfg = load_config_file(tmp_path)
+        assert cfg.quality.check_command == "make ci"
+
+    def test_quality_default(self, tmp_path: Path) -> None:
+        _write_config(tmp_path, "model: claude-sonnet-4-6\n")
+        cfg = load_config_file(tmp_path)
+        assert cfg.quality.check_command == "make check"
 
 
 # ── load_stage_config ─────────────────────────────────────────────────
@@ -194,51 +271,44 @@ class TestGateConfig:
         assert gates.spec == GateMode.AUTO
 
     def test_parse_merge_auto_from_yaml(self, tmp_path: Path) -> None:
-        config_file = tmp_path / "a2sdlc.yaml"
-        config_file.write_text("pipeline:\n  gates:\n    merge: auto\n")
+        _write_config(tmp_path, "gates:\n  merge: auto\n")
         config = load_config_file(tmp_path)
         gates = config.gate_config()
         assert gates.merge == GateMode.AUTO
         assert gates.spec == GateMode.AUTO  # default
 
     def test_parse_both_gates_from_yaml(self, tmp_path: Path) -> None:
-        config_file = tmp_path / "a2sdlc.yaml"
-        config_file.write_text(
-            "pipeline:\n  gates:\n    merge: auto\n    spec: human\n"
-        )
+        _write_config(tmp_path, "gates:\n  merge: auto\n  spec: human\n")
         config = load_config_file(tmp_path)
         gates = config.gate_config()
         assert gates.merge == GateMode.AUTO
         assert gates.spec == GateMode.HUMAN
 
-    def test_no_pipeline_gates_section_uses_defaults(self, tmp_path: Path) -> None:
-        config_file = tmp_path / "a2sdlc.yaml"
-        config_file.write_text("adapter: github\n")
+    def test_no_gates_section_uses_defaults(self, tmp_path: Path) -> None:
+        _write_config(tmp_path, "model: claude-sonnet-4-6\n")
         config = load_config_file(tmp_path)
         gates = config.gate_config()
         assert gates.merge == GateMode.HUMAN
         assert gates.spec == GateMode.AUTO
 
-    def test_pipeline_section_no_gates_key_uses_defaults(self, tmp_path: Path) -> None:
-        config_file = tmp_path / "a2sdlc.yaml"
-        config_file.write_text("pipeline:\n  default_base: develop\n")
+    def test_default_base_without_gates_uses_defaults(self, tmp_path: Path) -> None:
+        _write_config(tmp_path, "default_base: develop\n")
         config = load_config_file(tmp_path)
         gates = config.gate_config()
         assert gates.merge == GateMode.HUMAN
         assert gates.spec == GateMode.AUTO
 
-    def test_auto_spec_independent_of_gates(self, tmp_path: Path) -> None:
-        config_file = tmp_path / "a2sdlc.yaml"
-        config_file.write_text(
-            "pipeline:\n  spec:\n    self_answer: true\n  gates:\n    merge: auto\n"
+    def test_self_answer_independent_of_gates(self, tmp_path: Path) -> None:
+        _write_config(
+            tmp_path,
+            "spec:\n  self_answer: true\ngates:\n  merge: auto\n",
         )
         config = load_config_file(tmp_path)
         assert config.self_answer is True
         assert config.gate_config().merge == GateMode.AUTO
 
-    def test_self_answer_loaded_from_new_yaml_path(self, tmp_path: Path) -> None:
-        """New YAML path pipeline.spec.self_answer sets self_answer=True."""
-        config_file = tmp_path / "a2sdlc.yaml"
-        config_file.write_text("pipeline:\n  spec:\n    self_answer: true\n")
+    def test_self_answer_loaded_from_yaml(self, tmp_path: Path) -> None:
+        """YAML path spec.self_answer sets self_answer=True."""
+        _write_config(tmp_path, "spec:\n  self_answer: true\n")
         config = load_config_file(tmp_path)
         assert config.self_answer is True
