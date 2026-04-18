@@ -16,6 +16,38 @@ make check              # full quality gate: lint + arch + tests + coverage-diff
 
 See `Makefile` for the full command surface.
 
+## Local Runner
+
+Run the a2sdlc pipeline locally against any repo — no Jira, no GitHub CI.
+Each pipeline stage is a single CLI invocation. Every run logs metrics
+to MLflow automatically.
+
+```bash
+# Configure once, in the target repo.
+mkdir -p .a2sdlc
+cat > .a2sdlc/config.yaml <<'EOF'
+adapters:
+  work:     local_file
+  review:   local_noop
+  git:      local_branch
+  progress: console
+stages: [spec, implement, review, merge]
+spec:
+  mode: auto
+quality:
+  check_command: "make check"
+model: claude-sonnet-4-6
+EOF
+
+# Run a stage.
+a2sdlc run-stage spec      --ticket ticket.md --session my-exp /path/to/repo
+a2sdlc run-stage implement --session my-exp /path/to/repo
+```
+
+State lives on branch `a2sdlc/<session>`. Metrics stream to a local MLflow
+file store at `~/.a2sdlc/mlflow`. See
+[`docs/local-runner-usage.md`](docs/local-runner-usage.md) for full details.
+
 ## Docs
 
 | Doc | Purpose |
@@ -24,6 +56,7 @@ See `Makefile` for the full command surface.
 | [`docs/adr/`](docs/adr/) | Architecture Decision Records — *why* we chose the shape we did. |
 | [`docs/ai-sdlc-overview.pdf`](docs/ai-sdlc-overview.pdf) | Pipeline architecture for external audiences. |
 | [`docs/a2sdlc-positioning.pdf`](docs/a2sdlc-positioning.pdf) | Positioning vs BMAD / SpecKit / Superpowers. |
+| [`docs/local-runner-usage.md`](docs/local-runner-usage.md) | Local runner CLI reference, state layout, MLflow, troubleshooting. |
 | [`CLAUDE.md`](CLAUDE.md) | Project instructions for AI agents working on this codebase. |
 
 ## Layout at a glance
