@@ -197,6 +197,7 @@ def run_stage_entry(argv: list[str], runner_override: str | None = None) -> int:
     dirty = _is_dirty(project_root)
 
     result: DispatchResult | None = None
+    quality = None
     try:
         if sink is not None:
             with (
@@ -219,14 +220,55 @@ def run_stage_entry(argv: list[str], runner_override: str | None = None) -> int:
                         child.log_metric("turns", stats.num_turns)
                     if hasattr(stats, "duration_ms"):
                         child.log_metric("duration_ms", stats.duration_ms)
+                # Run quality gate inside the stage_run so metrics/artifacts
+                # attach to the active MLflow child run.
+                if (
+                    stage == StageName.IMPLEMENT
+                    and result is not None
+                    and not result.blocked
+                    and result.error is None
+                ):
+                    from a2sdlc.evaluation.quality_gate import (  # noqa: PLC0415
+                        run_quality_gate,
+                    )
+
+                    quality = run_quality_gate(
+                        project_root=project_root,
+                        command=cfg.quality.check_command,
+                    )
+                    child.log_metric("quality_passed", 1 if quality.passed else 0)
+                    import mlflow as _mlflow  # noqa: PLC0415
+
+                    artifact_path = project_root / ".a2sdlc" / "quality.log"
+                    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+                    artifact_path.write_text(quality.output)
+                    _mlflow.log_artifact(str(artifact_path))
         else:
             result = asyncio.run(dispatch(ctx))
+            if (
+                stage == StageName.IMPLEMENT
+                and result is not None
+                and not result.blocked
+                and result.error is None
+            ):
+                from a2sdlc.evaluation.quality_gate import (  # noqa: PLC0415
+                    run_quality_gate,
+                )
+
+                quality = run_quality_gate(
+                    project_root=project_root,
+                    command=cfg.quality.check_command,
+                )
     finally:
         ok = result is not None and not result.blocked and result.error is None
         progress.on_stage_end(stage, ok)
 
     if ok and isinstance(review, LocalNoopReviewAdapter):
         review.mark_feedback_consumed()
+
+    # Quality-gate failure doesn't block REVIEW, but it does affect CLI exit code.
+    if ok and quality is not None and not quality.passed:
+        ok = False
 
     _print_post_run(stage, session_id, project_root, result)
     return 0 if ok else 1

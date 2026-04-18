@@ -128,6 +128,109 @@ def test_run_stage_implement_infers_session_from_branch(tmp_path: Path) -> None:
     assert branches.count("a2sdlc/") == 1
 
 
+def test_run_stage_implement_with_tracking_logs_quality_gate(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """GIVEN tracking is enabled against a local MLflow file store
+    WHEN run-stage implement completes
+    THEN the quality gate runs inside the stage_run, the metric
+         quality_passed=1 is logged, and exit code is 0.
+    """
+    from a2sdlc.cli_local import run_stage_entry
+
+    _init_minimal_repo(tmp_path)
+    ticket = tmp_path / "ticket.md"
+
+    # Redirect MLflow home to tmp_path so the file store is isolated.
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    run_stage_entry(
+        argv=[
+            "spec",
+            "--session",
+            "trk",
+            "--ticket",
+            str(ticket),
+            str(tmp_path),
+        ],
+        runner_override="fake",
+    )
+    rc = run_stage_entry(
+        argv=["implement", "--session", "trk", str(tmp_path)],
+        runner_override="fake",
+    )
+    assert rc == 0
+
+    import mlflow
+
+    mlflow.set_tracking_uri(f"file://{tmp_path / '.a2sdlc' / 'mlflow'}")
+    exp = mlflow.get_experiment_by_name(tmp_path.name)
+    assert exp is not None
+    runs = mlflow.search_runs(experiment_ids=[exp.experiment_id], output_format="list")
+    # Look for a child run that logged quality_passed=1.
+    assert any(r.data.metrics.get("quality_passed") == 1.0 for r in runs)
+
+
+def test_run_stage_implement_quality_gate_pass_exits_zero(tmp_path: Path) -> None:
+    """GIVEN config.quality.check_command='true' (always passes)
+    WHEN run-stage implement runs successfully
+    THEN exit code is 0.
+    """
+    from a2sdlc.cli_local import run_stage_entry
+
+    _init_minimal_repo(tmp_path)
+    ticket = tmp_path / "ticket.md"
+
+    run_stage_entry(
+        argv=[
+            "spec",
+            "--session",
+            "q",
+            "--ticket",
+            str(ticket),
+            "--no-track",
+            str(tmp_path),
+        ],
+        runner_override="fake",
+    )
+    rc = run_stage_entry(
+        argv=["implement", "--session", "q", "--no-track", str(tmp_path)],
+        runner_override="fake",
+    )
+    assert rc == 0
+
+
+def test_run_stage_implement_quality_gate_fail_exits_nonzero(tmp_path: Path) -> None:
+    """GIVEN config.quality.check_command='false' (always fails)
+    WHEN run-stage implement completes
+    THEN exit code is non-zero.
+    """
+    from a2sdlc.cli_local import run_stage_entry
+
+    _init_minimal_repo(tmp_path)
+    cfg = tmp_path / ".a2sdlc" / "config.yaml"
+    cfg.write_text(cfg.read_text().replace("'true'", "'false'"))
+    ticket = tmp_path / "ticket.md"
+
+    run_stage_entry(
+        argv=[
+            "spec",
+            "--session",
+            "f",
+            "--ticket",
+            str(ticket),
+            "--no-track",
+            str(tmp_path),
+        ],
+        runner_override="fake",
+    )
+    rc = run_stage_entry(
+        argv=["implement", "--session", "f", "--no-track", str(tmp_path)],
+        runner_override="fake",
+    )
+    assert rc != 0
+
+
 def test_run_stage_spec_requires_ticket_on_first_invocation(
     tmp_path: Path, capsys
 ) -> None:
