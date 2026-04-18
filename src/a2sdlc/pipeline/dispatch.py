@@ -26,6 +26,7 @@ from a2sdlc.domain.models import (
 )
 from a2sdlc.lifecycle.pr import PRLifecycle
 from a2sdlc.evaluation.progress import format_error, format_final
+from a2sdlc.evaluation.stats import StageRunStats
 from a2sdlc.assembly.prompt import assemble_system_prompt
 from a2sdlc.pipeline.stage_executor import StageExecutor
 from a2sdlc.stages import next_stage
@@ -56,6 +57,8 @@ class DispatchResult:
     next_stage: StageName | None = None
     blocked: bool = False
     error: str | None = None
+    # Cost/token telemetry from the stage run (only populated on success path).
+    stats: StageRunStats | None = None
 
 
 async def dispatch(ctx: DispatchContext) -> DispatchResult:
@@ -378,4 +381,5 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
         status=stage_result.status,
         next_stage=next_st,
         blocked=False,
+        stats=exec_result.stats,
     )

@@ -42,6 +42,28 @@ logger = logging.getLogger("a2sdlc.cli_local")
 # ── Helpers ───────────────────────────────────────────────────────────
 
 
+def _git_head_sha(root: Path) -> str:
+    """Return the short commit SHA at HEAD, or ``"unknown"`` if git fails."""
+    r = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    return r.stdout.strip() if r.returncode == 0 else "unknown"
+
+
+def _is_dirty(root: Path) -> bool:
+    """Return True if the working tree has uncommitted changes."""
+    r = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    return bool(r.stdout.strip())
+
+
 def _infer_session_id(project_root: Path) -> str | None:
     """Return the session id implied by the current branch, or None.
 
@@ -116,6 +138,16 @@ def run_stage_entry(argv: list[str], runner_override: str | None = None) -> int:
 
     cfg = load_config_file(project_root)
 
+    # Telemetry sink — created up front so we fail fast if MLflow is unreachable.
+    sink = None
+    if not args.no_track:
+        # Lazy import so --no-track paths never pay the mlflow import cost.
+        from a2sdlc.evaluation.mlflow_sink import MlflowSink  # noqa: PLC0415
+
+        mlflow_uri = f"file://{Path.home() / '.a2sdlc' / 'mlflow'}"
+        sink = MlflowSink(tracking_uri=mlflow_uri, experiment_name=project_root.name)
+        sink.verify_reachable()
+
     if stage == StageName.SPEC and args.ticket is None:
         existing_ticket = project_root / ".a2sdlc" / "ticket.md"
         if not existing_ticket.exists():
@@ -161,9 +193,34 @@ def run_stage_entry(argv: list[str], runner_override: str | None = None) -> int:
 
     progress.on_stage_start(stage, session_id)
 
+    sha_before = _git_head_sha(project_root)
+    dirty = _is_dirty(project_root)
+
     result: DispatchResult | None = None
     try:
-        result = asyncio.run(dispatch(ctx))
+        if sink is not None:
+            with (
+                sink.session(session_id) as sess,
+                sess.stage_run(stage=stage.value) as child,
+            ):
+                child.log_tag("git_sha_before", sha_before)
+                child.log_tag("dirty_tree_before", "true" if dirty else "false")
+                child.log_tag("session_id", session_id)
+                result = asyncio.run(dispatch(ctx))
+                stats = getattr(result, "stats", None)
+                if stats is not None:
+                    if hasattr(stats, "tokens_in"):
+                        child.log_metric("tokens_in", stats.tokens_in)
+                    if hasattr(stats, "tokens_out"):
+                        child.log_metric("tokens_out", stats.tokens_out)
+                    if hasattr(stats, "cost_usd"):
+                        child.log_metric("cost_usd", stats.cost_usd)
+                    if hasattr(stats, "num_turns"):
+                        child.log_metric("turns", stats.num_turns)
+                    if hasattr(stats, "duration_ms"):
+                        child.log_metric("duration_ms", stats.duration_ms)
+        else:
+            result = asyncio.run(dispatch(ctx))
     finally:
         ok = result is not None and not result.blocked and result.error is None
         progress.on_stage_end(stage, ok)
