@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-18
 **Branch:** `feat/local-runner`
-**Status:** Revised after code review (round 1)
+**Status:** Revised after code review (round 2)
 
 ---
 
@@ -40,32 +40,30 @@ Non-goals:
 
 ### 3.1 Event taxonomy
 
-Frozen dataclasses, one per concrete event type, all members of a `ProgressEvent` union:
+Dataclasses in `evaluation/progress.py`. **Existing `ToolEntry` (line 12) and `Milestone` (line 21) classes are reused as event types** — they already carry `(timestamp, name, target)` and `(timestamp, label)` respectively, are appended to `ProgressState.tool_log` / `ProgressState.milestones` today, and naturally double as the events emitted at append-time. New event classes are added alongside:
 
 ```python
 # evaluation/progress.py
 
-@dataclass(frozen=True)
+# Reused as-is (already defined):
+#   class ToolEntry: timestamp: float; name: str; target: str
+#   class Milestone: timestamp: float; label: str
+
+@dataclass
 class StageStart:
     stage: StageName
     session_id: str
     started_at: float          # time.monotonic()
 
-@dataclass(frozen=True)
-class ToolCall:
-    name: str                  # "Read", "Bash", "Skill", ...
-    target: str                # extract_target(...) result
-    timestamp: float           # elapsed seconds since stage start
-
-@dataclass(frozen=True)
+@dataclass
 class GroupOpen:
     title: str
 
-@dataclass(frozen=True)
+@dataclass
 class GroupClose:
     pass
 
-@dataclass(frozen=True)
+@dataclass
 class Metrics:
     input_tokens: int
     output_tokens: int
@@ -73,20 +71,17 @@ class Metrics:
     num_turns: int
     elapsed: float             # seconds since stage_start, monotonic clock
 
-@dataclass(frozen=True)
-class Milestone:
-    label: str                 # "brainstorming invoked", "spec approved"
-    timestamp: float
-
-@dataclass(frozen=True)
+@dataclass
 class StageEnd:
     stage: StageName
     success: bool
     error: str | None
     final_metrics: Metrics
 
-ProgressEvent = StageStart | ToolCall | GroupOpen | GroupClose | Metrics | Milestone | StageEnd
+ProgressEvent = StageStart | ToolEntry | GroupOpen | GroupClose | Metrics | Milestone | StageEnd
 ```
+
+(Events are not declared `frozen=True` — matching the existing `ToolEntry`/`Milestone` style. Subscribers should treat events as immutable by convention; no runtime guard.)
 
 **No `StatusText` event.** Subscribers that want a rendered one-liner (the GH-comment use case) import `format_progress(stage, ProgressState)` and render it themselves on `Metrics`. Reasons: emitting a pre-rendered string would (a) force every subscriber to pay the format cost on every metrics tick even if no one wants the text, (b) lock the rendering cadence to `Metrics`, removing the throttle freedom this refactor sells, and (c) mean two events for one logical change. Each subscriber decides whether to render and at what cadence.
 
@@ -107,7 +102,11 @@ class Subscriber(Protocol):
 
 ### 3.3 ProgressState becomes the bus
 
-`ProgressState` keeps its existing fields (tokens, cost, tool_log, milestones, etc.) and gains a subscriber registry plus mutation methods that emit events:
+**Lifecycle change:** today `ProgressState` is constructed inside `runner.run_stage` (per stage). After this refactor it is **constructed once per dispatch lifetime in the composition root** (`cli_local.py` for local runs, `cli.py`/`pipeline/dispatch.py` for GH dispatch) and reused across stages — so subscribers register on it before any stage starts. `stage_start()` clears the per-stage mutable state (resets `tool_log`, `milestones`, `_failed`, `start_time`, counters); the subscriber list survives.
+
+`DispatchContext.progress` (today: `ProgressAdapter`) is renamed to `DispatchContext.progress_state: ProgressState`. The `RunResult.progress` field still returns the same live `ProgressState` reference — its fields (`tool_log`, `milestones`, `tasks`, `context_window`, `model`, `branch`, `max_turns`, `num_turns`, `input_tokens`, `output_tokens`, `total_cost_usd`) all survive intact; only the lifecycle changes from per-stage to per-dispatch.
+
+`ProgressState` gains a subscriber registry plus mutation methods that emit events:
 
 ```python
 class ProgressState:
@@ -134,14 +133,21 @@ class ProgressState:
                 self._failed.add(id(sub))
 
     async def stage_start(self, stage: StageName, session_id: str) -> None:
-        self._failed.clear()  # fresh per-stage
+        # Reset per-stage mutable state; subscribers persist.
+        self._failed.clear()
+        self.tool_log.clear()
+        self.milestones.clear()
+        self.tasks.clear()
+        self.input_tokens = self.output_tokens = self.num_turns = 0
+        self.total_cost_usd = 0.0
         self.start_time = time.monotonic()
         await self._emit(StageStart(stage, session_id, self.start_time))
 
     async def add_tool_call(self, name: str, target: str) -> None:
         elapsed = time.monotonic() - self.start_time
-        self.tool_log.append(ToolEntry(timestamp=elapsed, name=name, target=target))
-        await self._emit(ToolCall(name=name, target=target, timestamp=elapsed))
+        entry = ToolEntry(timestamp=elapsed, name=name, target=target)
+        self.tool_log.append(entry)
+        await self._emit(entry)
 
     async def update_metrics(self, tin: int, tout: int, cost: float, turns: int) -> None:
         self.input_tokens, self.output_tokens = tin, tout
@@ -158,7 +164,26 @@ class ProgressState:
 
 **Clock discipline.** `ProgressState.start_time` switches from `time.time()` (wall clock, today) to `time.monotonic()`. All `elapsed` values and the `Throttle` utility use `time.monotonic()` consistently. Wall-clock timestamps are only meaningful for log records emitted by Python's `logging` module, which already handles them.
 
-The runner stops calling `progress_adapter.on_*` and stops accepting `on_progress`. It only `await`s these mutation methods. `cli_local.py:196`'s direct call to `progress.on_stage_start(stage, session_id)` on the adapter is removed; the runner now invokes `progress_state.stage_start(...)` itself at the top of `run_stage`.
+The runner stops calling `progress_adapter.on_*` and stops accepting `on_progress`. It only `await`s `progress_state.add_tool_call(...)`, `update_metrics(...)`, `add_milestone(...)`, `open_group(...)`, `close_group(...)`. It does **not** emit `StageStart`/`StageEnd` itself.
+
+**`StageStart`/`StageEnd` are emitted by `pipeline/dispatch.py`**, not by the runner — wrapping every stage including ones that bypass `runner.run_stage` (notably MERGE, which today returns from `dispatch()` without invoking the runner). Concretely, `dispatch.py`'s per-stage block becomes:
+
+```python
+await ctx.progress_state.stage_start(stage, session_id)
+try:
+    if stage == StageName.MERGE:
+        # ... existing merge logic, no runner call ...
+        success, error = await _run_merge(ctx)
+    else:
+        exec_result = await stage_executor.run(...)  # this calls runner; runner emits in-between events
+        success, error = exec_result.success, exec_result.error
+    await ctx.progress_state.stage_end(success, error, _final_metrics(ctx.progress_state))
+except Exception as e:
+    await ctx.progress_state.stage_end(False, str(e), _final_metrics(ctx.progress_state))
+    raise
+```
+
+Consequence: every stage produces at least `StageStart` + `StageEnd`. SDK-driven stages (SPEC, IMPLEMENT, REVIEW) additionally produce `ToolEntry`, `Metrics`, `Milestone`, `GroupOpen`, `GroupClose` events from inside the runner. MERGE produces only the bracket pair, which is correct: there is no agent activity to report.
 
 ### 3.4 Subscribers (replacing today's adapters)
 
@@ -173,17 +198,22 @@ Each subscriber filters the events it cares about and drops the rest:
 
 ```python
 class GhCommentSubscriber:
-    def __init__(self, comment_handle, throttle_seconds: float = 5.0):
+    def __init__(
+        self,
+        comment_handle,
+        progress_state: ProgressState,
+        throttle_seconds: float = 5.0,
+    ):
         self._comment = comment_handle
+        self._state = progress_state
         self._throttle = Throttle(min_interval=throttle_seconds)
         self._stage: StageName | None = None
-        self._state_ref: ProgressState | None = None  # cached on StageStart
 
     async def handle(self, event):
         if isinstance(event, StageStart):
             self._stage = event.stage
         elif isinstance(event, Metrics) and self._throttle.ready():
-            text = format_progress(self._stage, self._state_ref)
+            text = format_progress(self._stage, self._state)
             await self._comment.update(text)
         elif isinstance(event, Milestone):
             await self._comment.append(f"✨ {event.label}")    # immediate, rare
@@ -196,7 +226,7 @@ class GhCommentSubscriber:
             )
 ```
 
-(The `state_ref` caching shows one approach; a cleaner alternative is to pass the state into the constructor at composition time. Plan-time decision.)
+`progress_state` is constructor-injected at composition time — see §3.5. The subscriber doesn't need to cache it from `StageStart`; `_stage` is the only piece of per-stage context it tracks (and only because `format_progress` takes stage as a separate argument from state).
 
 `Throttle` is a 10-line utility in **`evaluation/throttle.py`** (its own file — it has no progress semantics):
 
@@ -214,17 +244,41 @@ class Throttle:
 
 ### 3.5 Composition (where subscribers get registered)
 
-Dispatch composition root:
+The composition root constructs `ProgressState` once and passes it into `DispatchContext`, then registers subscribers on it before invoking `dispatch()`.
+
+GH dispatch composition root (`cli.py`):
 
 ```python
-# pipeline/dispatch.py
-ctx.progress_state.subscribe(GhActionsLogSubscriber())
-ctx.progress_state.subscribe(GhCommentSubscriber(comment, ctx.progress_state))
+progress_state = ProgressState(model=config.model, branch=branch, ...)
+progress_state.subscribe(GhActionsLogSubscriber())
+progress_state.subscribe(GhCommentSubscriber(comment, progress_state))
+
+ctx = DispatchContext(
+    work=work_adapter,
+    git=git,
+    review=review_adapter,
+    runner=SdkStageRunner(effort=config.effort),
+    progress_state=progress_state,            # was: progress=progress_adapter
+    config=config,
+    project_root=project_root,
+    logger=...,
+)
 ```
 
+Local runner (`cli_local.py`):
+
 ```python
-# cli_local.py
-ctx.progress_state.subscribe(ConsoleSubscriber(ctx.progress_state))
+progress_state = ProgressState(model=cfg.model, branch=branch_name, ...)
+progress_state.subscribe(ConsoleSubscriber(progress_state))
+
+ctx = DispatchContext(
+    work=work, git=git, review=review,
+    runner=runner,
+    progress_state=progress_state,
+    config=cfg,
+    project_root=project_root,
+    logger=...,
+)
 ```
 
 Tests:
@@ -232,9 +286,10 @@ Tests:
 ```python
 recorder = RecordingSubscriber()
 ctx.progress_state.subscribe(recorder)
-# ... run stage ...
+# ... run dispatch / run_stage ...
 assert isinstance(recorder.events[0], StageStart)
-assert any(isinstance(e, ToolCall) and e.name == "Skill" for e in recorder.events)
+assert any(isinstance(e, ToolEntry) and e.name == "Skill" for e in recorder.events)
+assert isinstance(recorder.events[-1], StageEnd)
 ```
 
 ### 3.6 Terminal-state guarantee
@@ -286,17 +341,19 @@ Rationale: there is one in-tree consumer of this code (the engine itself), the c
 
 Order:
 
-1. Add `ProgressEvent` taxonomy + mutation methods to `evaluation/progress.py`.
+1. Add `ProgressEvent` taxonomy + lifecycle/mutation methods to `evaluation/progress.py` (`subscribe`, `_emit`, `stage_start`, `stage_end`, `add_tool_call`, `update_metrics`, `add_milestone`, `open_group`, `close_group`). Switch `start_time` to `time.monotonic()`.
 2. Add `Throttle` to `evaluation/throttle.py`.
-3. Add `Subscriber` Protocol to `adapters/protocols.py`.
+3. Add `Subscriber` Protocol to `adapters/protocols.py` (alongside the existing ports).
 4. Add `RecordingSubscriber` in `tests/fakes.py`.
 5. Rewrite `ConsoleProgressAdapter` → `ConsoleSubscriber`. Rename file. Same surface (rich.Live), now driven by events.
-6. Rewrite `GhActionsProgressAdapter` → `GhActionsLogSubscriber`. Rename file. Same `::group::` markers.
-7. Add `GhCommentSubscriber` (new file). Move the lambda logic from `dispatch.py:252` into it.
-8. Update `pipeline/runner.py`: drop `on_progress` kwarg, drop direct `progress_adapter.on_*` calls, `await` `ProgressState` mutation methods instead.
-9. Delete `ProgressAdapter` Protocol from `adapters/protocols.py`.
-10. Update `dispatch.py` and `cli_local.py` to register subscribers instead of constructing a single adapter.
-11. Rewrite tests that mocked `ProgressAdapter` — switch to `RecordingSubscriber`.
+6. Rewrite `GhActionsProgressAdapter` → `GhActionsLogSubscriber`. Rename file. Same `::group::` markers; this subscriber owns the `::group::Tool: <name>` output today emitted via `print(...)` in `runner.py:261-272` — the inline `print` fallback in `_handle_assistant_message` is removed and the subscriber reproduces it from `ToolEntry` events.
+7. Add `GhCommentSubscriber` (new file). Move the lambda logic from `dispatch.py:252` into it. Constructor takes `(comment_handle, progress_state, throttle_seconds=5.0)`.
+8. Update `pipeline/runner.py`: drop `on_progress` kwarg, drop direct `progress_adapter.on_*` calls, drop the inline `print("::group::...")` and `print("::endgroup::")` fallback in `_handle_assistant_message`. `await` `ProgressState` mutation methods instead. Runner does **not** emit `StageStart`/`StageEnd`.
+9. **Rename `DispatchContext.progress: ProgressAdapter` → `DispatchContext.progress_state: ProgressState`.** Update 5 production call sites (`pipeline/dispatch.py:44`, `pipeline/dispatch.py:259-261`, `cli.py:141`, `cli_local.py:185`) and test fixtures in `tests/pipeline/test_dispatch.py`, `test_dispatch_e2e.py`, `test_dispatch_progress.py`.
+10. Update `pipeline/dispatch.py` to wrap every per-stage block with `await ctx.progress_state.stage_start(...)` / `stage_end(...)` (including MERGE, which today bypasses the runner). See §3.3.
+11. Delete `ProgressAdapter` Protocol from `adapters/protocols.py`. Delete `SdkStageRunner.__init__`'s `progress: ProgressAdapter | None` parameter (`runner.py:287`); the runner reads progress state from the per-call argument carried through `StageRunner.run`.
+12. Update `cli.py` and `cli_local.py` to construct `ProgressState` once, register subscribers, and pass via `DispatchContext`.
+13. Rewrite tests that mocked `ProgressAdapter` — switch to `RecordingSubscriber`.
 
 ---
 
@@ -304,7 +361,7 @@ Order:
 
 - **Unit (`evaluation/`):** `ProgressState` emits the right events at the right time. Order across `subscribe()` calls. Subscriber-raises-exception is contained, the failing subscriber is added to `_failed`, subsequent emits skip it, and `stage_start()` clears the set. `Throttle` admits the first call and rejects within-window subsequent calls.
 - **Per subscriber:** `RecordingSubscriber` captures everything; concrete subscribers (`ConsoleSubscriber`, `GhActionsLogSubscriber`, `GhCommentSubscriber`) tested in isolation against synthetic event sequences with a fake comment handle.
-- **Integration:** existing fake-runner SPEC→IMPLEMENT test gains a `RecordingSubscriber` to assert the event sequence (`StageStart → ToolCall* → Metrics* → StageEnd`), and to assert that `StageEnd` arrives after the final `Metrics` event — locking the terminal-state guarantee from §3.6.
+- **Integration:** existing fake-runner SPEC→IMPLEMENT test gains a `RecordingSubscriber` to assert the event sequence (`StageStart → ToolEntry* → Metrics* → StageEnd`), and to assert that `StageEnd` arrives after the final `Metrics` event — locking the terminal-state guarantee from §3.6.
 - **Smoke:** the existing `a2sdlc-smoke` workspace re-runs SPEC + IMPLEMENT; status bar must show real numbers; GitHub-flow path is **not** smoke-tested locally (no GH token in smoke), but `GhCommentSubscriber` gets a unit test using a fake comment handle.
 
 ---
@@ -316,7 +373,8 @@ Order:
 | ProgressState gains behavior (stops being a pure dataclass) | Keep behavior narrow: only `subscribe`, mutation methods, `_emit`. No business logic. |
 | Subscriber list mutated mid-stage | List is snapshotted on each `_emit` (§3.7). Late `subscribe()` calls take effect on the next event. No raise, no surprise. |
 | Event taxonomy churn (adding/renaming events later) | Tagged union with explicit names; subscribers ignore unknown types via `isinstance` filter — additive changes are safe. |
-| Async `handle` adds latency for sync subscribers | Defining `async def handle` with no `await` body is zero-overhead in CPython's asyncio (the coroutine resolves on first `await`-by-caller). The latency cost is real only for genuinely-async subscribers, which is exactly when you want it. |
+| Async `handle` adds latency for sync subscribers | Per-emit overhead is microseconds (coroutine + frame allocation), negligible at the ≤ ~100 events/stage volume this bus carries. Cost is dominated by event construction itself. |
+| Blocking I/O accidentally invoked from `async def handle` | Stalls the runner just as effectively as a slow async subscriber. Subscribers documented to use `httpx.AsyncClient`/`asyncio.to_thread` for any I/O. No runtime guard — caught in code review. |
 | One slow async subscriber stalls the runner | Subscribers are awaited sequentially in registration order. A genuinely slow subscriber (e.g., Slack webhook) must own its own throttling and/or fire-and-forget pattern via `asyncio.create_task` inside its `handle`. Spec'd as the subscriber's responsibility, not the bus's. |
 | Refactor scope larger than the symptom (status bar bug) | Acknowledged. Justified by the smell already producing two real defects, plus the imminent third-subscriber needs from `eval-system` and `agentic-web-stack`. |
 
@@ -340,6 +398,7 @@ Order:
 - Local smoke run shows non-zero tokens / cost / turns updating live in the console status bar.
 - `git grep "ProgressAdapter" src/` returns no matches.
 - `git grep "on_progress" src/` returns no matches.
-- `git grep -E "time\\.(monotonic|time)\\(\\).*throttle|throttle.*time\\." src/a2sdlc/pipeline/` returns no matches — no time-based throttle exists in the runner or dispatch packages. The only `Throttle` instantiations live in `src/a2sdlc/adapters/`.
+- `git grep -nE "Throttle\\s*\\(" src/a2sdlc/pipeline/` returns no matches — no `Throttle` instances are constructed in `pipeline/`. All `Throttle()` instantiations live in `src/a2sdlc/adapters/`.
+- `git grep -nE "time\\.(monotonic|time)\\(\\)" src/a2sdlc/pipeline/runner.py | grep -v start_time` returns no matches — no time-based pacing logic remains in the runner; only `start_time` capture in `ProgressState` interactions.
 - `RecordingSubscriber`-based integration test asserts `StageEnd` appears after the final `Metrics` for a representative SPEC stage run.
 - All migration steps (§5) land in a single PR; no intermediate commit is expected to pass `make check`. The PR description states this explicitly.
