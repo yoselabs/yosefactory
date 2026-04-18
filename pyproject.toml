@@ -88,6 +88,13 @@ ignore_imports = [
     # protocols.py defines Subscriber Protocol for ProgressEvent; TYPE_CHECKING
     # import breaks circular dep with evaluation/progress.py (Task 4).
     "a2sdlc.adapters.protocols -> a2sdlc.evaluation.progress",
+    # Subscriber implementations (console, gh_actions, gh_comment) import ProgressEvent
+    # and related types to implement the Subscriber protocol. These are adapters
+    # that consume evaluation events (direction adapters ← evaluation). Legitimate.
+    "a2sdlc.adapters.console_subscriber -> a2sdlc.evaluation.progress",
+    "a2sdlc.adapters.gh_actions_subscriber -> a2sdlc.evaluation.progress",
+    "a2sdlc.adapters.gh_comment_subscriber -> a2sdlc.evaluation.progress",
+    "a2sdlc.adapters.gh_comment_subscriber -> a2sdlc.evaluation.throttle",
 ]
 
 [[tool.importlinter.contracts]]

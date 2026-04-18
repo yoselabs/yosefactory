@@ -1,0 +1,57 @@
+"""GhCommentSubscriber — throttled status edits + final summary on issue/PR comment."""
+
+from __future__ import annotations
+
+from a2sdlc.domain.models import StageName
+from a2sdlc.evaluation.progress import (
+    Metrics,
+    Milestone,
+    ProgressEvent,
+    ProgressState,
+    StageEnd,
+    StageStart,
+    format_progress,
+)
+from a2sdlc.evaluation.throttle import Throttle
+
+
+class GhCommentSubscriber:
+    """Edits the GitHub issue/PR comment with progress updates.
+
+    - ``StageStart``: caches the stage so ``format_progress`` can render it.
+    - ``Metrics``: throttled to ``throttle_seconds`` (default 5s) — protects
+      against GitHub API rate limits.
+    - ``Milestone``: appended immediately (rare events worth posting).
+    - ``StageEnd``: never throttled; calls ``comment.finalize`` with a
+      definitive summary including cost and turn count.
+    """
+
+    def __init__(
+        self,
+        comment_handle,  # CommentManager-like (has update/append/finalize)
+        progress_state: ProgressState,
+        throttle_seconds: float = 5.0,
+    ) -> None:
+        self._comment = comment_handle
+        self._state = progress_state
+        self._throttle = Throttle(min_interval=throttle_seconds)
+        self._stage: StageName | None = None
+
+    async def handle(self, event: ProgressEvent) -> None:
+        if isinstance(event, StageStart):
+            self._stage = event.stage
+        elif isinstance(event, Metrics):
+            if self._throttle.ready():
+                text = format_progress(
+                    self._stage.value if self._stage else "?", self._state
+                )
+                self._comment.update(text)
+        elif isinstance(event, Milestone):
+            self._comment.append(f"\u2728 {event.label}")
+        elif isinstance(event, StageEnd):
+            icon = "\u2705" if event.success else "\u274c"
+            self._comment.finalize(
+                f"{icon} {event.stage.value} done — "
+                f"${event.final_metrics.total_cost_usd:.2f}, "
+                f"{event.final_metrics.num_turns} turns"
+            )
