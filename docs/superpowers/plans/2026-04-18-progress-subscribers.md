@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-04-18-progress-subscribers-design.md` (commit `3ecd40c` or later).
 
-**Migration mode:** Single PR, no compat shim. Tasks 1-8 are additive (everything stays green). Tasks 9-15 do the cutover (`make check` will fail mid-task-list and recover at task 15). Task 16+ verifies and cleans up.
+**Migration mode:** Single PR, no compat shim. Tasks 1-8 are additive (everything stays green). Tasks 9-13 do the cutover (`make check` will fail mid-task-list). Task 14 restores green via fixture rewrites. Task 15 is smoke validation + the spec's acceptance greps.
 
 ---
 
@@ -361,13 +361,16 @@ class Subscriber(Protocol):
     async def handle(self, event: "ProgressEvent") -> None: ...
 ```
 
-Add the import at the top of the file:
+Add the import at the top of the file using a `TYPE_CHECKING` guard to avoid the circular import (`progress.py` will need to forward-reference `Subscriber` in Task 4):
 
 ```python
-from a2sdlc.evaluation.progress import ProgressEvent  # noqa: TCH001 (Protocol forward ref)
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from a2sdlc.evaluation.progress import ProgressEvent
 ```
 
-(Use `from __future__ import annotations` at the top if not already there to keep the forward reference lazy.)
+(Make sure `from __future__ import annotations` is at the top of the file so the forward reference resolves lazily.)
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -719,9 +722,32 @@ class ProgressState:
         )
 ```
 
-Add `import logging` at the top of the file. Move the `from a2sdlc.domain.models import StageName` import to the top alongside other imports.
+Add `import logging` at the top of the file. Move the `from a2sdlc.domain.models import StageName` import to the top alongside other imports. Add a `TYPE_CHECKING` block to break the cycle with `protocols.py`:
 
-**Note:** The forward reference to `Subscriber` works because `from __future__ import annotations` is already at the top.
+```python
+from __future__ import annotations
+
+import logging
+import time
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+from a2sdlc.domain.models import StageName
+
+if TYPE_CHECKING:
+    from a2sdlc.adapters.protocols import Subscriber
+```
+
+**Clock note:** keep `self.start_time = time.monotonic()` here — but **also** patch `runner.py:213-214` (the existing `_handle_assistant_message`) to read `time.monotonic()` instead of `time.time()` in this same task to avoid a wall-clock-vs-monotonic mismatch in the (~5-task) window before Task 9 lands. One line edit:
+
+```python
+# In src/a2sdlc/pipeline/runner.py near line 213, replace:
+#    now = current_time if current_time is not None else time.time()
+# with:
+now = current_time if current_time is not None else time.monotonic()
+```
+
+This keeps elapsed values sensible during Tasks 5-8 even though the runner has not yet been fully refactored.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -855,7 +881,7 @@ from a2sdlc.evaluation.progress import (
 async def test_metrics_event_updates_status_bar_counters() -> None:
     state = ProgressState(project_root="/tmp")
     sub = ConsoleSubscriber(state)
-    await state.subscribe(sub)  # type: ignore[func-returns-value]
+    state.subscribe(sub)  # subscribe is sync; returns None.
     # Bypass actual rich.Live by accessing the rendered string directly.
     await sub.handle(StageStart(stage=StageName.SPEC, session_id="sid",
                                 started_at=0.0))
@@ -1453,9 +1479,11 @@ async def run_stage(
     try:
         async def _stream() -> None:
             nonlocal result_msg
+            num_turns = 0
             async for msg in query(prompt=user_prompt, options=options):
                 if isinstance(msg, AssistantMessage):
-                    await _handle_assistant_message(msg, progress_state)
+                    num_turns += 1
+                    await _handle_assistant_message(msg, progress_state, num_turns)
                 elif isinstance(msg, ResultMessage):
                     result_msg = msg
 
@@ -1516,14 +1544,20 @@ async def run_stage(
     return run_result
 ```
 
-Rewrite `_handle_assistant_message` to be async and mutate state:
+Rewrite `_handle_assistant_message` to be async and mutate state. **The block below replaces the entire current function body (lines 205-276) — including the `console.log(...)` calls, the inline `print("::group::...")` / `print("::endgroup::")` fallbacks, and the `TextBlock` preview branch. None of those survive.**
 
 ```python
 async def _handle_assistant_message(
     msg: object,
     progress_state: ProgressState,
+    num_turns: int,
 ) -> None:
-    """Extract tool calls, usage, and milestones from an AssistantMessage."""
+    """Extract tool calls, usage, and milestones from an AssistantMessage.
+
+    ``num_turns`` is owned by the runner loop (incremented once per
+    AssistantMessage there) and threaded in. The handler must not
+    increment it — doing so would double-count.
+    """
     # Accumulate usage → emit Metrics
     usage = getattr(msg, "usage", None)
     if usage:
@@ -1531,8 +1565,7 @@ async def _handle_assistant_message(
         tout = _get_tokens(usage, "output_tokens")
         cost = getattr(msg, "total_cost_usd", None) or progress_state.total_cost_usd
         await progress_state.update_metrics(
-            tin=tin, tout=tout, cost=cost,
-            turns=progress_state.num_turns + 1,
+            tin=tin, tout=tout, cost=cost, turns=num_turns,
         )
 
     # Process content blocks
@@ -1705,8 +1738,12 @@ await ctx.progress_state.stage_start(
     branch=branch,
 )
 
-merge_success = False
-merge_error: str | None = None
+# Initialize success/error trackers BEFORE the try block so the finally
+# clause can always emit a valid StageEnd, even on early returns or
+# unexpected exceptions.
+_stage_success: bool = False
+_stage_error: str | None = None
+
 try:
     # 8. Merge stage — deterministic, no AI
     if target_stage == StageName.MERGE:
@@ -1714,13 +1751,13 @@ try:
             reason = f"No PR found for branch {branch}"
             comment.finalize(f"\U0001f6a8 {reason}")
             ctx.work.set_blocked(event.key, reason)
-            merge_error = reason
+            _stage_error = reason
             return DispatchResult(stage=StageName.MERGE, blocked=True, error=reason)
 
         if gates.merge == GateMode.HUMAN:
             if not pr_lifecycle.check_human_approval(pr_number):
                 comment.finalize("\u23f3 Waiting for human approval before merge.")
-                merge_error = "waiting_for_approval"
+                _stage_error = "waiting_for_approval"
                 return DispatchResult(
                     stage=StageName.MERGE, blocked=True, error="waiting_for_approval"
                 )
@@ -1730,23 +1767,28 @@ try:
         comment.finalize("\u2705 Merged")
         ctx.work.set_done_label(event.key)
         ctx.logger.info("dispatch.merged", extra={"pr": pr_number})
-        merge_success = True
+        _stage_success = True
         return DispatchResult(stage=StageName.MERGE)
 
-    # ... existing SPEC/IMPLEMENT/REVIEW logic continues, but now wrapped ...
+    # ── SPEC/IMPLEMENT/REVIEW path (existing lines 214-end of the function) ──
+    # All early-return paths in this branch must set _stage_success/_stage_error
+    # before returning. The known exits are:
+    #   1. exec_result.success is False (line 276 area) — set _stage_error = exec_result.error
+    #   2. stage_result is None (line 293 area) — set _stage_error = "no_status_block"
+    #   3. Successful exit (line 379 area) — set _stage_success = True
+    # Each of these returns a DispatchResult; the finally clause runs before return.
+
+    # ... existing SPEC/IMPLEMENT/REVIEW logic continues, with the three
+    #     early-exit paths above patched to set _stage_success/_stage_error ...
 finally:
     # Emit StageEnd unconditionally for whichever path we took.
-    final_success = merge_success if target_stage == StageName.MERGE else _exec_success
-    final_error = merge_error if target_stage == StageName.MERGE else _exec_error
     await ctx.progress_state.stage_end(
         target_stage,
-        success=final_success,
-        error=final_error,
+        success=_stage_success,
+        error=_stage_error,
         final=ctx.progress_state.snapshot_metrics(),
     )
 ```
-
-(Note: `_exec_success` / `_exec_error` are tracked further down where the SDK stage executor runs. You'll add `success/error` tracking variables before the try/finally and update them in the executor branches below.)
 
 Remove the duplicate `stage_config = load_stage_config(target_stage.value, ctx.config)` further down (it's now hoisted above).
 
@@ -1792,16 +1834,25 @@ await ctx.progress_state.close_group()
 ctx.logger.info("agent.output", extra={"len": len(exec_result.output)})
 ```
 
-- [ ] **Step 5: Track exec success/error so the finally clause can emit StageEnd**
+- [ ] **Step 5: Patch each early-return on the SDK path to set `_stage_success`/`_stage_error` before returning**
 
-After the `executor.run(...)` call:
+Find each `return DispatchResult(...)` in the SPEC/IMPLEMENT/REVIEW branch (originally lines 290, 312, 379) and prepend the appropriate assignment:
 
 ```python
-_exec_success = exec_result.success
-_exec_error = exec_result.error
+# At line ~290, the "exec_result.success is False" exit:
+_stage_error = exec_result.error or "unknown"
+return DispatchResult(stage=target_stage, blocked=True, error=exec_result.error)
+
+# At line ~312, the "no status block" exit:
+_stage_error = "no_status_block"
+return DispatchResult(stage=target_stage, blocked=True, error="no_status_block")
+
+# At line ~379, the success exit:
+_stage_success = True
+return DispatchResult(stage=target_stage, status=stage_result.status, ...)
 ```
 
-Make sure `_exec_success` / `_exec_error` are initialized to `False` / `None` at the top of the `try:` block so that early-return paths (e.g. exception before the executor) still produce valid `StageEnd` payloads.
+Verify with `git grep -n "return DispatchResult" src/a2sdlc/pipeline/dispatch.py` that you've covered every return site inside the wrapped block. The `finally` clause will run before each return and emit the correct `StageEnd`.
 
 - [ ] **Step 6: Don't run full `make check` yet — `cli.py`/`cli_local.py` still construct old shape**
 
@@ -2075,9 +2126,48 @@ assert isinstance(recorder.events[0], StageStart)
 assert isinstance(recorder.events[-1], StageEnd)
 ```
 
-- [ ] **Step 3: Same replacement in `test_dispatch_e2e.py`, `test_dispatch_progress.py`, `test_stage_executor.py`**
+- [ ] **Step 3: Same replacement in every test file that references `ProgressAdapter`, `FakeProgressAdapter`, `progress=`, or `on_progress=`**
 
-Apply the same pattern. For `test_dispatch_progress.py` specifically, the assertions probably check for specific tool-call traces — switch to filtering `recorder.events` by `isinstance(e, ToolEntry)`.
+Run a grep first to enumerate every site:
+
+```bash
+git grep -nE "ProgressAdapter|FakeProgressAdapter|progress\s*=|on_progress" tests/
+```
+
+Apply the `RecordingSubscriber` + `ProgressState` pattern to every match. Known affected files:
+
+- `tests/pipeline/test_dispatch.py`
+- `tests/pipeline/test_dispatch_e2e.py`
+- `tests/pipeline/test_dispatch_progress.py` — assertions about tool-call traces filter `recorder.events` by `isinstance(e, ToolEntry)`
+- `tests/pipeline/test_stage_executor.py`
+- `tests/pipeline/test_runner*.py` (any tests that called the runner with `on_progress=` or `progress=` kwargs)
+- `tests/test_cli_local*.py` (any CLI integration test that built a `DispatchContext`)
+- `tests/cli_local*` from Task 11 step 3
+- `tests/fakes.py` — already trimmed in step 1 above
+
+Confirm coverage: after rewrites, `git grep -nE "ProgressAdapter|FakeProgressAdapter" tests/` must return no matches.
+
+- [ ] **Step 3b: Add an integration test asserting `StageEnd` follows the final `Metrics`**
+
+Per spec §6 — locks the terminal-state guarantee. Add to `tests/pipeline/test_dispatch_progress.py` (or whichever integration test exercises the full dispatch flow):
+
+```python
+@pytest.mark.asyncio
+async def test_stage_end_follows_final_metrics() -> None:
+    # ... set up DispatchContext with FakeStageRunner that emits a few
+    #     update_metrics() calls then returns ...
+    rec = RecordingSubscriber()
+    ctx.progress_state.subscribe(rec)
+
+    await dispatch(ctx)
+
+    # The last Metrics event must precede the StageEnd event.
+    metrics_indices = [i for i, e in enumerate(rec.events) if isinstance(e, Metrics)]
+    end_indices = [i for i, e in enumerate(rec.events) if isinstance(e, StageEnd)]
+    assert metrics_indices, "no Metrics event emitted"
+    assert end_indices, "no StageEnd event emitted"
+    assert metrics_indices[-1] < end_indices[-1]
+```
 
 - [ ] **Step 4: Run full test suite**
 
@@ -2126,9 +2216,10 @@ cd /Users/iorlas/Workspaces/a2sdlc-engine
 git grep -nE "ProgressAdapter" src/
 git grep -nE "on_progress" src/
 git grep -nE "Throttle\s*\(" src/a2sdlc/pipeline/
+git grep -nE "time\.(monotonic|time)\(\)" src/a2sdlc/pipeline/runner.py | grep -v start_time
 ```
 
-Expected: all three return no matches.
+Expected: all four return no matches.
 
 - [ ] **Step 4: Run full quality gate one more time**
 
