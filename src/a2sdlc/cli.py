@@ -129,21 +129,21 @@ def main(argv: list[str] | None = None) -> None:
         work_adapter = GitHubWorkAdapter(repo)
         review_adapter = GitHubReviewAdapter(repo)
 
+        from a2sdlc.adapters.gh_actions_subscriber import GhActionsLogSubscriber  # noqa: PLC0415
         from a2sdlc.adapters.git import LocalGitAdapter  # noqa: PLC0415
-        from a2sdlc.adapters.progress_gh_actions import (  # noqa: PLC0415
-            GhActionsProgressAdapter,
-        )
+        from a2sdlc.evaluation.progress import ProgressState  # noqa: PLC0415
         from a2sdlc.pipeline.runner import SdkStageRunner  # noqa: PLC0415
 
         git = LocalGitAdapter(project_root)
-        progress = GhActionsProgressAdapter()
+        progress_state = ProgressState(project_root=str(project_root))
+        progress_state.subscribe(GhActionsLogSubscriber())
 
         ctx = DispatchContext(
             work=work_adapter,
             git=git,
             review=review_adapter,
             runner=SdkStageRunner(effort=config.effort),
-            progress=progress,
+            progress_state=progress_state,
             config=config,
             project_root=project_root,
             logger=logging.getLogger("a2sdlc.pipeline.dispatch"),

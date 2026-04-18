@@ -10,13 +10,13 @@ import pytest
 
 from a2sdlc.adapters.work import PipelineEvent
 from a2sdlc.config import ProjectConfig
+from a2sdlc.evaluation.progress import ProgressState
 from a2sdlc.pipeline.dispatch import DispatchContext, dispatch
 from a2sdlc.domain.handover import FeedbackItem, HandoverComment
 from a2sdlc.domain.models import StageName, StageStatus
 from a2sdlc.domain.run_result import RunResult
 from tests.fakes import (
     FakeGitAdapter,
-    FakeProgressAdapter,
     FakeReviewAdapter,
     FakeRunner,
     FakeWorkAdapter,
@@ -57,7 +57,7 @@ def _ctx(
         git=git,
         review=review,
         runner=runner,
-        progress=FakeProgressAdapter(),
+        progress_state=ProgressState(project_root="/tmp/test"),
         config=config,
         project_root=Path("/tmp/test"),
         logger=logging.getLogger("test"),
@@ -211,7 +211,7 @@ class TestReviewLoop:
             git=git,
             review=review,
             runner=runner,
-            progress=FakeProgressAdapter(),
+            progress_state=ProgressState(project_root="/tmp/test"),
             config=ProjectConfig(),
             project_root=Path("/tmp/test"),
             logger=logging.getLogger("test"),
@@ -380,7 +380,7 @@ def _feedback_ctx(
         git=FakeGitAdapter(),
         review=FakeReviewAdapter(),
         runner=runner,
-        progress=FakeProgressAdapter(),
+        progress_state=ProgressState(project_root="/tmp/test"),
         config=ProjectConfig(),
         project_root=Path("/tmp/test"),
         logger=logging.getLogger("test"),
@@ -461,7 +461,7 @@ def _proceed_ctx(
         git=git,
         review=FakeReviewAdapter(),
         runner=runner,
-        progress=FakeProgressAdapter(),
+        progress_state=ProgressState(project_root="/tmp/test"),
         config=ProjectConfig(),
         project_root=Path("/tmp/test"),
         logger=logging.getLogger("test"),

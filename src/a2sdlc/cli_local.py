@@ -23,7 +23,6 @@ from ulid import ULID
 
 from a2sdlc.adapters.factory import (
     build_git_adapter,
-    build_progress_adapter,
     build_review_adapter,
     build_work_adapter,
 )
@@ -31,6 +30,7 @@ from a2sdlc.adapters.local_noop_review import LocalNoopReviewAdapter
 from a2sdlc.config import load_config_file
 from a2sdlc.domain.exceptions import BlockedError
 from a2sdlc.domain.models import StageName
+from a2sdlc.evaluation.progress import ProgressState
 from a2sdlc.pipeline.dispatch import DispatchContext, DispatchResult, dispatch
 
 if TYPE_CHECKING:
@@ -85,7 +85,7 @@ def _infer_session_id(project_root: Path) -> str | None:
 
 
 def _build_runner(
-    progress, runner_override: str | None, effort: str | None = None
+    runner_override: str | None, effort: str | None = None
 ) -> StageRunner:
     """Construct the StageRunner. ``runner_override='fake'`` is a test hook."""
     if runner_override == "fake":
@@ -169,9 +169,20 @@ def run_stage_entry(argv: list[str], runner_override: str | None = None) -> int:
     )
     review = build_review_adapter(cfg.adapters.review, project_root=project_root)
     git = build_git_adapter(cfg.adapters.git, project_root=project_root)
-    progress = build_progress_adapter(cfg.adapters.progress)
 
-    runner = _build_runner(progress, runner_override, effort=cfg.effort)
+    # Build ProgressState and attach the configured subscriber.
+    progress_state = ProgressState(project_root=str(project_root))
+    _progress_adapter_name = cfg.adapters.progress
+    if _progress_adapter_name == "gh_actions":
+        from a2sdlc.adapters.gh_actions_subscriber import GhActionsLogSubscriber  # noqa: PLC0415
+
+        progress_state.subscribe(GhActionsLogSubscriber())
+    elif _progress_adapter_name == "console":
+        from a2sdlc.adapters.console_subscriber import ConsoleSubscriber  # noqa: PLC0415
+
+        progress_state.subscribe(ConsoleSubscriber(progress_state))
+
+    runner = _build_runner(runner_override, effort=cfg.effort)
 
     # Pre-create / checkout the session branch so that subsequent calls can
     # infer the session id from HEAD even when dispatch short-circuits.
@@ -187,19 +198,18 @@ def run_stage_entry(argv: list[str], runner_override: str | None = None) -> int:
         git=git,
         review=review,
         runner=runner,
-        progress=progress,
+        progress_state=progress_state,
         config=cfg,
         project_root=project_root,
         logger=logging.getLogger("a2sdlc.pipeline.dispatch"),
     )
-
-    progress.on_stage_start(stage, session_id)
 
     sha_before = _git_head_sha(project_root)
     dirty = _is_dirty(project_root)
 
     result: DispatchResult | None = None
     quality = None
+    ok = False
     try:
         if sink is not None:
             with (
@@ -263,7 +273,6 @@ def run_stage_entry(argv: list[str], runner_override: str | None = None) -> int:
                 )
     finally:
         ok = result is not None and not result.blocked and result.error is None
-        progress.on_stage_end(stage, ok)
 
     if ok and isinstance(review, LocalNoopReviewAdapter):
         review.mark_feedback_consumed()
