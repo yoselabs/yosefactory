@@ -139,3 +139,29 @@ class TestHandleAssistantMessage:
         _handle_assistant_message(msg, progress, current_time=1010.0)
 
         assert len(progress.tool_log) == 0
+
+    def test_progress_adapter_emits_tool_group(self) -> None:
+        """When a progress_adapter is supplied, tool blocks emit on it
+        (group_open / on_event / group_close) instead of printing ::group::.
+        """
+        from claude_agent_sdk.types import AssistantMessage, ToolUseBlock
+
+        from tests.fakes import FakeProgressAdapter
+
+        msg = MagicMock(spec=AssistantMessage)
+        block = MagicMock(spec=ToolUseBlock)
+        block.name = "Read"
+        block.input = {"file_path": "/tmp/project/src/app.py"}
+        msg.content = [block]
+        msg.usage = None
+        msg.total_cost_usd = None
+
+        progress = _make_progress()
+        adapter = FakeProgressAdapter()
+        _handle_assistant_message(
+            msg, progress, current_time=1001.5, progress_adapter=adapter
+        )
+
+        assert adapter.groups_open == ["Tool: Read"]
+        assert adapter.groups_closed == 1
+        assert any(t == "tool_input" for t, _ in adapter.events)

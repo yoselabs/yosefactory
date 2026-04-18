@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from a2sdlc.adapters.protocols import GitAdapter, StageRunner
+from a2sdlc.adapters.protocols import GitAdapter, ProgressAdapter, StageRunner
 from a2sdlc.adapters.review import ReviewAdapter
 from a2sdlc.adapters.work import WorkAdapter
 from a2sdlc.lifecycle.comment import CommentManager
@@ -40,6 +40,7 @@ class DispatchContext:
     git: GitAdapter
     review: ReviewAdapter
     runner: StageRunner
+    progress: ProgressAdapter
     config: ProjectConfig
     project_root: Path
     logger: logging.Logger
@@ -252,9 +253,9 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
     stage_result = exec_result.stage_result
 
     # 12. Log full output to CI
-    print(f"::group::Agent output ({len(exec_result.output)} chars)")  # noqa: T201
-    print(exec_result.output)  # noqa: T201
-    print("::endgroup::")  # noqa: T201
+    ctx.progress.on_group_open(f"Agent output ({len(exec_result.output)} chars)")
+    ctx.progress.on_event("output", exec_result.output)
+    ctx.progress.on_group_close()
 
     # Build shared format kwargs
     _milestones = exec_result.milestones

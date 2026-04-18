@@ -16,6 +16,7 @@ from claude_agent_sdk.types import (
 )
 from rich.console import Console
 
+from a2sdlc.adapters.protocols import ProgressAdapter
 from a2sdlc.config import StageConfig, get_session_id
 from a2sdlc.domain.models import StageName
 from a2sdlc.domain.run_result import RunResult
@@ -46,6 +47,7 @@ async def run_stage(
     is_resume: bool = False,
     on_progress: Callable[[str], None] | None = None,
     branch: str = "",
+    progress_adapter: ProgressAdapter | None = None,
 ) -> RunResult:
     """Run a pipeline stage via Claude Agent SDK with streaming progress."""
     from claude_agent_sdk import ClaudeAgentOptions, query  # noqa: PLC0415
@@ -94,7 +96,9 @@ async def run_stage(
             async for msg in query(prompt=user_prompt, options=options):
                 if isinstance(msg, AssistantMessage):
                     progress.num_turns += 1
-                    _handle_assistant_message(msg, progress)
+                    _handle_assistant_message(
+                        msg, progress, progress_adapter=progress_adapter
+                    )
 
                     if on_progress and progress.tool_log:  # throttled progress
                         now = time.time()
@@ -178,6 +182,7 @@ def _handle_assistant_message(
     progress: ProgressState,
     *,
     current_time: float | None = None,
+    progress_adapter: ProgressAdapter | None = None,
 ) -> None:
     """Extract tool calls, usage, and milestones from an AssistantMessage."""
     now = current_time if current_time is not None else time.time()
@@ -225,12 +230,21 @@ def _handle_assistant_message(
                                 progress.tasks[subject] = status
 
             # GH Actions collapsible group
-            print(f"::group::Tool: {name}")  # noqa: T201
+            if progress_adapter is not None:
+                progress_adapter.on_group_open(f"Tool: {name}")
+            else:
+                print(f"::group::Tool: {name}")  # noqa: T201
             console.log(f"[cyan]Tool:[/cyan] {name}")
             if isinstance(block.input, dict):
                 for k, v in block.input.items():
+                    line = f"  {k}: {str(v)[:100]}"
                     console.log(f"  [dim]{k}:[/dim] {str(v)[:100]}")
-            print("::endgroup::")  # noqa: T201
+                    if progress_adapter is not None:
+                        progress_adapter.on_event("tool_input", line)
+            if progress_adapter is not None:
+                progress_adapter.on_group_close()
+            else:
+                print("::endgroup::")  # noqa: T201
         elif isinstance(block, TextBlock):
             if block.text:
                 preview = block.text[:200].replace("\n", " ")
@@ -242,6 +256,9 @@ def _handle_assistant_message(
 
 class SdkStageRunner:
     """StageRunner backed by the Claude Agent SDK. Wraps ``run_stage``."""
+
+    def __init__(self, progress: ProgressAdapter | None = None) -> None:
+        self._progress = progress
 
     async def run(
         self,
@@ -265,4 +282,5 @@ class SdkStageRunner:
             is_resume=is_resume,
             on_progress=on_progress,
             branch=branch,
+            progress_adapter=self._progress,
         )

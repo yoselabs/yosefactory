@@ -18,6 +18,7 @@ from a2sdlc.domain.models import StageName
 from a2sdlc.domain.run_result import RunResult
 from tests.fakes import (
     FakeGitAdapter,
+    FakeProgressAdapter,
     FakeReviewAdapter,
     FakeRunner,
     FakeWorkAdapter,
@@ -80,6 +81,7 @@ def _feedback_ctx(
         git=FakeGitAdapter(),
         review=FakeReviewAdapter(),
         runner=runner,
+        progress=FakeProgressAdapter(),
         config=ProjectConfig(),
         project_root=Path("/tmp/test"),
         logger=logging.getLogger("test"),
@@ -124,6 +126,7 @@ def _proceed_merge_ctx(pr_number: int = 7) -> tuple[DispatchContext, FakeReviewA
         git=git,
         review=review,
         runner=runner,
+        progress=FakeProgressAdapter(),
         config=ProjectConfig(),
         project_root=Path("/tmp/test"),
         logger=logging.getLogger("test"),

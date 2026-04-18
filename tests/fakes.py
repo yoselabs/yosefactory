@@ -18,6 +18,37 @@ from a2sdlc.domain.exceptions import BlockedError, SkipEvent
 from a2sdlc.domain.handover import FeedbackItem, HandoverComment
 from a2sdlc.domain.models import StageName
 from a2sdlc.domain.run_result import RunResult
+
+
+# ── FakeProgressAdapter ───────────────────────────────────────────────
+
+
+class FakeProgressAdapter:
+    """Records all progress adapter calls for assertions."""
+
+    def __init__(self) -> None:
+        self.started: list[tuple[str, str]] = []
+        self.events: list[tuple[str, str]] = []
+        self.ended: list[tuple[str, bool]] = []
+        self.groups_open: list[str] = []
+        self.groups_closed: int = 0
+
+    def on_stage_start(self, stage: StageName, session_id: str) -> None:
+        self.started.append((stage.value, session_id))
+
+    def on_event(self, event_type: str, text: str) -> None:
+        self.events.append((event_type, text))
+
+    def on_stage_end(self, stage: StageName, success: bool) -> None:
+        self.ended.append((stage.value, success))
+
+    def on_group_open(self, title: str) -> None:
+        self.groups_open.append(title)
+
+    def on_group_close(self) -> None:
+        self.groups_closed += 1
+
+
 # ── FakeWorkAdapter ───────────────────────────────────────────────────
 
 
