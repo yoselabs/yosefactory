@@ -182,6 +182,17 @@ def run_stage_entry(argv: list[str], runner_override: str | None = None) -> int:
 
         progress_state.subscribe(ConsoleSubscriber(progress_state))
 
+    # MLflow trace subscriber — only when a sink is active (i.e. tracking is on).
+    # Writes one span per stage + one child span per tool call into the run that
+    # MlflowSink opens below. Registered last so its errors don't mask the
+    # user-facing subscribers above.
+    if sink is not None:
+        from a2sdlc.adapters.mlflow_trace_subscriber import (  # noqa: PLC0415
+            MlflowTraceSubscriber,
+        )
+
+        progress_state.subscribe(MlflowTraceSubscriber())
+
     runner = _build_runner(runner_override, effort=cfg.effort)
 
     # Pre-create / checkout the session branch so that subsequent calls can
@@ -232,6 +243,42 @@ def run_stage_entry(argv: list[str], runner_override: str | None = None) -> int:
                         child.log_metric("turns", stats.num_turns)
                     if hasattr(stats, "duration_ms"):
                         child.log_metric("duration_ms", stats.duration_ms)
+
+                # Persist the agent's output as a JSON artifact so the whole
+                # stage result (body + metadata) can be inspected from MLflow.
+                # Single mlflow import covers this block plus the quality-gate
+                # artifact upload below.
+                import mlflow as _mlflow  # noqa: PLC0415
+
+                if result is not None:
+                    stats_payload: dict[str, float | int] = {}
+                    if stats is not None:
+                        for attr in (
+                            "tokens_in",
+                            "tokens_out",
+                            "cost_usd",
+                            "num_turns",
+                            "duration_ms",
+                        ):
+                            val = getattr(stats, attr, None)
+                            if val is not None:
+                                stats_payload[attr] = val
+                    _mlflow.log_dict(
+                        {
+                            "stage": stage.value,
+                            "session_id": session_id,
+                            "success": not result.blocked and result.error is None,
+                            "blocked": result.blocked,
+                            "error": result.error,
+                            "status": result.status.value if result.status else None,
+                            "next_stage": result.next_stage.value
+                            if result.next_stage
+                            else None,
+                            "output": result.output,
+                            "stats": stats_payload,
+                        },
+                        f"{stage.value}-output.json",
+                    )
                 # Run quality gate inside the stage_run so metrics/artifacts
                 # attach to the active MLflow child run.
                 if (
@@ -249,7 +296,6 @@ def run_stage_entry(argv: list[str], runner_override: str | None = None) -> int:
                         command=cfg.quality.check_command,
                     )
                     child.log_metric("quality_passed", 1 if quality.passed else 0)
-                    import mlflow as _mlflow  # noqa: PLC0415
 
                     artifact_path = project_root / ".a2sdlc" / "quality.log"
                     artifact_path.parent.mkdir(parents=True, exist_ok=True)

@@ -151,3 +151,80 @@ def test_e2e_with_mlflow_tracking_creates_runs(tmp_path: Path, monkeypatch) -> N
     runs = mlflow.search_runs(experiment_ids=[exp.experiment_id], output_format="list")
     # Expect at least: 1 parent session run + 2 stage runs (spec, implement).
     assert len(runs) >= 3
+
+
+def test_e2e_tracking_writes_output_json_artifact_per_stage(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """GIVEN tracking is enabled and both stages run
+    WHEN the run completes
+    THEN every stage child run has a ``<stage>-output.json`` artifact whose
+         contents carry stage, session_id, success, and the agent output;
+         exactly one ``session:trk2`` parent run exists (reuse across calls);
+         each child run has a linked MLflow trace from MlflowTraceSubscriber."""
+    import mlflow
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    ticket = _init_minimal_repo(tmp_path, "ticket for artifact test")
+
+    rc = run_stage_entry(
+        argv=["spec", "--session", "trk2", "--ticket", str(ticket), str(tmp_path)],
+        runner_override="fake",
+    )
+    assert rc == 0
+
+    rc = run_stage_entry(
+        argv=["implement", "--session", "trk2", str(tmp_path)],
+        runner_override="fake",
+    )
+    assert rc == 0
+
+    mlflow.set_tracking_uri(f"file://{tmp_path / '.a2sdlc' / 'mlflow'}")
+    exp = mlflow.get_experiment_by_name(tmp_path.name)
+    assert exp is not None
+
+    parent_runs = mlflow.search_runs(
+        experiment_ids=[exp.experiment_id],
+        filter_string="tags.mlflow.runName = 'session:trk2'",
+        output_format="list",
+    )
+    assert len(parent_runs) == 1, "parent run must be reused across CLI invocations"
+    parent_id = parent_runs[0].info.run_id
+
+    child_by_stage: dict[str, str] = {}
+    for stage_name in ("spec", "implement"):
+        children = mlflow.search_runs(
+            experiment_ids=[exp.experiment_id],
+            filter_string=(
+                f"tags.mlflow.runName = 'trk2:{stage_name}' "
+                f"and tags.mlflow.parentRunId = '{parent_id}'"
+            ),
+            output_format="list",
+        )
+        assert len(children) == 1, f"missing {stage_name} child run under parent"
+        child_by_stage[stage_name] = children[0].info.run_id
+
+    # ── JSON output artifact per stage ────────────────────────────────
+    for stage_name, run_id in child_by_stage.items():
+        artifact_dir = tmp_path / ".a2sdlc" / "mlflow" / exp.experiment_id / run_id
+        artifact_path = artifact_dir / "artifacts" / f"{stage_name}-output.json"
+        assert artifact_path.exists(), f"missing {artifact_path}"
+        payload = json.loads(artifact_path.read_text())
+        assert payload["stage"] == stage_name
+        assert payload["session_id"] == "trk2"
+        assert payload["success"] is True
+        assert payload["blocked"] is False
+        assert payload["error"] is None
+        assert isinstance(payload["output"], str) and len(payload["output"]) > 0
+        assert isinstance(payload["stats"], dict)
+
+    # ── MLflow trace produced by MlflowTraceSubscriber ────────────────
+    traces = mlflow.search_traces(experiment_ids=[exp.experiment_id], max_results=10)
+    trace_source_runs = {
+        t.trace_metadata.get("mlflow.sourceRun") for _, t in traces.iterrows()
+    }
+    for run_id in child_by_stage.values():
+        assert run_id in trace_source_runs, (
+            f"no trace linked to child run {run_id} — MlflowTraceSubscriber "
+            f"did not emit spans"
+        )

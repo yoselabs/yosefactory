@@ -68,7 +68,25 @@ class MlflowSink:
 
     @contextlib.contextmanager
     def session(self, session_id: str) -> Iterator[_SessionRun]:
-        """Open a parent run for *session_id*; yield a ``_SessionRun`` handle."""
+        """Open (or reopen) the parent run for *session_id*; yield a ``_SessionRun``.
+
+        Looks up an existing run named ``session:<session_id>`` in the experiment
+        and reuses it across CLI invocations so every stage of a session nests
+        under a single parent run. A fresh run is created only on first call.
+        """
         mlflow.set_experiment(self._experiment)
-        with mlflow.start_run(run_name=f"session:{session_id}") as parent:
+        run_name = f"session:{session_id}"
+        existing = mlflow.search_runs(
+            experiment_names=[self._experiment],
+            filter_string=f"tags.mlflow.runName = '{run_name}'",
+            output_format="list",
+            max_results=1,
+            order_by=["attributes.start_time DESC"],
+        )
+        existing_run_id: str | None = existing[0].info.run_id if existing else None
+        if existing_run_id is not None:
+            cm = mlflow.start_run(run_id=existing_run_id)
+        else:
+            cm = mlflow.start_run(run_name=run_name)
+        with cm as parent:
             yield _SessionRun(parent_run_id=parent.info.run_id, session_id=session_id)

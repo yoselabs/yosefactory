@@ -64,6 +64,9 @@ class DispatchResult:
     error: str | None = None
     # Cost/token telemetry from the stage run (only populated on success path).
     stats: StageRunStats | None = None
+    # Raw agent output (runner's final message). Empty string on paths that
+    # never reach the runner (e.g. early validation failures).
+    output: str = ""
 
 
 async def dispatch(ctx: DispatchContext) -> DispatchResult:
@@ -329,7 +332,10 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
             ctx.work.set_blocked(event.key, exec_result.error or "unknown")
             _stage_error = exec_result.error or "unknown"
             return DispatchResult(
-                stage=target_stage, blocked=True, error=exec_result.error
+                stage=target_stage,
+                blocked=True,
+                error=exec_result.error,
+                output=exec_result.output,
             )
 
         # 14. No status block even after follow-ups
@@ -354,7 +360,10 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
             ctx.work.set_blocked(event.key, "no status block in output")
             _stage_error = "no_status_block"
             return DispatchResult(
-                stage=target_stage, blocked=True, error="no_status_block"
+                stage=target_stage,
+                blocked=True,
+                error="no_status_block",
+                output=exec_result.output,
             )
 
         # 15. Success path
@@ -430,6 +439,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
             next_stage=next_st,
             blocked=False,
             stats=exec_result.stats,
+            output=exec_result.output,
         )
 
     finally:

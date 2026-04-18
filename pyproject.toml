@@ -95,6 +95,7 @@ ignore_imports = [
     "a2sdlc.adapters.gh_actions_subscriber -> a2sdlc.evaluation.progress",
     "a2sdlc.adapters.gh_comment_subscriber -> a2sdlc.evaluation.progress",
     "a2sdlc.adapters.gh_comment_subscriber -> a2sdlc.evaluation.throttle",
+    "a2sdlc.adapters.mlflow_trace_subscriber -> a2sdlc.evaluation.progress",
 ]
 
 [[tool.importlinter.contracts]]

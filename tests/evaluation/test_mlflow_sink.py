@@ -83,3 +83,37 @@ def test_mlflow_sink_nested_child_runs_parent_tracked(tmp_path):
     runs = mlflow.search_runs(experiment_ids=[exp.experiment_id])
     # at least 1 parent + 2 children
     assert len(runs) >= 3
+
+
+def test_mlflow_sink_reuses_parent_run_across_invocations(tmp_path):
+    """GIVEN a session was opened and closed once
+    WHEN a second invocation opens the same session id
+    THEN the same parent run is reused (no duplicate ``session:*`` runs)."""
+    import mlflow
+
+    tracking_uri = f"file://{tmp_path / 'mlflow'}"
+    sink = MlflowSink(tracking_uri=tracking_uri, experiment_name="testrepo")
+    sink.verify_reachable()
+
+    parent_ids: list[str] = []
+    with sink.session("sid-reuse") as session:
+        parent_ids.append(session.parent_run_id)
+        with session.stage_run(stage="spec") as c:
+            c.log_metric("x", 1)
+
+    # Second invocation — simulates a fresh ``a2sdlc run-stage`` call.
+    with sink.session("sid-reuse") as session:
+        parent_ids.append(session.parent_run_id)
+        with session.stage_run(stage="implement") as c:
+            c.log_metric("x", 2)
+
+    assert parent_ids[0] == parent_ids[1]
+
+    mlflow.set_tracking_uri(tracking_uri)
+    exp = mlflow.get_experiment_by_name("testrepo")
+    assert exp is not None
+    session_runs = mlflow.search_runs(
+        experiment_ids=[exp.experiment_id],
+        filter_string="tags.mlflow.runName = 'session:sid-reuse'",
+    )
+    assert len(session_runs) == 1
