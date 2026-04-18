@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
+from a2sdlc.domain.models import StageName
+
 
 # ── Data models ────────────────────────────────────────────────────
 
@@ -24,6 +26,58 @@ class Milestone:
 
     timestamp: float  # seconds since stage start
     label: str  # e.g. "brainstorming invoked"
+
+
+# ── Event taxonomy ─────────────────────────────────────────────────
+# ToolEntry (above) and Milestone (above) double as event types.
+
+
+@dataclass
+class StageStart:
+    """Stage execution begins. Emitted by dispatch (not the runner)."""
+
+    stage: StageName
+    session_id: str
+    started_at: float  # time.monotonic() snapshot
+
+
+@dataclass
+class GroupOpen:
+    """Open a logical group of related events (e.g. a tool invocation)."""
+
+    title: str
+
+
+@dataclass
+class GroupClose:
+    """Close the most-recently-opened group."""
+
+
+@dataclass
+class Metrics:
+    """Snapshot of token / cost / turn counters."""
+
+    input_tokens: int
+    output_tokens: int
+    total_cost_usd: float
+    num_turns: int
+    elapsed: float  # seconds since stage_start, monotonic clock
+
+
+@dataclass
+class StageEnd:
+    """Stage execution ends. Carries authoritative final metrics."""
+
+    stage: StageName
+    success: bool
+    error: str | None
+    final_metrics: Metrics
+
+
+# Tagged union. Subscribers dispatch via isinstance.
+ProgressEvent = (
+    StageStart | ToolEntry | GroupOpen | GroupClose | Metrics | Milestone | StageEnd
+)
 
 
 @dataclass
