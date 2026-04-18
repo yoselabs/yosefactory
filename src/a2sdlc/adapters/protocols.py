@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from a2sdlc.config import StageConfig
 from a2sdlc.domain.models import StageName
 from a2sdlc.domain.run_result import RunResult
+
+if TYPE_CHECKING:
+    from a2sdlc.evaluation.progress import ProgressEvent
 
 
 class GitAdapter(Protocol):
@@ -46,3 +49,14 @@ class ProgressAdapter(Protocol):
     def on_stage_end(self, stage: StageName, success: bool) -> None: ...
     def on_group_open(self, title: str) -> None: ...
     def on_group_close(self) -> None: ...
+
+
+class Subscriber(Protocol):
+    """Receives ``ProgressEvent`` instances from ``ProgressState``.
+
+    Implementations filter by ``isinstance`` and ignore event types they
+    don't care about. ``handle`` is async because the runner is already
+    async; sync subscribers just don't ``await`` anything inside.
+    """
+
+    async def handle(self, event: "ProgressEvent") -> None: ...

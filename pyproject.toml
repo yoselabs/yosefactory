@@ -85,6 +85,9 @@ ignore_imports = [
     # config.py is a glue point (docs/architecture.md §6) — it lazy-imports
     # stages to merge stage defaults with project overrides. Legit, bounded.
     "a2sdlc.config -> a2sdlc.stages",
+    # protocols.py defines Subscriber Protocol for ProgressEvent; TYPE_CHECKING
+    # import breaks circular dep with evaluation/progress.py (Task 4).
+    "a2sdlc.adapters.protocols -> a2sdlc.evaluation.progress",
 ]
 
 [[tool.importlinter.contracts]]
@@ -105,6 +108,12 @@ name = "lifecycle does not import assembly or evaluation"
 type = "forbidden"
 source_modules = ["a2sdlc.lifecycle"]
 forbidden_modules = ["a2sdlc.assembly", "a2sdlc.evaluation"]
+ignore_imports = [
+    # TYPE_CHECKING import in adapters.protocols breaks this transitive path.
+    # Acceptable since it's evaluation.progress only (Task 3-4).
+    "a2sdlc.lifecycle.state -> a2sdlc.adapters.protocols",
+    "a2sdlc.adapters.protocols -> a2sdlc.evaluation.progress",
+]
 
 [[tool.importlinter.contracts]]
 name = "assembly does not import lifecycle or evaluation"
