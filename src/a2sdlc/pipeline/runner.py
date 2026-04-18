@@ -210,7 +210,7 @@ def _handle_assistant_message(
     progress_adapter: ProgressAdapter | None = None,
 ) -> None:
     """Extract tool calls, usage, and milestones from an AssistantMessage."""
-    now = current_time if current_time is not None else time.time()
+    now = current_time if current_time is not None else time.monotonic()
     elapsed = now - progress.start_time
 
     # Accumulate usage
