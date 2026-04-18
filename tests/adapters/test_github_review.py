@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from a2sdlc.adapters.github import GitHubReviewAdapter
+from a2sdlc.adapters.review.github import GitHubReviewAdapter
 from a2sdlc.adapters.review import Approval, ReviewComment
 
 

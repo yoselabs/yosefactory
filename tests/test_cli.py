@@ -208,10 +208,10 @@ class TestMainDispatch:
         dispatch_result = MagicMock(blocked=False, error=None)
 
         with (
-            patch("a2sdlc.adapters.github.connect") as mock_connect,
-            patch("a2sdlc.adapters.github.GitHubWorkAdapter") as mock_work,
-            patch("a2sdlc.adapters.github.GitHubReviewAdapter") as mock_review,
-            # patch where cli.py looks it up (package namespace), not where it's defined
+            patch("a2sdlc.adapters._github.connect") as mock_connect,
+            # NOTE: these three patch() calls target the package namespace where cli.py looks up the names (via `from a2sdlc.adapters.<kind> import X`), not the submodule where they're defined. patch()ing the submodule attribute would miss the binding cli.py uses and the tests would silently pass with mock_call_count == 0.
+            patch("a2sdlc.adapters.work.GitHubWorkAdapter") as mock_work,
+            patch("a2sdlc.adapters.review.GitHubReviewAdapter") as mock_review,
             patch("a2sdlc.adapters.git.LocalGitAdapter") as mock_git,
             patch("a2sdlc.pipeline.dispatch.dispatch") as mock_dispatch,
             patch.dict(

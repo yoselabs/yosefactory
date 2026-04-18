@@ -117,11 +117,9 @@ def main(argv: list[str] | None = None) -> None:
         setup_logging("dispatch", "dispatch", project_root)
 
         # Construct adapters
-        from a2sdlc.adapters.github import (  # noqa: PLC0415
-            GitHubReviewAdapter,
-            GitHubWorkAdapter,
-            connect,
-        )
+        from a2sdlc.adapters._github import connect  # noqa: PLC0415
+        from a2sdlc.adapters.review import GitHubReviewAdapter  # noqa: PLC0415
+        from a2sdlc.adapters.work import GitHubWorkAdapter  # noqa: PLC0415
 
         token = os.environ.get("GITHUB_TOKEN", os.environ.get("GH_TOKEN", ""))
         repo_name = os.environ.get("GITHUB_REPOSITORY", "")

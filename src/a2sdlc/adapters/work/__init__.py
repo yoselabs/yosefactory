@@ -50,5 +50,6 @@ class WorkAdapter(Protocol):
 # moving them above the dataclass/Protocol definitions above would break
 # the partial-init chain with ImportError.
 from a2sdlc.adapters.work.local_file import LocalFileWorkAdapter  # noqa: E402
+from a2sdlc.adapters.work.github import GitHubWorkAdapter  # noqa: E402
 
-__all__ = ["PipelineEvent", "WorkAdapter", "LocalFileWorkAdapter"]
+__all__ = ["PipelineEvent", "WorkAdapter", "LocalFileWorkAdapter", "GitHubWorkAdapter"]

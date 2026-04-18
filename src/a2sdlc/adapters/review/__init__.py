@@ -53,5 +53,12 @@ class ReviewAdapter(Protocol):
 # moving them above the dataclass/Protocol definitions above would break
 # the partial-init chain with ImportError.
 from a2sdlc.adapters.review.local_noop import LocalNoopReviewAdapter  # noqa: E402
+from a2sdlc.adapters.review.github import GitHubReviewAdapter  # noqa: E402
 
-__all__ = ["Approval", "ReviewComment", "ReviewAdapter", "LocalNoopReviewAdapter"]
+__all__ = [
+    "Approval",
+    "ReviewComment",
+    "ReviewAdapter",
+    "LocalNoopReviewAdapter",
+    "GitHubReviewAdapter",
+]
