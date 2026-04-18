@@ -164,3 +164,70 @@ def test_read_pr_comments_maps_reviews(tmp_path):
     assert len(comments) == 1
     assert comments[0].author == "local"
     assert comments[0].body == "hello"
+
+
+def test_collect_pr_feedback_returns_empty_when_no_feedback_file(tmp_path):
+    """GIVEN pr.json exists but no feedback.json
+    WHEN collect_pr_feedback is called
+    THEN it returns [] (file-existence guard)."""
+    (tmp_path / ".a2sdlc").mkdir()
+    adapter = LocalNoopReviewAdapter(project_root=tmp_path)
+    adapter.create_draft_pr("a2sdlc/sid", "main", "t", "sid")
+
+    assert adapter.collect_pr_feedback(1, datetime.now(timezone.utc)) == []
+
+
+def test_mark_feedback_consumed_is_noop_when_file_missing(tmp_path):
+    """GIVEN no feedback.json
+    WHEN mark_feedback_consumed is called
+    THEN it returns without crashing and creates no file."""
+    (tmp_path / ".a2sdlc").mkdir()
+    adapter = LocalNoopReviewAdapter(project_root=tmp_path)
+
+    adapter.mark_feedback_consumed()  # must not raise
+
+    assert not (tmp_path / ".a2sdlc" / "feedback.json").exists()
+
+
+def test_collect_pr_feedback_parses_naive_iso_as_utc(tmp_path):
+    """GIVEN feedback.json with a naive (no tz) ISO created_at
+    WHEN collect_pr_feedback is called with a since older than that
+    THEN _parse_iso assumes UTC and the item is returned."""
+    (tmp_path / ".a2sdlc").mkdir()
+    # Write feedback.json directly with a naive ISO timestamp.
+    naive_iso = "2099-01-01T00:00:00"  # far in the future, naive
+    (tmp_path / ".a2sdlc" / "feedback.json").write_text(
+        json.dumps(
+            {
+                "consumed": False,
+                "body": "naive feedback",
+                "cycle": 1,
+                "created_at": naive_iso,
+            }
+        )
+    )
+
+    adapter = LocalNoopReviewAdapter(project_root=tmp_path)
+    items = adapter.collect_pr_feedback(1, datetime(2000, 1, 1, tzinfo=timezone.utc))
+
+    assert len(items) == 1
+    assert items[0].body == "naive feedback"
+    # _parse_iso should have promoted to tz-aware UTC.
+    assert items[0].created_at.tzinfo is not None
+
+
+def test_collect_pr_feedback_promotes_naive_since_to_utc(tmp_path):
+    """GIVEN feedback.json with an aware created_at
+    WHEN collect_pr_feedback is called with a NAIVE since well in the future
+    THEN _ensure_aware promotes since to UTC and the item is filtered out."""
+    (tmp_path / ".a2sdlc").mkdir()
+    adapter = LocalNoopReviewAdapter(project_root=tmp_path)
+    adapter.create_draft_pr("a2sdlc/sid", "main", "t", "sid")
+    adapter.post_review(1, "fix", "changes_requested")
+
+    # Naive datetime in the far future — must be promoted to UTC for the
+    # comparison; otherwise a TypeError would surface.
+    naive_future = datetime(2999, 1, 1)
+    items = adapter.collect_pr_feedback(1, naive_future)
+
+    assert items == []

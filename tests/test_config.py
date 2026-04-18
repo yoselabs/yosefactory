@@ -119,6 +119,18 @@ class TestStrictKeyValidation:
         with pytest.raises(ConfigError, match="modell"):
             load_config_file(tmp_path)
 
+    def test_load_config_rejects_non_mapping_top_level(self, tmp_path: Path) -> None:
+        """GIVEN a YAML file whose top-level is a list (not a mapping)
+        WHEN load_config_file is called
+        THEN ConfigError is raised explaining the shape requirement."""
+        # A YAML list parses to a Python list — not a dict.
+        _write_config(tmp_path, "- model\n- claude-sonnet-4-6\n")
+
+        from a2sdlc.config import ConfigError
+
+        with pytest.raises(ConfigError, match="mapping"):
+            load_config_file(tmp_path)
+
     def test_all_allowed_keys_accepted(self, tmp_path: Path) -> None:
         """GIVEN a config containing every allowed top-level key
         WHEN loaded

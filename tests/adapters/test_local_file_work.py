@@ -1,6 +1,8 @@
 """Behavior tests for local_file_work adapter."""
 
 import json
+import logging
+import shutil
 import time
 from datetime import datetime, timezone
 
@@ -230,3 +232,177 @@ def test_get_labels_returns_empty_list(tmp_path):
         ticket_path=None,
     )
     assert adapter.get_labels("sid-1") == []
+
+
+def test_parse_event_corrupt_pr_json_returns_none_pr_number(tmp_path):
+    """GIVEN a non-JSON pr.json on disk
+    WHEN parse_event is called
+    THEN pr_number is None (JSONDecodeError fallback)."""
+    _mk_a2sdlc(tmp_path)
+    (tmp_path / ".a2sdlc" / "pr.json").write_text("{not valid json")
+
+    adapter = LocalFileWorkAdapter(
+        project_root=tmp_path,
+        session_id="sid-1",
+        stage=StageName.IMPLEMENT,
+        ticket_path=None,
+    )
+
+    event = adapter.parse_event()
+
+    assert event.pr_number is None
+
+
+def test_parse_event_pr_json_with_non_int_pr_number_returns_none(tmp_path):
+    """GIVEN pr.json where pr_number is a string (not int)
+    WHEN parse_event is called
+    THEN pr_number is None."""
+    _mk_a2sdlc(tmp_path)
+    (tmp_path / ".a2sdlc" / "pr.json").write_text(
+        json.dumps({"pr_number": "not-an-int"})
+    )
+
+    adapter = LocalFileWorkAdapter(
+        project_root=tmp_path,
+        session_id="sid-1",
+        stage=StageName.IMPLEMENT,
+        ticket_path=None,
+    )
+
+    event = adapter.parse_event()
+
+    assert event.pr_number is None
+
+
+def test_parse_event_corrupt_feedback_json_treated_as_no_feedback(tmp_path):
+    """GIVEN a non-JSON feedback.json on disk
+    WHEN parse_event is called
+    THEN is_feedback is False (JSONDecodeError fallback)."""
+    _mk_a2sdlc(tmp_path)
+    (tmp_path / ".a2sdlc" / "feedback.json").write_text("not json at all")
+
+    adapter = LocalFileWorkAdapter(
+        project_root=tmp_path,
+        session_id="sid-1",
+        stage=StageName.REVIEW,
+        ticket_path=None,
+    )
+
+    event = adapter.parse_event()
+
+    assert event.is_feedback is False
+    assert event.trigger_stage == StageName.REVIEW
+
+
+def test_parse_event_feedback_without_consumed_key_treated_as_unconsumed(tmp_path):
+    """GIVEN feedback.json missing the 'consumed' key
+    WHEN parse_event is called
+    THEN is_feedback is True (default consumed=False means unconsumed)."""
+    _mk_a2sdlc(tmp_path)
+    (tmp_path / ".a2sdlc" / "feedback.json").write_text(json.dumps({"body": "x"}))
+
+    adapter = LocalFileWorkAdapter(
+        project_root=tmp_path,
+        session_id="sid-1",
+        stage=StageName.IMPLEMENT,
+        ticket_path=None,
+    )
+
+    event = adapter.parse_event()
+
+    assert event.is_feedback is True
+
+
+def test_update_progress_is_a_noop(tmp_path):
+    """GIVEN a comment id from begin_comment
+    WHEN update_progress is called
+    THEN it returns None and does not crash."""
+    adapter = LocalFileWorkAdapter(
+        project_root=tmp_path,
+        session_id="sid-1",
+        stage=StageName.SPEC,
+        ticket_path=None,
+    )
+    cid = adapter.begin_comment("sid-1")
+    assert adapter.update_progress(cid, "progress body") is None
+
+
+def test_set_stage_label_logs_and_does_not_crash(tmp_path, caplog):
+    """GIVEN any adapter
+    WHEN set_stage_label is called
+    THEN an INFO log is emitted naming the stage and key."""
+    adapter = LocalFileWorkAdapter(
+        project_root=tmp_path,
+        session_id="sid-1",
+        stage=StageName.SPEC,
+        ticket_path=None,
+    )
+    with caplog.at_level(logging.INFO, logger="a2sdlc.adapters.local_file_work"):
+        adapter.set_stage_label("sid-1", StageName.IMPLEMENT)
+
+    assert any("set_stage_label" in r.message for r in caplog.records)
+
+
+def test_set_done_label_logs_and_does_not_crash(tmp_path, caplog):
+    """GIVEN any adapter
+    WHEN set_done_label is called
+    THEN an INFO log is emitted naming the key."""
+    adapter = LocalFileWorkAdapter(
+        project_root=tmp_path,
+        session_id="sid-1",
+        stage=StageName.MERGE,
+        ticket_path=None,
+    )
+    with caplog.at_level(logging.INFO, logger="a2sdlc.adapters.local_file_work"):
+        adapter.set_done_label("sid-1")
+
+    assert any("set_done_label" in r.message for r in caplog.records)
+
+
+def test_set_blocked_logs_and_does_not_crash(tmp_path, caplog):
+    """GIVEN any adapter
+    WHEN set_blocked is called with a reason
+    THEN an INFO log is emitted naming the reason."""
+    adapter = LocalFileWorkAdapter(
+        project_root=tmp_path,
+        session_id="sid-1",
+        stage=StageName.SPEC,
+        ticket_path=None,
+    )
+    with caplog.at_level(logging.INFO, logger="a2sdlc.adapters.local_file_work"):
+        adapter.set_blocked("sid-1", "no upstream")
+
+    assert any("no upstream" in r.message for r in caplog.records)
+
+
+def test_find_last_handover_returns_none_when_dir_missing(tmp_path):
+    """GIVEN handover dir was deleted after construction
+    WHEN find_last_handover is called
+    THEN it returns None (existence-check guard)."""
+    adapter = LocalFileWorkAdapter(
+        project_root=tmp_path,
+        session_id="sid-1",
+        stage=StageName.SPEC,
+        ticket_path=None,
+    )
+
+    shutil.rmtree(tmp_path / ".a2sdlc" / "handover")
+
+    assert adapter.find_last_handover("sid-1") is None
+
+
+def test_find_last_handover_returns_none_for_unknown_stage_name(tmp_path):
+    """GIVEN a handover file with a stem that is not a valid StageName
+    WHEN find_last_handover is called
+    THEN it returns None (ValueError fallback)."""
+    adapter = LocalFileWorkAdapter(
+        project_root=tmp_path,
+        session_id="sid-1",
+        stage=StageName.SPEC,
+        ticket_path=None,
+    )
+
+    handover_dir = tmp_path / ".a2sdlc" / "handover"
+    (handover_dir / "unknown.md").write_text("garbage stage")
+
+    assert adapter.find_last_handover("sid-1") is None
