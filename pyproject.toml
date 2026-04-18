@@ -109,9 +109,10 @@ type = "forbidden"
 source_modules = ["a2sdlc.lifecycle"]
 forbidden_modules = ["a2sdlc.assembly", "a2sdlc.evaluation"]
 ignore_imports = [
-    # TYPE_CHECKING import in adapters.protocols breaks this transitive path.
-    # Acceptable since it's evaluation.progress only (Task 3-4).
-    "a2sdlc.lifecycle.state -> a2sdlc.adapters.protocols",
+    # TYPE_CHECKING import in adapters.protocols breaks the transitive
+    # lifecycle → evaluation chain. The direct lifecycle.state →
+    # adapters.protocols edge is legal (adapters is not in
+    # forbidden_modules), so we only ignore the trailing TYPE_CHECKING hop.
     "a2sdlc.adapters.protocols -> a2sdlc.evaluation.progress",
 ]
 
