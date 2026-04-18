@@ -7,8 +7,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from a2sdlc.adapters.protocols import GitAdapter, StageRunner
+from a2sdlc.adapters.git import GitAdapter
 from a2sdlc.adapters.review import ReviewAdapter
+from a2sdlc.adapters.runner import StageRunner
 from a2sdlc.adapters.work import WorkAdapter
 from a2sdlc.lifecycle.comment import CommentManager
 from a2sdlc.config import ProjectConfig, get_session_id, load_stage_config
@@ -200,7 +201,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
     # Register the comment-driving subscriber now that we have a comment handle.
     # This is the one place dispatch.py knows about a specific subscriber, because
     # the comment lifecycle is intrinsically dispatch-scoped.
-    from a2sdlc.adapters.gh_comment_subscriber import GhCommentSubscriber  # noqa: PLC0415
+    from a2sdlc.adapters.subscriber.gh_comment import GhCommentSubscriber  # noqa: PLC0415
 
     ctx.progress_state.subscribe(GhCommentSubscriber(comment, ctx.progress_state))
 

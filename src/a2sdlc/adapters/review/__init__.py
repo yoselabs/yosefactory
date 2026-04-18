@@ -1,4 +1,4 @@
-"""ReviewAdapter protocol and supporting types."""
+"""ReviewAdapter Protocol + Approval/ReviewComment data + in-tree review impls."""
 
 from __future__ import annotations
 
@@ -47,4 +47,11 @@ class ReviewAdapter(Protocol):
     def find_last_handover(self, pr_number: int) -> HandoverComment | None: ...
 
 
-__all__ = ["Approval", "ReviewComment", "ReviewAdapter"]
+# NOTE: impls below import Approval/ReviewComment (and ReviewAdapter) from this
+# module. That works because Python sees those names as already-defined when
+# it executes the import statements below. Keep these re-exports LAST —
+# moving them above the dataclass/Protocol definitions above would break
+# the partial-init chain with ImportError.
+from a2sdlc.adapters.review.local_noop import LocalNoopReviewAdapter  # noqa: E402
+
+__all__ = ["Approval", "ReviewComment", "ReviewAdapter", "LocalNoopReviewAdapter"]

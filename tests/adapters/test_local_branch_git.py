@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from a2sdlc.adapters.local_branch_git import LocalBranchGitAdapter
+from a2sdlc.adapters.git import LocalBranchGitAdapter
 
 
 def _init_repo(path: Path) -> None:

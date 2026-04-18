@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from a2sdlc.adapters.protocols import StageRunner
+from a2sdlc.adapters.runner import StageRunner
 from a2sdlc.config import StageConfig
 from a2sdlc.domain.models import StageName, StageResult, extract_result
 from a2sdlc.evaluation.progress import ProgressState

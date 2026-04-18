@@ -19,7 +19,7 @@ from a2sdlc.adapters.work import PipelineEvent
 from a2sdlc.domain.handover import FeedbackItem, HandoverComment
 from a2sdlc.domain.models import StageName
 
-_log = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 _TICKET_FILE = "ticket.md"
 _PR_FILE = "pr.json"
@@ -129,13 +129,13 @@ class LocalFileWorkAdapter:
         target.write_text(body)
 
     def set_stage_label(self, key: str, stage: StageName) -> None:
-        _log.info("set_stage_label key=%s stage=%s", key, stage.value)
+        logger.info("set_stage_label key=%s stage=%s", key, stage.value)
 
     def set_done_label(self, key: str) -> None:
-        _log.info("set_done_label key=%s", key)
+        logger.info("set_done_label key=%s", key)
 
     def set_blocked(self, key: str, reason: str) -> None:
-        _log.info("set_blocked key=%s reason=%s", key, reason)
+        logger.info("set_blocked key=%s reason=%s", key, reason)
 
     def format_branch(self, ticket_key: str) -> str:
         return f"a2sdlc/{ticket_key}"

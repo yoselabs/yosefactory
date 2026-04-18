@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from a2sdlc.adapters.protocols import Subscriber
+from a2sdlc.adapters.subscriber import Subscriber
 from a2sdlc.evaluation.progress import GroupClose, ProgressEvent
 
 

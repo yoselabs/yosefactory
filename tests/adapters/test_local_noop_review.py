@@ -4,7 +4,7 @@ import json
 import subprocess
 from datetime import datetime, timedelta, timezone
 
-from a2sdlc.adapters.local_noop_review import LocalNoopReviewAdapter
+from a2sdlc.adapters.review.local_noop import LocalNoopReviewAdapter
 from a2sdlc.adapters.review import Approval
 
 

@@ -6,7 +6,7 @@ import shutil
 import time
 from datetime import datetime, timezone
 
-from a2sdlc.adapters.local_file_work import LocalFileWorkAdapter
+from a2sdlc.adapters.work.local_file import LocalFileWorkAdapter
 from a2sdlc.domain.models import StageName
 
 
@@ -337,7 +337,7 @@ def test_set_stage_label_logs_and_does_not_crash(tmp_path, caplog):
         stage=StageName.SPEC,
         ticket_path=None,
     )
-    with caplog.at_level(logging.INFO, logger="a2sdlc.adapters.local_file_work"):
+    with caplog.at_level(logging.INFO, logger="a2sdlc.adapters.work.local_file"):
         adapter.set_stage_label("sid-1", StageName.IMPLEMENT)
 
     assert any("set_stage_label" in r.message for r in caplog.records)
@@ -353,7 +353,7 @@ def test_set_done_label_logs_and_does_not_crash(tmp_path, caplog):
         stage=StageName.MERGE,
         ticket_path=None,
     )
-    with caplog.at_level(logging.INFO, logger="a2sdlc.adapters.local_file_work"):
+    with caplog.at_level(logging.INFO, logger="a2sdlc.adapters.work.local_file"):
         adapter.set_done_label("sid-1")
 
     assert any("set_done_label" in r.message for r in caplog.records)
@@ -369,7 +369,7 @@ def test_set_blocked_logs_and_does_not_crash(tmp_path, caplog):
         stage=StageName.SPEC,
         ticket_path=None,
     )
-    with caplog.at_level(logging.INFO, logger="a2sdlc.adapters.local_file_work"):
+    with caplog.at_level(logging.INFO, logger="a2sdlc.adapters.work.local_file"):
         adapter.set_blocked("sid-1", "no upstream")
 
     assert any("no upstream" in r.message for r in caplog.records)

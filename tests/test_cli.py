@@ -211,6 +211,7 @@ class TestMainDispatch:
             patch("a2sdlc.adapters.github.connect") as mock_connect,
             patch("a2sdlc.adapters.github.GitHubWorkAdapter") as mock_work,
             patch("a2sdlc.adapters.github.GitHubReviewAdapter") as mock_review,
+            # patch where cli.py looks it up (package namespace), not where it's defined
             patch("a2sdlc.adapters.git.LocalGitAdapter") as mock_git,
             patch("a2sdlc.pipeline.dispatch.dispatch") as mock_dispatch,
             patch.dict(

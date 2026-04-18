@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from a2sdlc.adapters.mlflow_trace_subscriber import MlflowTraceSubscriber
+from a2sdlc.adapters.subscriber.mlflow_trace import MlflowTraceSubscriber
 from a2sdlc.domain.models import StageName
 from a2sdlc.evaluation.progress import (
     GroupClose,
@@ -65,7 +65,7 @@ class FakeMlflow:
 def fake_mlflow(monkeypatch) -> FakeMlflow:
     fake = FakeMlflow()
     monkeypatch.setattr(
-        "a2sdlc.adapters.mlflow_trace_subscriber.mlflow.start_span_no_context",
+        "a2sdlc.adapters.subscriber.mlflow_trace.mlflow.start_span_no_context",
         fake.start_span_no_context,
     )
     return fake

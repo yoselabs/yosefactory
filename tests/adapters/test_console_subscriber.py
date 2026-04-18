@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from a2sdlc.adapters.console_subscriber import ConsoleSubscriber
+from a2sdlc.adapters.subscriber.console import ConsoleSubscriber
 from a2sdlc.domain.models import StageName
 from a2sdlc.evaluation.progress import (
     Metrics,

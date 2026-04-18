@@ -19,7 +19,7 @@ from typing import Any
 from a2sdlc.adapters.review import Approval, ReviewComment
 from a2sdlc.domain.handover import FeedbackItem, HandoverComment
 
-logger = logging.getLogger("a2sdlc.adapters.local_noop_review")
+logger = logging.getLogger(__name__)
 
 _PR_FILE = "pr.json"
 _FEEDBACK_FILE = "feedback.json"

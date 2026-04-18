@@ -14,7 +14,7 @@ from a2sdlc.domain.exceptions import BlockedError
 @pytest.mark.unit
 class TestSetupBranch:
     def test_creates_new_branch(self, tmp_path: Path) -> None:
-        with patch("a2sdlc.adapters.git.Repo") as MockRepo:
+        with patch("a2sdlc.adapters.git.local.Repo") as MockRepo:
             mock_repo = MockRepo.return_value
             mock_repo.heads = []
             mock_repo.git = MagicMock()
@@ -26,7 +26,7 @@ class TestSetupBranch:
         mock_repo.git.checkout.assert_called()
 
     def test_checks_out_existing_branch(self, tmp_path: Path) -> None:
-        with patch("a2sdlc.adapters.git.Repo") as MockRepo:
+        with patch("a2sdlc.adapters.git.local.Repo") as MockRepo:
             mock_repo = MockRepo.return_value
             mock_head = MagicMock()
             mock_head.name = "agent/15"
@@ -39,7 +39,7 @@ class TestSetupBranch:
         assert branch == "agent/15"
 
     def test_conflict_raises_blocked(self, tmp_path: Path) -> None:
-        with patch("a2sdlc.adapters.git.Repo") as MockRepo:
+        with patch("a2sdlc.adapters.git.local.Repo") as MockRepo:
             from git.exc import GitCommandError
 
             mock_repo = MockRepo.return_value
@@ -55,14 +55,14 @@ class TestSetupBranch:
 @pytest.mark.unit
 class TestSyncWithBase:
     def test_success(self, tmp_path: Path) -> None:
-        with patch("a2sdlc.adapters.git.Repo") as MockRepo:
+        with patch("a2sdlc.adapters.git.local.Repo") as MockRepo:
             mock_repo = MockRepo.return_value
             mock_repo.git = MagicMock()
             adapter = LocalGitAdapter(tmp_path)
             assert adapter.sync_with_base("main") is True
 
     def test_conflict_returns_false(self, tmp_path: Path) -> None:
-        with patch("a2sdlc.adapters.git.Repo") as MockRepo:
+        with patch("a2sdlc.adapters.git.local.Repo") as MockRepo:
             from git.exc import GitCommandError
 
             mock_repo = MockRepo.return_value
@@ -75,7 +75,7 @@ class TestSyncWithBase:
 @pytest.mark.unit
 class TestCommitArtifacts:
     def test_commits_specified_paths(self, tmp_path: Path) -> None:
-        with patch("a2sdlc.adapters.git.Repo") as MockRepo:
+        with patch("a2sdlc.adapters.git.local.Repo") as MockRepo:
             mock_repo = MockRepo.return_value
             mock_repo.git = MagicMock()
             mock_repo.is_dirty.return_value = True
@@ -88,7 +88,7 @@ class TestCommitArtifacts:
         mock_repo.git.commit.assert_called_once()
 
     def test_nothing_to_commit(self, tmp_path: Path) -> None:
-        with patch("a2sdlc.adapters.git.Repo") as MockRepo:
+        with patch("a2sdlc.adapters.git.local.Repo") as MockRepo:
             mock_repo = MockRepo.return_value
             mock_repo.git = MagicMock()
             mock_repo.is_dirty.return_value = False
@@ -103,7 +103,7 @@ class TestCommitArtifacts:
 @pytest.mark.unit
 class TestPush:
     def test_pushes_current_branch(self, tmp_path: Path) -> None:
-        with patch("a2sdlc.adapters.git.Repo") as MockRepo:
+        with patch("a2sdlc.adapters.git.local.Repo") as MockRepo:
             mock_repo = MockRepo.return_value
             mock_repo.git = MagicMock()
             type(mock_repo.active_branch).name = PropertyMock(return_value="agent/15")
@@ -121,17 +121,17 @@ class TestReadWriteState:
         state_path.parent.mkdir(parents=True)
         state_path.write_text('{"stage":"spec"}')
 
-        with patch("a2sdlc.adapters.git.Repo"):
+        with patch("a2sdlc.adapters.git.local.Repo"):
             adapter = LocalGitAdapter(tmp_path)
             assert adapter.read_state() == '{"stage":"spec"}'
 
     def test_read_state_missing(self, tmp_path: Path) -> None:
-        with patch("a2sdlc.adapters.git.Repo"):
+        with patch("a2sdlc.adapters.git.local.Repo"):
             adapter = LocalGitAdapter(tmp_path)
             assert adapter.read_state() is None
 
     def test_write_state(self, tmp_path: Path) -> None:
-        with patch("a2sdlc.adapters.git.Repo"):
+        with patch("a2sdlc.adapters.git.local.Repo"):
             adapter = LocalGitAdapter(tmp_path)
             adapter.write_state('{"stage":"implement"}')
 

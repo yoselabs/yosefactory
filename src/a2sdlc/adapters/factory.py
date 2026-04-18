@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from a2sdlc.adapters.local_branch_git import LocalBranchGitAdapter
-from a2sdlc.adapters.local_file_work import LocalFileWorkAdapter
-from a2sdlc.adapters.local_noop_review import LocalNoopReviewAdapter
+from a2sdlc.adapters.git import LocalBranchGitAdapter
+from a2sdlc.adapters.work import LocalFileWorkAdapter
+from a2sdlc.adapters.review import LocalNoopReviewAdapter
 from a2sdlc.domain.models import StageName
 
 

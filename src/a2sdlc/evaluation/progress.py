@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from a2sdlc.domain.models import StageName
 
 if TYPE_CHECKING:
-    from a2sdlc.adapters.protocols import Subscriber
+    from a2sdlc.adapters.subscriber import Subscriber
 
 
 # ── Data models ────────────────────────────────────────────────────

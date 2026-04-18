@@ -10,7 +10,7 @@ from git.exc import GitCommandError
 
 from a2sdlc.domain.exceptions import BlockedError
 
-logger = logging.getLogger("a2sdlc.git")
+logger = logging.getLogger(__name__)
 
 
 class LocalGitAdapter:

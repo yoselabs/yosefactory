@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from a2sdlc.adapters.gh_comment_subscriber import GhCommentSubscriber
+from a2sdlc.adapters.subscriber.gh_comment import GhCommentSubscriber
 from a2sdlc.domain.models import StageName
 from a2sdlc.evaluation.progress import (
     Metrics,

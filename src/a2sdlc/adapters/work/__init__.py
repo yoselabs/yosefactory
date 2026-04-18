@@ -1,4 +1,4 @@
-"""WorkAdapter protocol and PipelineEvent."""
+"""WorkAdapter Protocol + PipelineEvent + in-tree work impls."""
 
 from __future__ import annotations
 
@@ -44,4 +44,11 @@ class WorkAdapter(Protocol):
     def find_last_handover(self, key: str) -> HandoverComment | None: ...
 
 
-__all__ = ["PipelineEvent", "WorkAdapter"]
+# NOTE: impls below import PipelineEvent (and WorkAdapter) from this module.
+# That works because Python sees those names as already-defined when it
+# executes the import statements below. Keep these re-exports LAST —
+# moving them above the dataclass/Protocol definitions above would break
+# the partial-init chain with ImportError.
+from a2sdlc.adapters.work.local_file import LocalFileWorkAdapter  # noqa: E402
+
+__all__ = ["PipelineEvent", "WorkAdapter", "LocalFileWorkAdapter"]

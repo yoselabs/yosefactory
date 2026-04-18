@@ -129,7 +129,7 @@ def main(argv: list[str] | None = None) -> None:
         work_adapter = GitHubWorkAdapter(repo)
         review_adapter = GitHubReviewAdapter(repo)
 
-        from a2sdlc.adapters.gh_actions_subscriber import GhActionsLogSubscriber  # noqa: PLC0415
+        from a2sdlc.adapters.subscriber.gh_actions import GhActionsLogSubscriber  # noqa: PLC0415
         from a2sdlc.adapters.git import LocalGitAdapter  # noqa: PLC0415
         from a2sdlc.evaluation.progress import ProgressState  # noqa: PLC0415
         from a2sdlc.pipeline.runner import SdkStageRunner  # noqa: PLC0415

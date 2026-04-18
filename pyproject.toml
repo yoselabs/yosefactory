@@ -85,17 +85,19 @@ ignore_imports = [
     # config.py is a glue point (docs/architecture.md §6) — it lazy-imports
     # stages to merge stage defaults with project overrides. Legit, bounded.
     "a2sdlc.config -> a2sdlc.stages",
-    # protocols.py defines Subscriber Protocol for ProgressEvent; TYPE_CHECKING
+    # subscriber/ defines Subscriber Protocol for ProgressEvent; TYPE_CHECKING
     # import breaks circular dep with evaluation/progress.py (Task 4).
-    "a2sdlc.adapters.protocols -> a2sdlc.evaluation.progress",
+    "a2sdlc.adapters.subscriber -> a2sdlc.evaluation.progress",
+    # runner/ Protocol TYPE_CHECKING imports ProgressState for run() signature.
+    "a2sdlc.adapters.runner -> a2sdlc.evaluation.progress",
     # Subscriber implementations (console, gh_actions, gh_comment) import ProgressEvent
     # and related types to implement the Subscriber protocol. These are adapters
     # that consume evaluation events (direction adapters ← evaluation). Legitimate.
-    "a2sdlc.adapters.console_subscriber -> a2sdlc.evaluation.progress",
-    "a2sdlc.adapters.gh_actions_subscriber -> a2sdlc.evaluation.progress",
-    "a2sdlc.adapters.gh_comment_subscriber -> a2sdlc.evaluation.progress",
-    "a2sdlc.adapters.gh_comment_subscriber -> a2sdlc.evaluation.throttle",
-    "a2sdlc.adapters.mlflow_trace_subscriber -> a2sdlc.evaluation.progress",
+    "a2sdlc.adapters.subscriber.console -> a2sdlc.evaluation.progress",
+    "a2sdlc.adapters.subscriber.gh_actions -> a2sdlc.evaluation.progress",
+    "a2sdlc.adapters.subscriber.gh_comment -> a2sdlc.evaluation.progress",
+    "a2sdlc.adapters.subscriber.gh_comment -> a2sdlc.evaluation.throttle",
+    "a2sdlc.adapters.subscriber.mlflow_trace -> a2sdlc.evaluation.progress",
 ]
 
 [[tool.importlinter.contracts]]
@@ -117,11 +119,12 @@ type = "forbidden"
 source_modules = ["a2sdlc.lifecycle"]
 forbidden_modules = ["a2sdlc.assembly", "a2sdlc.evaluation"]
 ignore_imports = [
-    # TYPE_CHECKING import in adapters.protocols breaks the transitive
+    # TYPE_CHECKING import in adapters.subscriber breaks the transitive
     # lifecycle → evaluation chain. The direct lifecycle.state →
     # adapters.protocols edge is legal (adapters is not in
     # forbidden_modules), so we only ignore the trailing TYPE_CHECKING hop.
-    "a2sdlc.adapters.protocols -> a2sdlc.evaluation.progress",
+    "a2sdlc.adapters.subscriber -> a2sdlc.evaluation.progress",
+    "a2sdlc.adapters.runner -> a2sdlc.evaluation.progress",
 ]
 
 [[tool.importlinter.contracts]]

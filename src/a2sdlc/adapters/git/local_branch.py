@@ -5,7 +5,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from a2sdlc.adapters.git import LocalGitAdapter
+from a2sdlc.adapters.git.local import LocalGitAdapter
 from a2sdlc.domain.exceptions import BlockedError
 
 
