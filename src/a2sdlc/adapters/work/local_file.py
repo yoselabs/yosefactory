@@ -15,7 +15,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from a2sdlc.adapters.work import PipelineEvent
+from a2sdlc.domain.pipeline_event import PipelineEvent
 from a2sdlc.domain.handover import FeedbackItem, HandoverComment
 from a2sdlc.domain.models import StageName
 

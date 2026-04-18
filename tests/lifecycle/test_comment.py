@@ -182,7 +182,7 @@ def test_parse_event_raises_skip_when_no_event() -> None:
 
 
 def test_parse_event_returns_event_when_configured() -> None:
-    from a2sdlc.adapters.work import PipelineEvent
+    from a2sdlc.domain.pipeline_event import PipelineEvent
     from a2sdlc.domain.models import StageName
 
     event = PipelineEvent(key="PROJ-1", trigger_stage=StageName.SPEC)

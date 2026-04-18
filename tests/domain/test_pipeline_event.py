@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from a2sdlc.adapters.work import PipelineEvent
+from a2sdlc.domain.pipeline_event import PipelineEvent
 from a2sdlc.domain.models import StageName
 
 

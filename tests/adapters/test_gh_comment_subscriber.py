@@ -105,7 +105,7 @@ async def test_subscriber_uses_only_real_comment_manager_methods() -> None:
     broad exception handler."""
     from a2sdlc.lifecycle.comment import CommentManager
     from tests.fakes import FakeWorkAdapter
-    from a2sdlc.adapters.work import PipelineEvent
+    from a2sdlc.domain.pipeline_event import PipelineEvent
 
     work = FakeWorkAdapter(
         event=PipelineEvent(key="42", trigger_stage=StageName.SPEC),

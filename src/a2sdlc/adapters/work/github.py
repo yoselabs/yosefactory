@@ -10,7 +10,7 @@ from datetime import datetime
 
 from github.Repository import Repository
 
-from a2sdlc.adapters.work import PipelineEvent
+from a2sdlc.domain.pipeline_event import PipelineEvent
 from a2sdlc.domain.exceptions import SkipEvent
 from a2sdlc.domain.handover import (
     HANDOVER_PATTERN,

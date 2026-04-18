@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from a2sdlc.adapters.work import PipelineEvent
+from a2sdlc.domain.pipeline_event import PipelineEvent
 from a2sdlc.config import ProjectConfig
 from a2sdlc.domain.models import StageName
 from a2sdlc.domain.run_result import RunResult

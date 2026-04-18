@@ -1,28 +1,19 @@
-"""WorkAdapter Protocol + PipelineEvent + in-tree work impls."""
+"""WorkAdapter Protocol + in-tree work impls.
+
+Note: ``PipelineEvent`` moved to ``a2sdlc.domain.pipeline_event`` in the
+adapters-layout refactor. This module re-exports it for backward
+compatibility with callers that used ``from a2sdlc.adapters.work import
+PipelineEvent``. New code should import directly from domain.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
 from a2sdlc.domain.handover import FeedbackItem, HandoverComment
 from a2sdlc.domain.models import StageName
-
-
-@dataclass
-class PipelineEvent:
-    """Normalized pipeline event from a work adapter.
-
-    trigger_stage: what the event literally says (label value, or None for feedback/proceed).
-    is_feedback: True for comment/review events, False for label events.
-    The engine resolves the actual target stage via the routing table.
-    """
-
-    key: str
-    trigger_stage: StageName | None = None
-    is_feedback: bool = False
-    pr_number: int | None = None
+from a2sdlc.domain.pipeline_event import PipelineEvent
 
 
 class WorkAdapter(Protocol):
@@ -45,10 +36,12 @@ class WorkAdapter(Protocol):
 
 
 # NOTE: impls below import PipelineEvent (and WorkAdapter) from this module.
-# That works because Python sees those names as already-defined when it
-# executes the import statements below. Keep these re-exports LAST —
-# moving them above the dataclass/Protocol definitions above would break
-# the partial-init chain with ImportError.
+# PipelineEvent is bound above via re-import from a2sdlc.domain.pipeline_event
+# BEFORE these submodule imports run, so the name is already available in
+# this module's namespace when the impls' `from a2sdlc.adapters.work import
+# PipelineEvent` would resolve (though impls now import direct from domain).
+# Keep these re-exports LAST — moving them above the Protocol definition
+# would break the partial-init chain with ImportError.
 from a2sdlc.adapters.work.local_file import LocalFileWorkAdapter  # noqa: E402
 from a2sdlc.adapters.work.github import GitHubWorkAdapter  # noqa: E402
 

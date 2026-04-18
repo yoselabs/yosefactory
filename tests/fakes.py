@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from a2sdlc.adapters.review import Approval, ReviewComment
-from a2sdlc.adapters.work import PipelineEvent
+from a2sdlc.domain.pipeline_event import PipelineEvent
 from a2sdlc.config import StageConfig
 from a2sdlc.domain.exceptions import BlockedError, SkipEvent
 from a2sdlc.domain.handover import FeedbackItem, HandoverComment
