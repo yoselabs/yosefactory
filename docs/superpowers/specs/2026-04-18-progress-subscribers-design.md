@@ -188,6 +188,16 @@ class ProgressState:
     async def add_milestone(self, label: str) -> None: ...
     async def stage_end(self, success: bool, error: str | None,
                         final: Metrics) -> None: ...
+
+    def snapshot_metrics(self) -> Metrics:
+        """Build a Metrics event from the current state — synchronous, no emit."""
+        return Metrics(
+            input_tokens=self.input_tokens,
+            output_tokens=self.output_tokens,
+            total_cost_usd=self.total_cost_usd,
+            num_turns=self.num_turns,
+            elapsed=time.monotonic() - self.start_time,
+        )
 ```
 
 **Clock discipline.** `ProgressState.start_time` switches from `time.time()` (wall clock, today) to `time.monotonic()`. All `elapsed` values and the `Throttle` utility use `time.monotonic()` consistently. Wall-clock timestamps are only meaningful for log records emitted by Python's `logging` module, which already handles them.
@@ -217,7 +227,7 @@ try:
     if target_stage == StageName.MERGE:
         # existing MERGE logic (lines 192-212)
         ...
-        await ctx.progress_state.stage_end(success=True, error=None, final=_final_metrics(ctx.progress_state))
+        await ctx.progress_state.stage_end(success=True, error=None, final=ctx.progress_state.snapshot_metrics())
         return DispatchResult(stage=StageName.MERGE)
 
     # existing prompt assembly + executor call (lines 217-end)
@@ -226,7 +236,7 @@ try:
     success = exec_result.success
     error = exec_result.error
 finally:
-    await ctx.progress_state.stage_end(success, error, _final_metrics(ctx.progress_state))
+    await ctx.progress_state.stage_end(success, error, ctx.progress_state.snapshot_metrics())
 ```
 
 Early-return paths *before* `comment.start` (lines 67-189) do not emit stage events — those are routing decisions, not stage executions, and have no audience that cares.
@@ -389,7 +399,7 @@ Rationale: there is one in-tree consumer of this code (the engine itself), the c
 
 Order:
 
-1. Add `ProgressEvent` taxonomy + lifecycle/mutation methods to `evaluation/progress.py` (`subscribe`, `_emit`, `stage_start`, `stage_end`, `add_tool_call`, `update_metrics`, `add_milestone`, `open_group`, `close_group`). Switch `start_time` to `time.monotonic()`.
+1. Add `ProgressEvent` taxonomy + lifecycle/mutation methods to `evaluation/progress.py` (`subscribe`, `_emit`, `stage_start`, `stage_end`, `add_tool_call`, `update_metrics`, `add_milestone`, `open_group`, `close_group`, `snapshot_metrics`). Switch `start_time` to `time.monotonic()`. Repartition `__init__` to take only dispatch-lifetime fields (`project_root`); per-stage fields land via `stage_start`.
 2. Add `Throttle` to `evaluation/throttle.py`.
 3. Add `Subscriber` Protocol to `adapters/protocols.py` (alongside the existing ports).
 4. Add `RecordingSubscriber` in `tests/fakes.py`.
@@ -401,7 +411,7 @@ Order:
    - `pipeline/dispatch.py:44` (field declaration)
    - `pipeline/dispatch.py:259-261` (`ctx.progress.on_group_open/on_event/on_group_close` — moves into `GhActionsLogSubscriber` reacting to `GroupOpen`/`GroupClose`/`ToolEntry` events)
    - `cli.py:139` (build the `progress` adapter), `cli.py:145-146` (pass into `DispatchContext` and `SdkStageRunner`)
-   - `cli_local.py:99` (`SdkStageRunner(progress=...)`), `cli_local.py:172` (`build_progress_adapter`), `cli_local.py:185` (pass to `DispatchContext`), `cli_local.py:190` (`progress.on_stage_start`), `cli_local.py:196` (delete; dispatch now owns `StageStart` emission), `cli_local.py:266` (`progress.on_stage_end`; same)
+   - `cli_local.py:99` (`SdkStageRunner(progress=...)`), `cli_local.py:172` (`build_progress_adapter`), `cli_local.py:174` (`_build_runner(progress, ...)`), `cli_local.py:190` (pass to `DispatchContext`), `cli_local.py:196` (delete `progress.on_stage_start`; dispatch now owns `StageStart` emission), `cli_local.py:266` (delete `progress.on_stage_end`; same).
    - Test fixtures: `tests/pipeline/test_dispatch.py` (4 occurrences), `tests/pipeline/test_dispatch_e2e.py` (2), `tests/pipeline/test_dispatch_progress.py` (1), `tests/pipeline/test_stage_executor.py` (2). Plus `tests/fakes.py` plumbing.
 10. Update `pipeline/dispatch.py` to wrap the post-`comment.start` portion (line 190 onwards) with `await ctx.progress_state.stage_start(...)` / `stage_end(...)`, covering both the MERGE branch and the SPEC/IMPLEMENT/REVIEW branch. Pseudocode in §3.3.
 11. Delete `ProgressAdapter` Protocol from `adapters/protocols.py`. Delete `SdkStageRunner.__init__`'s `progress: ProgressAdapter | None` parameter (`runner.py:287`).
