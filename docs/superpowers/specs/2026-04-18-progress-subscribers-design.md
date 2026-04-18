@@ -102,9 +102,23 @@ class Subscriber(Protocol):
 
 ### 3.3 ProgressState becomes the bus
 
-**Lifecycle change:** today `ProgressState` is constructed inside `runner.run_stage` (per stage). After this refactor it is **constructed once per dispatch lifetime in the composition root** (`cli_local.py` for local runs, `cli.py`/`pipeline/dispatch.py` for GH dispatch) and reused across stages — so subscribers register on it before any stage starts. `stage_start()` clears the per-stage mutable state (resets `tool_log`, `milestones`, `_failed`, `start_time`, counters); the subscriber list survives.
+**Lifecycle change:** today `ProgressState` is constructed inside `runner.run_stage` (per stage). After this refactor it is **constructed once per dispatch lifetime in the composition root** (`cli_local.py` for local runs, `cli.py`/`pipeline/dispatch.py` for GH dispatch) and reused across stages — so subscribers register on it before any stage starts. `stage_start()` is the per-stage refresh point; the subscriber list survives across stages.
 
-`DispatchContext.progress` (today: `ProgressAdapter`) is renamed to `DispatchContext.progress_state: ProgressState`. The `RunResult.progress` field still returns the same live `ProgressState` reference — its fields (`tool_log`, `milestones`, `tasks`, `context_window`, `model`, `branch`, `max_turns`, `num_turns`, `input_tokens`, `output_tokens`, `total_cost_usd`) all survive intact; only the lifecycle changes from per-stage to per-dispatch.
+**Field partition:**
+
+| Field | Lifetime | Set in |
+|---|---|---|
+| `project_root` | dispatch | `__init__` |
+| `_subscribers`, `_failed` | dispatch (subscriber list); per-stage (failed set, cleared in `stage_start`) | `__init__` / mutated by `subscribe`, `stage_start`, `_emit` |
+| `model`, `max_turns`, `context_window` | **per-stage** (each stage uses its own `StageConfig`) | refreshed in `stage_start` from the passed `StageConfig` |
+| `branch` | per-stage in principle (could change across stages); set in `stage_start` | `stage_start` |
+| `start_time` | per-stage | `stage_start` |
+| `tool_log`, `milestones`, `tasks` | per-stage (cleared on `stage_start`) | mutated by `add_tool_call`, `add_milestone`, etc. |
+| `input_tokens`, `output_tokens`, `total_cost_usd`, `num_turns` | per-stage (reset to 0 on `stage_start`) | mutated by `update_metrics` |
+
+`ProgressState.__init__` therefore takes only `project_root`. Per-stage values are passed to `stage_start()` and overwrite the previous stage's values. This avoids the bug where SPEC's model/max_turns would leak into IMPLEMENT's status bar.
+
+`DispatchContext.progress` (today: `ProgressAdapter`) is renamed to `DispatchContext.progress_state: ProgressState`. The `RunResult.progress` field still returns the same live `ProgressState` reference — its fields all survive intact; only the lifecycle changes from per-stage to per-dispatch. **Callers that read per-stage data off `RunResult.progress` (e.g. `tool_log`, `milestones`) must consume it before the next `stage_start()` clears it, or snapshot it.** Today's only such caller is `pipeline/stage_executor.py:_milestones`, which already snapshots immediately after the stage returns — safe.
 
 `ProgressState` gains a subscriber registry plus mutation methods that emit events:
 
@@ -132,8 +146,22 @@ class ProgressState:
                 )
                 self._failed.add(id(sub))
 
-    async def stage_start(self, stage: StageName, session_id: str) -> None:
-        # Reset per-stage mutable state; subscribers persist.
+    async def stage_start(
+        self,
+        stage: StageName,
+        session_id: str,
+        *,
+        model: str,
+        max_turns: int,
+        context_window: int,
+        branch: str,
+    ) -> None:
+        # Refresh per-stage configuration (each stage may use its own StageConfig).
+        self.model = model
+        self.max_turns = max_turns
+        self.context_window = context_window
+        self.branch = branch
+        # Reset per-stage mutable state; subscriber list and project_root survive.
         self._failed.clear()
         self.tool_log.clear()
         self.milestones.clear()
@@ -166,24 +194,44 @@ class ProgressState:
 
 The runner stops calling `progress_adapter.on_*` and stops accepting `on_progress`. It only `await`s `progress_state.add_tool_call(...)`, `update_metrics(...)`, `add_milestone(...)`, `open_group(...)`, `close_group(...)`. It does **not** emit `StageStart`/`StageEnd` itself.
 
-**`StageStart`/`StageEnd` are emitted by `pipeline/dispatch.py`**, not by the runner — wrapping every stage including ones that bypass `runner.run_stage` (notably MERGE, which today returns from `dispatch()` without invoking the runner). Concretely, `dispatch.py`'s per-stage block becomes:
+**`StageStart`/`StageEnd` are emitted by `pipeline/dispatch.py`**, not by the runner — wrapping every stage including ones that bypass `runner.run_stage` (notably MERGE, which returns from `dispatch()` without invoking the runner).
+
+`dispatch.py` today has many early-return branches *before* the stage truly begins (feedback dedup, idempotency, circuit breaker, git BlockedError checks — all in lines 67-189). The natural insertion point is **immediately after `comment.start(target_stage.value)` at line 190**, which is where the stage is committed to running. The wrapper covers two sub-blocks:
+
+1. **MERGE branch (today: lines 192-212)** — wrap with `stage_start(...)` / `stage_end(...)`. Uses MERGE's `StageConfig` for model/max_turns even though they're unused (load via `load_stage_config` for symmetry).
+2. **SPEC/IMPLEMENT/REVIEW branch (today: lines 214-end)** — wrap from after `load_stage_config` (line 215, so we have `model`/`max_turns` for `stage_start`) through the executor call and post-processing.
+
+Sketch (line numbers are pre-refactor):
 
 ```python
-await ctx.progress_state.stage_start(stage, session_id)
+# dispatch.py, after line 190
+stage_config = load_stage_config(target_stage.value, ctx.config)
+await ctx.progress_state.stage_start(
+    target_stage, session_id,
+    model=stage_config.model,
+    max_turns=stage_config.max_turns,
+    context_window=context_window_for_model(stage_config.model) or 0,
+    branch=branch,
+)
 try:
-    if stage == StageName.MERGE:
-        # ... existing merge logic, no runner call ...
-        success, error = await _run_merge(ctx)
-    else:
-        exec_result = await stage_executor.run(...)  # this calls runner; runner emits in-between events
-        success, error = exec_result.success, exec_result.error
+    if target_stage == StageName.MERGE:
+        # existing MERGE logic (lines 192-212)
+        ...
+        await ctx.progress_state.stage_end(success=True, error=None, final=_final_metrics(ctx.progress_state))
+        return DispatchResult(stage=StageName.MERGE)
+
+    # existing prompt assembly + executor call (lines 217-end)
+    exec_result = await executor.run(...)
+    ...
+    success = exec_result.success
+    error = exec_result.error
+finally:
     await ctx.progress_state.stage_end(success, error, _final_metrics(ctx.progress_state))
-except Exception as e:
-    await ctx.progress_state.stage_end(False, str(e), _final_metrics(ctx.progress_state))
-    raise
 ```
 
-Consequence: every stage produces at least `StageStart` + `StageEnd`. SDK-driven stages (SPEC, IMPLEMENT, REVIEW) additionally produce `ToolEntry`, `Metrics`, `Milestone`, `GroupOpen`, `GroupClose` events from inside the runner. MERGE produces only the bracket pair, which is correct: there is no agent activity to report.
+Early-return paths *before* `comment.start` (lines 67-189) do not emit stage events — those are routing decisions, not stage executions, and have no audience that cares.
+
+Consequence: every executed stage produces `StageStart` + `StageEnd`. SDK-driven stages additionally produce `ToolEntry`, `Metrics`, `Milestone`, `GroupOpen`, `GroupClose` from inside the runner. MERGE produces only the bracket pair, which is correct: there is no agent activity to report.
 
 ### 3.4 Subscribers (replacing today's adapters)
 
@@ -349,11 +397,18 @@ Order:
 6. Rewrite `GhActionsProgressAdapter` → `GhActionsLogSubscriber`. Rename file. Same `::group::` markers; this subscriber owns the `::group::Tool: <name>` output today emitted via `print(...)` in `runner.py:261-272` — the inline `print` fallback in `_handle_assistant_message` is removed and the subscriber reproduces it from `ToolEntry` events.
 7. Add `GhCommentSubscriber` (new file). Move the lambda logic from `dispatch.py:252` into it. Constructor takes `(comment_handle, progress_state, throttle_seconds=5.0)`.
 8. Update `pipeline/runner.py`: drop `on_progress` kwarg, drop direct `progress_adapter.on_*` calls, drop the inline `print("::group::...")` and `print("::endgroup::")` fallback in `_handle_assistant_message`. `await` `ProgressState` mutation methods instead. Runner does **not** emit `StageStart`/`StageEnd`.
-9. **Rename `DispatchContext.progress: ProgressAdapter` → `DispatchContext.progress_state: ProgressState`.** Update 5 production call sites (`pipeline/dispatch.py:44`, `pipeline/dispatch.py:259-261`, `cli.py:141`, `cli_local.py:185`) and test fixtures in `tests/pipeline/test_dispatch.py`, `test_dispatch_e2e.py`, `test_dispatch_progress.py`.
-10. Update `pipeline/dispatch.py` to wrap every per-stage block with `await ctx.progress_state.stage_start(...)` / `stage_end(...)` (including MERGE, which today bypasses the runner). See §3.3.
-11. Delete `ProgressAdapter` Protocol from `adapters/protocols.py`. Delete `SdkStageRunner.__init__`'s `progress: ProgressAdapter | None` parameter (`runner.py:287`); the runner reads progress state from the per-call argument carried through `StageRunner.run`.
-12. Update `cli.py` and `cli_local.py` to construct `ProgressState` once, register subscribers, and pass via `DispatchContext`.
-13. Rewrite tests that mocked `ProgressAdapter` — switch to `RecordingSubscriber`.
+9. **Rename `DispatchContext.progress: ProgressAdapter` → `DispatchContext.progress_state: ProgressState`.** Production call sites (line numbers pre-refactor):
+   - `pipeline/dispatch.py:44` (field declaration)
+   - `pipeline/dispatch.py:259-261` (`ctx.progress.on_group_open/on_event/on_group_close` — moves into `GhActionsLogSubscriber` reacting to `GroupOpen`/`GroupClose`/`ToolEntry` events)
+   - `cli.py:139` (build the `progress` adapter), `cli.py:145-146` (pass into `DispatchContext` and `SdkStageRunner`)
+   - `cli_local.py:99` (`SdkStageRunner(progress=...)`), `cli_local.py:172` (`build_progress_adapter`), `cli_local.py:185` (pass to `DispatchContext`), `cli_local.py:190` (`progress.on_stage_start`), `cli_local.py:196` (delete; dispatch now owns `StageStart` emission), `cli_local.py:266` (`progress.on_stage_end`; same)
+   - Test fixtures: `tests/pipeline/test_dispatch.py` (4 occurrences), `tests/pipeline/test_dispatch_e2e.py` (2), `tests/pipeline/test_dispatch_progress.py` (1), `tests/pipeline/test_stage_executor.py` (2). Plus `tests/fakes.py` plumbing.
+10. Update `pipeline/dispatch.py` to wrap the post-`comment.start` portion (line 190 onwards) with `await ctx.progress_state.stage_start(...)` / `stage_end(...)`, covering both the MERGE branch and the SPEC/IMPLEMENT/REVIEW branch. Pseudocode in §3.3.
+11. Delete `ProgressAdapter` Protocol from `adapters/protocols.py`. Delete `SdkStageRunner.__init__`'s `progress: ProgressAdapter | None` parameter (`runner.py:287`).
+12. **Extend `StageRunner.run` Protocol signature** (`adapters/protocols.py:27-38`) to accept `progress_state: ProgressState`. Thread the parameter through `StageExecutor.run` (`pipeline/stage_executor.py:44-70`, `:99-109`) and `run_stage` (`pipeline/runner.py:50-62`). The runner mutates this state instead of constructing its own. `RunResult.progress` returns this same reference.
+13. Delete or rename `adapters/factory.build_progress_adapter` (`adapters/factory.py:61`). Likely repurposed as `build_console_subscriber` (no GH-side equivalent — GH composition wires its subscribers directly).
+14. Update `cli.py` and `cli_local.py` to construct `ProgressState(project_root=...)` once at startup, register subscribers, and pass into `DispatchContext`. The runner no longer takes a progress adapter at construction; subscribers see all events via the shared `ProgressState`.
+15. Rewrite tests that mocked `ProgressAdapter` — switch to `RecordingSubscriber`. Snapshot any per-stage data (`tool_log`, `milestones`) before the next `stage_start()` clears it.
 
 ---
 
