@@ -25,7 +25,7 @@ from a2sdlc.domain.models import (
     strip_status_block,
 )
 from a2sdlc.lifecycle.pr import PRLifecycle
-from a2sdlc.evaluation.progress import format_error, format_final
+from a2sdlc.evaluation.progress import ProgressState, format_error, format_final
 from a2sdlc.evaluation.stats import StageRunStats
 from a2sdlc.assembly.prompt import assemble_system_prompt
 from a2sdlc.pipeline.stage_executor import StageExecutor
@@ -240,6 +240,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
             user_prompt = f"{clean_body}\n\n{pr_context}"
 
     # 11. Execute stage
+    progress_state = ProgressState(project_root=str(ctx.project_root))
     executor = StageExecutor(ctx.runner)
     exec_result = await executor.run(
         user_prompt=user_prompt,
@@ -248,8 +249,8 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
         ticket_key=event.key,
         stage=target_stage,
         project_root=str(ctx.project_root),
+        progress_state=progress_state,
         is_resume=False,
-        on_progress=lambda text: comment.update(text),
         branch=branch,
     )
 

@@ -11,7 +11,6 @@ the per-stage handover file written by ``local_file`` work adapter on
 FakeStageRunner findings (see tests/fakes.py):
   * Emits a valid ``a2sdlc`` status block so dispatch treats the stage as
     successful.
-  * Invokes ``on_progress`` once with the string "fake progress".
   * Returns a ``RunResult`` whose ``output`` contains the formatted body, so
     ``finalize_comment`` fires on the work adapter, which (for ``local_file``)
     persists ``.a2sdlc/handover/<stage>.md``.

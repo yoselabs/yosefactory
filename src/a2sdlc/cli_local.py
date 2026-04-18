@@ -96,7 +96,7 @@ def _build_runner(
         return FakeStageRunner()
     from a2sdlc.pipeline.runner import SdkStageRunner  # noqa: PLC0415
 
-    return SdkStageRunner(progress=progress, effort=effort)
+    return SdkStageRunner(effort=effort)
 
 
 def _print_post_run(

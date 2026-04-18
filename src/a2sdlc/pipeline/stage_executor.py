@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -49,8 +48,8 @@ class StageExecutor:
         ticket_key: str,
         stage: StageName,
         project_root: str,
+        progress_state: ProgressState,
         is_resume: bool = False,
-        on_progress: Callable[[str], None] | None = None,
         branch: str = "",
     ) -> ExecutionResult:
         stats = StageRunStats()
@@ -64,8 +63,8 @@ class StageExecutor:
             ticket_key=ticket_key,
             stage=stage,
             project_root=project_root,
+            progress_state=progress_state,
             is_resume=is_resume,
-            on_progress=on_progress,
             branch=branch,
         )
         stats.add_from_result(result)
@@ -103,8 +102,8 @@ class StageExecutor:
                 ticket_key=ticket_key,
                 stage=stage,
                 project_root=project_root,
+                progress_state=progress_state,
                 is_resume=True,
-                on_progress=on_progress,
                 branch=branch,
             )
             stats.add_from_result(followup)

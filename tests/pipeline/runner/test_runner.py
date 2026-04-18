@@ -41,14 +41,7 @@ class TestMilestone:
 @pytest.mark.unit
 class TestProgressState:
     def test_defaults(self) -> None:
-        ps = ProgressState(
-            model="claude-sonnet-4-6",
-            branch="feat/T-1",
-            max_turns=120,
-            context_window=200_000,
-            project_root="/tmp/test",
-            start_time=1000.0,
-        )
+        ps = ProgressState(project_root="/tmp/test")
         assert ps.input_tokens == 0
         assert ps.output_tokens == 0
         assert ps.total_cost_usd == 0.0
@@ -57,14 +50,7 @@ class TestProgressState:
         assert ps.milestones == []
 
     def test_accumulate(self) -> None:
-        ps = ProgressState(
-            model="claude-sonnet-4-6",
-            branch="feat/T-1",
-            max_turns=120,
-            context_window=200_000,
-            project_root="/tmp/test",
-            start_time=1000.0,
-        )
+        ps = ProgressState(project_root="/tmp/test")
         ps.tool_log.append(ToolEntry(timestamp=1.0, name="Read", target="f.py"))
         ps.milestones.append(Milestone(timestamp=2.0, label="skill invoked"))
         ps.input_tokens = 5000
@@ -118,6 +104,10 @@ def _make_config(**overrides: object) -> StageConfig:
 
         config = replace(config, **overrides)
     return config
+
+
+def _make_progress(project_root: str = "/tmp/test") -> ProgressState:
+    return ProgressState(project_root=project_root)
 
 
 def _make_result_message(
@@ -188,6 +178,7 @@ class TestRunStage:
                 ticket_key="PROJ-1",
                 stage="spec",
                 project_root="/tmp/test",
+                progress_state=_make_progress(),
             )
 
         assert result.success is True
@@ -216,6 +207,7 @@ class TestRunStage:
                 ticket_key="PROJ-1",
                 stage="spec",
                 project_root="/tmp/test",
+                progress_state=_make_progress(),
             )
 
         assert result.success is False
@@ -240,6 +232,7 @@ class TestRunStage:
                 ticket_key="PROJ-1",
                 stage="spec",
                 project_root="/tmp/test",
+                progress_state=_make_progress(),
             )
 
         assert result.success is False
@@ -263,6 +256,7 @@ class TestRunStage:
                 ticket_key="PROJ-1",
                 stage="spec",
                 project_root="/tmp/test",
+                progress_state=_make_progress(),
             )
 
         assert result.success is False
@@ -287,39 +281,11 @@ class TestRunStage:
                 ticket_key="PROJ-1",
                 stage="spec",
                 project_root="/tmp/test",
+                progress_state=_make_progress(),
             )
 
         assert result.success is False
         assert result.error == "no_result"
-
-    @pytest.mark.asyncio
-    async def test_progress_callback(self) -> None:
-        assistant_msg = _make_assistant_message(["Read"])
-        result_msg = _make_result_message()
-        progress_calls: list[str] = []
-
-        async def mock_query(prompt: str, options: object):  # noqa: ANN201, ARG001
-            yield assistant_msg
-            yield result_msg
-
-        with (
-            patch("claude_agent_sdk.query", side_effect=mock_query),
-            patch("claude_agent_sdk.ClaudeAgentOptions"),
-        ):
-            result = await run_stage(
-                user_prompt="Build",
-                system_prompt="sys",
-                config=_make_config(),
-                ticket_key="PROJ-1",
-                stage="spec",
-                project_root="/tmp/test",
-                on_progress=progress_calls.append,
-            )
-
-        assert result.success is True
-        # Progress is throttled at 5s, so with instant mock we get exactly one call.
-        assert len(progress_calls) == 1
-        assert "spec" in progress_calls[0]
 
     @pytest.mark.asyncio
     async def test_resume_session(self) -> None:
@@ -345,6 +311,7 @@ class TestRunStage:
                 ticket_key="PROJ-1",
                 stage="spec",
                 project_root="/tmp/test",
+                progress_state=_make_progress(),
                 is_resume=True,
             )
 
@@ -391,6 +358,7 @@ class TestRunStage:
                 ticket_key="PROJ-1",
                 stage="spec",
                 project_root="/tmp/test",
+                progress_state=_make_progress(),
                 effort=effort_in,
             )
 
@@ -424,6 +392,7 @@ class TestRunStage:
                 ticket_key="PROJ-1",
                 stage="spec",
                 project_root="/tmp/test",
+                progress_state=_make_progress(),
                 effort=None,
             )
 
@@ -461,6 +430,7 @@ class TestRunStage:
                 ticket_key="PROJ-1",
                 stage="spec",
                 project_root="/tmp/test",
+                progress_state=_make_progress(),
             )
 
         assert result.input_tokens == 2000
@@ -475,6 +445,7 @@ class TestRunStage:
             yield assistant_msg
             yield result_msg
 
+        progress = _make_progress()
         with (
             patch("claude_agent_sdk.query", side_effect=mock_query),
             patch("claude_agent_sdk.ClaudeAgentOptions"),
@@ -486,14 +457,12 @@ class TestRunStage:
                 ticket_key="PROJ-1",
                 stage="spec",
                 project_root="/tmp/test",
-                branch="feat/PROJ-1",
+                progress_state=progress,
             )
 
         assert result.success is True
         assert result.progress is not None
-        assert result.progress.branch == "feat/PROJ-1"
-        assert result.progress.model == "claude-sonnet-4-6"
-        assert result.progress.num_turns == 1
+        assert result.progress is progress
         assert len(result.progress.tool_log) == 2
 
 

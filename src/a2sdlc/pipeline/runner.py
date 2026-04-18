@@ -1,50 +1,31 @@
-"""Runner — Claude Agent SDK wrapper with streaming progress."""
+"""Runner — Claude Agent SDK wrapper with progress_state emission."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import time
-from collections.abc import Callable
 from typing import Any
 
 from claude_agent_sdk.types import (
     AssistantMessage,
     ResultMessage,
-    TextBlock,
     ToolUseBlock,
 )
-from rich.console import Console
 
-from a2sdlc.adapters.protocols import ProgressAdapter
 from a2sdlc.config import StageConfig, get_session_id
 from a2sdlc.domain.models import StageName
 from a2sdlc.domain.run_result import RunResult
-from a2sdlc.evaluation.progress import (
-    Milestone,
-    ProgressState,
-    ToolEntry,
-    extract_target,
-    context_window_for_model,
-    format_progress,
-)
+from a2sdlc.evaluation.progress import ProgressState, extract_target
 
 logger = logging.getLogger("a2sdlc.pipeline.runner")
 
-console = Console(force_terminal=True, force_interactive=False)
-
-
-# Maps a2sdlc's ``effort`` config value to the SDK's ``ClaudeAgentOptions.effort``
-# literal. a2sdlc exposes ``xhigh`` as the top tier; the SDK calls it ``max``.
+# Maps a2sdlc's ``effort`` config to the SDK's ``ClaudeAgentOptions.effort``.
 _EFFORT_SDK_MAP: dict[str, str] = {
     "low": "low",
     "medium": "medium",
     "high": "high",
     "xhigh": "max",
 }
-
-
-# ── Main runner ─────────────────────────────────────────────────────
 
 
 async def run_stage(
@@ -54,13 +35,12 @@ async def run_stage(
     ticket_key: str,
     stage: str,
     project_root: str,
+    progress_state: ProgressState,
     is_resume: bool = False,
-    on_progress: Callable[[str], None] | None = None,
     branch: str = "",
-    progress_adapter: ProgressAdapter | None = None,
     effort: str | None = None,
 ) -> RunResult:
-    """Run a pipeline stage via Claude Agent SDK with streaming progress."""
+    """Run a pipeline stage via Claude Agent SDK; mutates progress_state."""
     from claude_agent_sdk import ClaudeAgentOptions, query  # noqa: PLC0415
 
     sid = get_session_id(ticket_key, stage)
@@ -99,52 +79,34 @@ async def run_stage(
     else:
         options.session_id = sid
 
-    start_time = time.time()
-    last_progress_update = 0.0
-    result_msg: ResultMessage | None = None
-
-    progress = ProgressState(
-        model=config.model,
-        branch=branch,
-        max_turns=config.max_turns,
-        context_window=context_window_for_model(config.model) or 0,
-        project_root=project_root,
-        start_time=start_time,
-    )
-
     timeout_seconds = config.timeout_minutes * 60
+    result_msg: ResultMessage | None = None
 
     try:
 
         async def _stream() -> None:
-            nonlocal result_msg, last_progress_update
+            nonlocal result_msg
+            num_turns = 0
             async for msg in query(prompt=user_prompt, options=options):
                 if isinstance(msg, AssistantMessage):
-                    progress.num_turns += 1
-                    _handle_assistant_message(
-                        msg, progress, progress_adapter=progress_adapter
-                    )
-
-                    if on_progress and progress.tool_log:  # throttled progress
-                        now = time.time()
-                        if now - last_progress_update >= 5:
-                            on_progress(format_progress(stage, progress))
-                            last_progress_update = now
-
+                    num_turns += 1
+                    await _handle_assistant_message(msg, progress_state, num_turns)
                 elif isinstance(msg, ResultMessage):
                     result_msg = msg
 
         await asyncio.wait_for(_stream(), timeout=timeout_seconds)
     except TimeoutError:
         logger.error(
-            "Stage %s timed out after %d minutes", stage, config.timeout_minutes
+            "Stage %s timed out after %d minutes",
+            stage,
+            config.timeout_minutes,
         )
         return RunResult(
             success=False,
             error=f"timeout ({config.timeout_minutes}min)",
             session_id=sid,
-            tool_log=[e.name for e in progress.tool_log],
-            progress=progress,
+            tool_log=[e.name for e in progress_state.tool_log],
+            progress=progress_state,
         )
     except Exception as exc:
         logger.exception("SDK error during stage %s", stage)
@@ -152,8 +114,8 @@ async def run_stage(
             success=False,
             error=f"sdk_error: {type(exc).__name__}: {exc}",
             session_id=sid,
-            tool_log=[e.name for e in progress.tool_log],
-            progress=progress,
+            tool_log=[e.name for e in progress_state.tool_log],
+            progress=progress_state,
         )
 
     if result_msg is None:
@@ -161,8 +123,8 @@ async def run_stage(
             success=False,
             error="no_result",
             session_id=sid,
-            tool_log=[e.name for e in progress.tool_log],
-            progress=progress,
+            tool_log=[e.name for e in progress_state.tool_log],
+            progress=progress_state,
         )
 
     usage = result_msg.usage or {}
@@ -180,8 +142,8 @@ async def run_stage(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         num_turns=getattr(result_msg, "num_turns", 0) or 0,
-        tool_log=[e.name for e in progress.tool_log],
-        progress=progress,
+        tool_log=[e.name for e in progress_state.tool_log],
+        progress=progress_state,
     )
 
     logger.info(
@@ -202,25 +164,29 @@ def _get_tokens(usage: Any, field: str) -> int:
     return int(getattr(usage, field, 0) or 0)
 
 
-def _handle_assistant_message(
+async def _handle_assistant_message(
     msg: object,
-    progress: ProgressState,
-    *,
-    current_time: float | None = None,
-    progress_adapter: ProgressAdapter | None = None,
+    progress_state: ProgressState,
+    num_turns: int,
 ) -> None:
-    """Extract tool calls, usage, and milestones from an AssistantMessage."""
-    now = current_time if current_time is not None else time.monotonic()
-    elapsed = now - progress.start_time
+    """Extract tool calls, usage, and milestones from an AssistantMessage.
 
-    # Accumulate usage
+    ``num_turns`` is owned by the runner loop (incremented once per
+    AssistantMessage there) and threaded in. The handler must not
+    increment it — doing so would double-count.
+    """
+    # Accumulate usage → emit Metrics
     usage = getattr(msg, "usage", None)
     if usage:
-        progress.input_tokens = _get_tokens(usage, "input_tokens")
-        progress.output_tokens = _get_tokens(usage, "output_tokens")
-    cost = getattr(msg, "total_cost_usd", None)
-    if cost:
-        progress.total_cost_usd = cost
+        tin = _get_tokens(usage, "input_tokens")
+        tout = _get_tokens(usage, "output_tokens")
+        cost = getattr(msg, "total_cost_usd", None) or progress_state.total_cost_usd
+        await progress_state.update_metrics(
+            tin=tin,
+            tout=tout,
+            cost=cost,
+            turns=num_turns,
+        )
 
     # Process content blocks
     content = getattr(msg, "content", None)
@@ -230,20 +196,15 @@ def _handle_assistant_message(
         if isinstance(block, ToolUseBlock):
             name = block.name or "unknown"
             inp = block.input if isinstance(block.input, dict) else {}
-            target = extract_target(name, inp, progress.project_root)
-
-            progress.tool_log.append(
-                ToolEntry(timestamp=elapsed, name=name, target=target)
-            )
+            target = extract_target(name, inp, progress_state.project_root)
+            await progress_state.add_tool_call(name, target)
 
             # Skill invocation → milestone
             if name == "Skill":
                 skill_name = inp.get("skill", "unknown")
-                progress.milestones.append(
-                    Milestone(timestamp=elapsed, label=f"{skill_name} invoked")
-                )
+                await progress_state.add_milestone(f"{skill_name} invoked")
 
-            # TodoWrite → update tasks
+            # TodoWrite → update tasks dict (no event needed)
             if name == "TodoWrite":
                 todos = inp.get("todos", [])
                 if isinstance(todos, list):
@@ -252,28 +213,8 @@ def _handle_assistant_message(
                             subject = todo.get("content", "")
                             status = todo.get("status", "pending")
                             if subject:
-                                progress.tasks[subject] = status
-
-            # GH Actions collapsible group
-            if progress_adapter is not None:
-                progress_adapter.on_group_open(f"Tool: {name}")
-            else:
-                print(f"::group::Tool: {name}")  # noqa: T201
-            console.log(f"[cyan]Tool:[/cyan] {name}")
-            if isinstance(block.input, dict):
-                for k, v in block.input.items():
-                    line = f"  {k}: {str(v)[:100]}"
-                    console.log(f"  [dim]{k}:[/dim] {str(v)[:100]}")
-                    if progress_adapter is not None:
-                        progress_adapter.on_event("tool_input", line)
-            if progress_adapter is not None:
-                progress_adapter.on_group_close()
-            else:
-                print("::endgroup::")  # noqa: T201
-        elif isinstance(block, TextBlock):
-            if block.text:
-                preview = block.text[:200].replace("\n", " ")
-                console.log(f"[dim]{preview}[/dim]")
+                                progress_state.tasks[subject] = status
+        # TextBlock dropped — logging covers it.
 
 
 # ── StageRunner implementation ──────────────────────────────────────
@@ -282,12 +223,7 @@ def _handle_assistant_message(
 class SdkStageRunner:
     """StageRunner backed by the Claude Agent SDK. Wraps ``run_stage``."""
 
-    def __init__(
-        self,
-        progress: ProgressAdapter | None = None,
-        effort: str | None = None,
-    ) -> None:
-        self._progress = progress
+    def __init__(self, effort: str | None = None) -> None:
         self._effort = effort
 
     async def run(
@@ -298,8 +234,8 @@ class SdkStageRunner:
         ticket_key: str,
         stage: StageName,
         project_root: str,
+        progress_state: ProgressState,
         is_resume: bool = False,
-        on_progress: Callable[[str], None] | None = None,
         branch: str = "",
     ) -> RunResult:
         return await run_stage(
@@ -309,9 +245,8 @@ class SdkStageRunner:
             ticket_key=ticket_key,
             stage=stage,
             project_root=project_root,
+            progress_state=progress_state,
             is_resume=is_resume,
-            on_progress=on_progress,
             branch=branch,
-            progress_adapter=self._progress,
             effort=self._effort,
         )

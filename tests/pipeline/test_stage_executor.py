@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 import pytest
 
 from a2sdlc.config import StageConfig
 from a2sdlc.domain.models import StageName, StageStatus
 from a2sdlc.domain.run_result import RunResult
+from a2sdlc.evaluation.progress import ProgressState
 from tests.fakes import FakeRunner
 
 
@@ -17,6 +16,10 @@ from tests.fakes import FakeRunner
 
 def _cfg() -> StageConfig:
     return StageConfig(name="spec")
+
+
+def _make_progress() -> ProgressState:
+    return ProgressState(project_root="/repo")
 
 
 def _success_with_block(status: str = "complete") -> RunResult:
@@ -58,7 +61,7 @@ def _failure(error: str = "sdk_error") -> RunResult:
 
 async def _run(
     runner: FakeRunner,
-    on_progress: Callable[[str], None] | None = None,
+    progress: ProgressState | None = None,
 ):  # noqa: ANN202
     from a2sdlc.pipeline.stage_executor import StageExecutor
 
@@ -70,8 +73,8 @@ async def _run(
         ticket_key="PROJ-1",
         stage=StageName.SPEC,
         project_root="/repo",
+        progress_state=progress or _make_progress(),
         is_resume=False,
-        on_progress=on_progress,
         branch="main",
     )
 
@@ -152,17 +155,13 @@ async def test_runner_failure_returns_error_result():
 
 
 @pytest.mark.asyncio
-async def test_on_progress_wired_through():
-    """on_progress callback passed through to runner."""
-    called: list[str] = []
-
-    def _progress(msg: str) -> None:
-        called.append(msg)
-
+async def test_progress_state_threaded_through():
+    """progress_state is passed through to every runner call."""
+    progress = _make_progress()
     runner = FakeRunner(_success_with_block())
-    await _run(runner, on_progress=_progress)
+    await _run(runner, progress=progress)
 
-    assert runner.calls[0].on_progress is _progress
+    assert runner.calls[0].progress_state is progress
 
 
 @pytest.mark.asyncio
@@ -191,18 +190,7 @@ async def test_output_combines_all_runs():
 @pytest.mark.asyncio
 async def test_progress_state_from_last_result():
     """ExecutionResult.progress comes from the last runner result."""
-    from a2sdlc.evaluation.progress import ProgressState
-
-    import time
-
-    prog = ProgressState(
-        model="claude-sonnet-4-6",
-        branch="main",
-        max_turns=25,
-        context_window=200_000,
-        project_root="/repo",
-        start_time=time.time(),
-    )
+    prog = ProgressState(project_root="/repo")
     second = _success_with_block()
     second.progress = prog
 
@@ -215,18 +203,10 @@ async def test_progress_state_from_last_result():
 @pytest.mark.asyncio
 async def test_milestones_from_progress_state():
     """ExecutionResult.milestones come from the last progress state."""
-    from a2sdlc.evaluation.progress import Milestone, ProgressState
-    import time
+    from a2sdlc.evaluation.progress import Milestone
 
     milestone = Milestone(timestamp=1.0, label="test milestone")
-    prog = ProgressState(
-        model="claude-sonnet-4-6",
-        branch="main",
-        max_turns=25,
-        context_window=200_000,
-        project_root="/repo",
-        start_time=time.time(),
-    )
+    prog = ProgressState(project_root="/repo")
     prog.milestones = [milestone]
 
     run_result = _success_with_block()

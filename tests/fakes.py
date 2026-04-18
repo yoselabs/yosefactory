@@ -7,7 +7,7 @@ assert on the exact sequence of adapter interactions.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -18,7 +18,7 @@ from a2sdlc.domain.exceptions import BlockedError, SkipEvent
 from a2sdlc.domain.handover import FeedbackItem, HandoverComment
 from a2sdlc.domain.models import StageName
 from a2sdlc.domain.run_result import RunResult
-from a2sdlc.evaluation.progress import ProgressEvent
+from a2sdlc.evaluation.progress import ProgressEvent, ProgressState
 
 
 # ── FakeProgressAdapter ───────────────────────────────────────────────
@@ -268,8 +268,8 @@ class RunnerCall:
     ticket_key: str
     stage: StageName
     project_root: str
+    progress_state: ProgressState
     is_resume: bool
-    on_progress: Callable[[str], None] | None
     branch: str
 
 
@@ -294,8 +294,8 @@ class FakeRunner:
         ticket_key: str,
         stage: StageName,
         project_root: str,
+        progress_state: ProgressState,
         is_resume: bool = False,
-        on_progress: Callable[[str], None] | None = None,
         branch: str = "",
     ) -> RunResult:
         self.calls.append(
@@ -306,8 +306,8 @@ class FakeRunner:
                 ticket_key=ticket_key,
                 stage=stage,
                 project_root=project_root,
+                progress_state=progress_state,
                 is_resume=is_resume,
-                on_progress=on_progress,
                 branch=branch,
             )
         )
@@ -340,8 +340,8 @@ class FakeStageRunner:
         ticket_key: str,
         stage: StageName,
         project_root: str,
+        progress_state: ProgressState,
         is_resume: bool = False,
-        on_progress: Callable[[str], None] | None = None,
         branch: str = "",
     ) -> RunResult:
         self.calls.append(
@@ -352,13 +352,11 @@ class FakeStageRunner:
                 ticket_key=ticket_key,
                 stage=stage,
                 project_root=project_root,
+                progress_state=progress_state,
                 is_resume=is_resume,
-                on_progress=on_progress,
                 branch=branch,
             )
         )
-        if on_progress is not None:
-            on_progress("fake progress")
         output = (
             f"{self._body}\n\n"
             "```a2sdlc\n"

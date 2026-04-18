@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Protocol
 
 from a2sdlc.config import StageConfig
@@ -10,7 +9,7 @@ from a2sdlc.domain.models import StageName
 from a2sdlc.domain.run_result import RunResult
 
 if TYPE_CHECKING:
-    from a2sdlc.evaluation.progress import ProgressEvent
+    from a2sdlc.evaluation.progress import ProgressEvent, ProgressState
 
 
 class GitAdapter(Protocol):
@@ -35,8 +34,8 @@ class StageRunner(Protocol):
         ticket_key: str,
         stage: StageName,
         project_root: str,
+        progress_state: "ProgressState",
         is_resume: bool = False,
-        on_progress: Callable[[str], None] | None = None,
         branch: str = "",
     ) -> RunResult: ...
 
