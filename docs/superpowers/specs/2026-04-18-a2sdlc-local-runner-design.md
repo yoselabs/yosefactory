@@ -2,6 +2,7 @@
 
 **Date:** 2026-04-18
 **Status:** Draft, pending user review
+**Revision:** 2 (2026-04-18, post-review)
 
 ## Problem
 
@@ -43,13 +44,13 @@ a2sdlc run <repo_path> --resume <run_id> --from implement
 
 ## Configuration
 
-`.a2sdlc/config.yaml` in the target repo:
+`.a2sdlc/config.yaml` lives in the target repo and is authoritative for **both** local and CI runs — CI reads the same file since it's committed to the repo. This is the single source of truth; there is no separate CI config.
 
 ```yaml
 adapters:
   ticket:   local_file       # alt: jira
   git:      local_branch     # alt: github
-  progress: console          # alt: github_actions
+  progress: console          # alt: gh_actions
 
 stages: [spec, implement, review, merge]   # security off by default
 
@@ -62,7 +63,11 @@ quality:
 model: claude-sonnet-4-6
 ```
 
-CLI flags override any key. Unknown keys are a hard error.
+**Fallback rules:**
+- If `.a2sdlc/config.yaml` is **missing**: CLI exits with a clear error pointing to a template path. No implicit defaults — explicit config is required.
+- **CLI flags override** any config key (e.g., `--stages`, `--ticket-adapter`).
+- **Unknown keys** are a hard error (no silent typos).
+- Config is snapshotted into `run.json` at run start; edits to the config file mid-run do not affect the running pipeline.
 
 ## Run Identity and State Layout
 
@@ -85,24 +90,42 @@ No subdirectory for code. Code lives on a branch in the target repo.
 
 ## Git Behavior
 
-- Runner calls `git checkout -b a2sdlc/<run_id>` before stage execution.
+- **Base branch:** current `HEAD` at invocation time. Runner captures the sha as `git_sha_before`.
+- **Branch creation:** `git checkout -b a2sdlc/<run_id>` from that HEAD. On `--resume`, runner uses `git checkout a2sdlc/<run_id>` (no `-b`) and assumes the branch still exists.
 - Stage commits happen on that branch in the target repo working tree.
-- No push. No remote interaction in the `local_branch` adapter.
-- On completion, the user is left on the run branch. Switching back to the original branch is a manual `git checkout`.
-- Dirty working tree is not pre-checked; uncommitted changes carry over with the branch switch.
+- **No push.** The `local_branch` adapter implements `GitAdapter.push()` as a no-op (the port already exists in `adapters/protocols.py`).
+- On completion, the user is left on the run branch. Switching back is a manual `git checkout`.
+- **Dirty-tree handling:** not pre-checked; uncommitted changes carry over with the branch switch. Runner emits a WARN log and tags MLflow with `dirty_tree_before: true` when the tree is dirty, so eval data isn't silently poisoned. No auto-stash, no auto-commit.
+- **`git_sha_after`:** captured after the last commit the pipeline produced (or equals `git_sha_before` if no commits were made).
 - No prune or cleanup subcommand. Branches accumulate; delete manually.
 
-## Adapter Surface
+## Ports and Adapter Surface
 
-New adapters in v1:
+The current `adapters/` layout is **flat** (per `docs/architecture.md` §1): `work.py`, `review.py`, `git.py`, `github.py`, `retry.py`, `protocols.py`. New adapters in v1 use the same flat naming — no subfolder migration. Existing files stay put.
 
-- `adapters/ticket/local_file.py` — reads ticket markdown from a file path, produces the same domain type that the Jira adapter produces.
-- `adapters/git/local_branch.py` — `checkout -b`, stage commits, no push.
-- `adapters/progress/console.py` — `rich`-based live console renderer (see "Live Console UX").
+### Existing ports (in `adapters/protocols.py`, unchanged)
 
-Existing `adapters/ticket/jira.py`, `adapters/git/github.py`, and any GH Actions progress renderer remain untouched and are selected by the CI-side config.
+- `GitAdapter` — `setup_branch`, `sync_with_base`, `commit_artifacts`, `push`, `read_state`, `write_state`.
+- `StageRunner` — Claude Agent SDK wrapper; no change.
+- (Plus any `WorkAdapter` / `ReviewAdapter` already present.)
 
-Ports (the interfaces the engine imports) are unchanged.
+### New ports (added to `adapters/protocols.py`)
+
+- **`TicketAdapter`** — produces the ticket domain type from a source. Two implementations: `local_file` (reads markdown from a path) and `jira` (refactor of existing Jira code into the new port if not already shaped this way).
+- **`ProgressAdapter`** — receives structured progress events from the engine and renders them. Two implementations: `console` (uses `rich.Live`) and `gh_actions` (existing `::group::` output, refactored out of `evaluation/progress.py`).
+
+`evaluation/progress.py` remains the engine-side progress tracker (cadence, event assembly, 5s throttle). It calls the `ProgressAdapter` to render. This keeps `evaluation/` as progress *logic* and `adapters/` as progress *presentation*, matching the layering rules in `docs/architecture.md` §2.
+
+### New adapter files (flat layout)
+
+- `adapters/ticket_local_file.py`
+- `adapters/git_local_branch.py` — implements `GitAdapter.push()` as a no-op.
+- `adapters/progress_console.py` — `rich`-based live console renderer (see "Live Console UX").
+- `adapters/progress_gh_actions.py` — `::group::` renderer extracted from current `evaluation/progress.py`.
+
+### Unchanged files
+
+`adapters/git.py`, `adapters/github.py`, `adapters/work.py`, `adapters/review.py`, `adapters/retry.py`.
 
 ## SPEC in Auto Mode
 
@@ -116,25 +139,42 @@ Ports (the interfaces the engine imports) are unchanged.
 - `stages` list in config is authoritative.
 - `--stages <csv>` on the CLI overrides.
 - Stages not listed are skipped; their `stages/<name>.json` is never written.
-- Security stage is implemented but omitted from the default list.
+- Security stage is implemented but omitted from the default list. In local mode it runs the same stage logic as CI; no local-specific adapter is needed. Enabling it locally requires whatever tooling the stage's prompt expects to be present (e.g., `bandit`).
 
 ## MLflow Telemetry
 
-- Always on for local runs. `--no-track` disables.
+- On by default for local runs; disabled via `--no-track`.
 - Backend: local file store at `~/.a2sdlc/mlflow` (single store across all runs and repos).
 - Experiment name: the target repo's basename.
 - One MLflow run per `run_id`.
 - Per-stage metrics (logged as `<stage>.<metric>`): `tokens_in`, `tokens_out`, `turns`, `cost_usd`, `duration_sec`, `model`, `outcome`.
 - Rollup metrics: `total_cost_usd`, `total_tokens_in`, `total_tokens_out`, `total_turns`, `total_duration_sec`.
-- Quality gate: after the last executed stage, runner shells out to `quality.check_command` in the target repo, logs exit code as `quality_passed` (1 if exit 0, else 0), and logs captured stdout/stderr as an artifact.
-- Tags: `run_id`, `model`, `stages_executed`, `git_sha_before`, `git_sha_after`, `resumed_from` (if applicable).
+- Quality gate: see **Quality Gate** section below.
+- Tags: `run_id`, `model`, `stages_executed`, `git_sha_before`, `git_sha_after`, `dirty_tree_before`, `resumed_from` (if applicable).
+- MLflow availability: if the MLflow backend is unreachable and `--no-track` was not passed, the CLI exits with an error before any stage runs. Partial silent loss of eval data is not acceptable.
+
+## Quality Gate
+
+- **When it runs:** only if `implement` was among the executed stages. Running `make check` after spec-only or spec+review runs makes no sense.
+- **Where it runs:** after the last executed stage, inside the target repo working tree, on the `a2sdlc/<run_id>` branch.
+- **What it does:** shells out to `quality.check_command`, captures stdout/stderr as an MLflow artifact, logs exit code as `quality_passed` (1 if exit 0, else 0).
+- **Blocking:** **observational only in v1.** A failing gate does not stop Merge stage from running (Merge in local mode is a no-op push anyway). The signal lives in MLflow for eval purposes.
+- **CLI exit code:** the CLI exits non-zero if `quality_passed=0`. This makes the runner usable as a gate in ad-hoc shell scripts even though it doesn't gate pipeline stages internally.
 
 ## Resume Semantics
 
 - `--resume <run_id> --from <stage>` re-enters execution at the named stage.
 - Loads prior stages' `stages/*.json` state from the run directory.
-- Reuses the existing `a2sdlc/<run_id>` branch (assumes it still exists).
+- Reuses the existing `a2sdlc/<run_id>` branch via `git checkout a2sdlc/<run_id>` (no `-b`).
 - Creates a *new* MLflow run tagged `resumed_from=<parent_run_id>`; does not mutate the parent run.
+- Re-executing a stage **overwrites** its `stages/<stage>.json`; prior output is not preserved on disk (it lives in the parent MLflow run).
+
+## Failure Modes
+
+- **Crash mid-stage:** stage state is written atomically on stage *completion* only (write to `stages/<stage>.json.tmp`, `os.rename` to final). A partially-executed stage leaves no `stages/<stage>.json`, so `--resume --from <stage>` cleanly re-runs it from the start.
+- **Ctrl-C during a stage:** runner catches `KeyboardInterrupt`, marks the active MLflow run as `status=KILLED`, does not write `stages/<stage>.json`. User can resume.
+- **MLflow unreachable:** see MLflow Telemetry section — CLI exits with error before any stage runs (unless `--no-track`).
+- **`git checkout -b` conflict** (branch already exists and not a resume): CLI exits with a clear error; no silent fallback to a suffixed name.
 
 ## Live Console UX
 
@@ -166,11 +206,16 @@ User is left on the run branch. No auto-checkout back to the original branch.
 - `assembly/*`
 - `evaluation/stats.py` (already captures per-stage cost/token stats that MLflow logging consumes)
 
+## Known Limitations
+
+- **Single-user, single-machine.** MLflow experiment name is the target repo basename, so two different repos with the same basename on different paths collapse into one experiment. Acceptable for v1.
+- **Per-stage model override not supported.** Config has a single top-level `model:` value. If some stages should use different models, that's a future config shape (`stages.implement.model`, etc.) — out of scope for v1.
+
 ## Open Questions for Implementation Plan
 
-- Exact port shape for the `progress` adapter — does it already exist cleanly, or does it need extraction from existing `evaluation/progress.py`?
 - MLflow dependency weight — should it be an optional extra (`pip install a2sdlc[local]`) or a core dep?
 - Where does the CLI entry live — extend `cli.py` or add a `cli_local.py`? Prefer extending `cli.py` to keep one entry point.
+- Whether the Jira ticket adapter needs refactoring to conform to the new `TicketAdapter` port, or whether the port can be shaped around the existing Jira code's surface.
 
 ## Future Work (out of this spec)
 
