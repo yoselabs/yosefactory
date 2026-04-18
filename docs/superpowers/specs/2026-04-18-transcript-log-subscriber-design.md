@@ -131,7 +131,7 @@ Register alongside `MlflowTraceSubscriber` when `sink is not None`:
 
 ```python
 if sink is not None:
-    from a2sdlc.adapters.mlflow_trace_subscriber import MlflowTraceSubscriber
+    from a2sdlc.adapters.subscriber.mlflow_trace import MlflowTraceSubscriber
     from a2sdlc.adapters.transcript_log_subscriber import TranscriptLogSubscriber
 
     progress_state.subscribe(MlflowTraceSubscriber())
