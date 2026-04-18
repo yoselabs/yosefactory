@@ -61,10 +61,12 @@ def test_build_progress_adapter_gh_actions():
     assert isinstance(p, GhActionsProgressAdapter)
 
 
-def test_build_progress_adapter_console_raises_not_implemented():
-    """GIVEN name='console' WHEN build_progress_adapter is called THEN NotImplementedError is raised (arrives later)."""
-    with pytest.raises(NotImplementedError):
-        build_progress_adapter("console")
+def test_build_progress_adapter_console():
+    """GIVEN name='console' WHEN build_progress_adapter is called THEN ConsoleProgressAdapter is returned."""
+    from a2sdlc.adapters.progress_console import ConsoleProgressAdapter
+
+    p = build_progress_adapter("console")
+    assert isinstance(p, ConsoleProgressAdapter)
 
 
 def test_build_work_adapter_unknown_raises():

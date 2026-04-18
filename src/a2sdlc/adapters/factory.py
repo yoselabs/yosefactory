@@ -62,5 +62,7 @@ def build_progress_adapter(name: str):
     if name == "gh_actions":
         return GhActionsProgressAdapter()
     if name == "console":
-        raise NotImplementedError("ConsoleProgressAdapter arrives in a later task")
+        from a2sdlc.adapters.progress_console import ConsoleProgressAdapter  # noqa: PLC0415
+
+        return ConsoleProgressAdapter()
     raise ValueError(f"unknown progress adapter: {name}")
