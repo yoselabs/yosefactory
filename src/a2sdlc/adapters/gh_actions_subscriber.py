@@ -17,9 +17,8 @@ from a2sdlc.evaluation.progress import (
 class GhActionsLogSubscriber:
     """Prints events to stdout with ::group::/::endgroup:: markers.
 
-    Reproduces the workflow-log output that today is emitted by
-    ``runner.py``'s inline ``print("::group::...")`` and the old
-    ``GhActionsProgressAdapter``. Drop-in equivalent for CI consumption.
+    Reproduces the workflow-log output previously emitted by inline prints
+    in ``runner.py``. Registered as a subscriber on ``ProgressState``.
     """
 
     async def handle(self, event: ProgressEvent) -> None:

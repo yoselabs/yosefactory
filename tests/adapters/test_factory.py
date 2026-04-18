@@ -7,14 +7,12 @@ import pytest
 
 from a2sdlc.adapters.factory import (
     build_git_adapter,
-    build_progress_adapter,
     build_review_adapter,
     build_work_adapter,
 )
 from a2sdlc.adapters.local_branch_git import LocalBranchGitAdapter
 from a2sdlc.adapters.local_file_work import LocalFileWorkAdapter
 from a2sdlc.adapters.local_noop_review import LocalNoopReviewAdapter
-from a2sdlc.adapters.progress_gh_actions import GhActionsProgressAdapter
 from a2sdlc.domain.models import StageName
 
 
@@ -55,20 +53,6 @@ def test_build_git_adapter_local_branch(tmp_path):
     assert isinstance(g, LocalBranchGitAdapter)
 
 
-def test_build_progress_adapter_gh_actions():
-    """GIVEN name='gh_actions' WHEN build_progress_adapter is called THEN GhActionsProgressAdapter is returned."""
-    p = build_progress_adapter("gh_actions")
-    assert isinstance(p, GhActionsProgressAdapter)
-
-
-def test_build_progress_adapter_console():
-    """GIVEN name='console' WHEN build_progress_adapter is called THEN ConsoleProgressAdapter is returned."""
-    from a2sdlc.adapters.progress_console import ConsoleProgressAdapter
-
-    p = build_progress_adapter("console")
-    assert isinstance(p, ConsoleProgressAdapter)
-
-
 def test_build_work_adapter_unknown_raises():
     """GIVEN an unknown work adapter name WHEN build_work_adapter is called THEN ValueError is raised."""
     with pytest.raises(ValueError, match="unknown work adapter"):
@@ -89,11 +73,6 @@ def test_build_review_adapter_unknown_raises(tmp_path):
 def test_build_git_adapter_unknown_raises(tmp_path):
     with pytest.raises(ValueError, match="unknown git adapter"):
         build_git_adapter("nonsense", project_root=tmp_path)
-
-
-def test_build_progress_adapter_unknown_raises():
-    with pytest.raises(ValueError, match="unknown progress adapter"):
-        build_progress_adapter("nonsense")
 
 
 def test_build_work_adapter_jira_deferred(tmp_path):

@@ -7,7 +7,6 @@ from pathlib import Path
 from a2sdlc.adapters.local_branch_git import LocalBranchGitAdapter
 from a2sdlc.adapters.local_file_work import LocalFileWorkAdapter
 from a2sdlc.adapters.local_noop_review import LocalNoopReviewAdapter
-from a2sdlc.adapters.progress_gh_actions import GhActionsProgressAdapter
 from a2sdlc.domain.models import StageName
 
 
@@ -56,13 +55,3 @@ def build_git_adapter(name: str, *, project_root: Path):
 
         return LocalGitAdapter(project_root=project_root)
     raise ValueError(f"unknown git adapter: {name}")
-
-
-def build_progress_adapter(name: str):
-    if name == "gh_actions":
-        return GhActionsProgressAdapter()
-    if name == "console":
-        from a2sdlc.adapters.progress_console import ConsoleProgressAdapter  # noqa: PLC0415
-
-        return ConsoleProgressAdapter()
-    raise ValueError(f"unknown progress adapter: {name}")

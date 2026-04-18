@@ -120,7 +120,7 @@ class LocalFileWorkAdapter:
         return cid
 
     def update_progress(self, comment_id: str, body: str) -> None:
-        # Live progress flows through ProgressAdapter, not WorkAdapter.
+        # Live progress flows through subscribers, not WorkAdapter.
         return None
 
     def finalize_comment(self, comment_id: str, body: str) -> None:
