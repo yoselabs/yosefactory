@@ -18,6 +18,7 @@ from a2sdlc.domain.exceptions import BlockedError, SkipEvent
 from a2sdlc.domain.handover import FeedbackItem, HandoverComment
 from a2sdlc.domain.models import StageName
 from a2sdlc.domain.run_result import RunResult
+from a2sdlc.evaluation.progress import ProgressEvent
 
 
 # ── FakeProgressAdapter ───────────────────────────────────────────────
@@ -47,6 +48,22 @@ class FakeProgressAdapter:
 
     def on_group_close(self) -> None:
         self.groups_closed += 1
+
+
+# ── RecordingSubscriber ───────────────────────────────────────────────
+
+
+class RecordingSubscriber:
+    """Captures every ``ProgressEvent`` for assertion in tests.
+
+    Satisfies the ``Subscriber`` Protocol (async ``handle``).
+    """
+
+    def __init__(self) -> None:
+        self.events: list[ProgressEvent] = []
+
+    async def handle(self, event: ProgressEvent) -> None:
+        self.events.append(event)
 
 
 # ── FakeWorkAdapter ───────────────────────────────────────────────────
