@@ -2,12 +2,12 @@
 
 ## Status
 
-Branch `feat/local-runner` is **feature-complete and all-green for the fake-runner test path**, but has NOT been validated end-to-end against the real Claude Agent SDK. Smoke test was started and killed after surfacing a scope-bleed issue; the fix is committed but unvalidated.
+Branch `feat/local-runner` is **feature-complete, all-green for the fake-runner test path, AND validated end-to-end against the real Claude Agent SDK** (smoke run on 2026-04-18, session `smoke2`).
 
-- **Commits:** 19 (`main..HEAD`)
-- **Tests:** 496 passing (up from 391 pre-branch)
+- **Commits:** 21 (`main..HEAD`)
+- **Tests:** 496 passing
 - **`make check`:** green
-- **Last commit:** `c2b0398 feat(runner): exclude user setting sources from SDK sessions`
+- **Smoke validation:** SPEC + IMPLEMENT both green from a clean repo. Skills load (brainstorming, writing-plans, requesting-code-review observed in tool log). TDD flow runs end-to-end. Engine quality gate fires; MLflow records parent + child runs.
 
 ## What's Done
 
@@ -30,28 +30,24 @@ See `docs/superpowers/specs/2026-04-18-a2sdlc-local-runner-design.md` (revision 
 
 Engine invariant holds: `pipeline/dispatch.py`, `pipeline/runner.py`, `pipeline/context.py` got minimal additive changes (progress field, stats field, print→adapter swap, setting_sources, effort). No stage/domain/lifecycle/assembly code modified.
 
-## What's Mid-Flight (PICK UP HERE)
+## Resolved
 
-### 1. Smoke test not validated
+### 1. Smoke test ✅ validated
 
-A fresh workspace exists at `/Users/iorlas/Workspaces/a2sdlc-smoke/` with:
-- `.a2sdlc/config.yaml` using local adapters + `model: claude-sonnet-4-6` + `progress: console`
-- `ticket.md` asking for a `reverse_words` Python function with 4 test cases
-- `Makefile` with `check`/`test`/`lint` targets
+Two clean runs against the real SDK:
 
-a2sdlc is installed globally via `uv tool install --editable /Users/iorlas/Workspaces/a2sdlc-engine`.
+| Session | Stage | Cost | Notes |
+|---|---|---:|---|
+| smoke1 | spec | $0.16 | killed mid-run during initial investigation; later re-ran as no-op |
+| smoke1 | implement | $0.48 | TDD flow, quality gate green |
+| smoke2 | spec | (in MLflow) | clean run from empty repo, brainstorming + writing-plans skills observed |
+| smoke2 | implement | $0.32 | full TDD + post-impl `requesting-code-review` skill |
 
-**Run it:**
-```bash
-cd /Users/iorlas/Workspaces/a2sdlc-smoke
-a2sdlc run-stage spec --ticket ticket.md --session smoke1 .
-```
+Workspace at `/Users/iorlas/Workspaces/a2sdlc-smoke/` (still on branch `a2sdlc/smoke2`).
 
-### 2. Open question — does `setting_sources=["project", "local"]` block Superpowers skill loading?
+### 2. Open question ✅ answered: skill loading works
 
-The SDK field `setting_sources` controls which settings.json files merge in. Excluding `user` likely also disables user-level plugins (like Superpowers `brainstorming`/`writing-plans`/`code-reviewer`). **Smoke test will tell us immediately** — if the agent's `Skill(brainstorming)` call fails, we know.
-
-**Fix if broken:** pass `plugins=[SdkPluginConfig(type="local", path="/Users/iorlas/.claude/plugins/cache/claude-plugins-official/superpowers/5.0.7")]` in `runner.py:options_kwargs`. Five-line addition.
+`setting_sources=["project", "local"]` does **NOT** disable user-level Superpowers plugins. The smoke runs invoked `Skill(brainstorming)`, `Skill(writing-plans)`, and `Skill(requesting-code-review)` successfully without any plugin-loading workaround. **No `plugins=[...]` fix needed.**
 
 ### 3. Scope bleed (partially addressed)
 
@@ -85,8 +81,6 @@ The `setting_sources` fix kills the memory loading. But the Bash tool still acce
 
 ## Merge Readiness
 
-**Blockers before merging to main:**
-1. One clean smoke run (SPEC → IMPLEMENT → quality gate green) against the real SDK.
-2. Confirm skill loading still works (or apply the explicit plugin-load fix).
+**Both blockers cleared.** Branch is ready to merge to `main`.
 
-**Not blockers:** the punch-list items above.
+Optional follow-up before merge: the `ConsoleProgressAdapter` status bar shows `tokens: 0/0 | cost: $0.00 | turns: 0` throughout local runs because `update_metrics()` is defined but never called by the runner. Tracked as a separate spec on this branch (see `docs/superpowers/specs/2026-04-18-progress-subscribers-design.md` once committed) — addresses the underlying "two channels for the same data" smell, not just the symptom.
