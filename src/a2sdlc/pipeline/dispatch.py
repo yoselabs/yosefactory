@@ -194,6 +194,13 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
     comment = CommentManager(ctx.work, event.key)
     comment.start(target_stage.value)
 
+    # Register the comment-driving subscriber now that we have a comment handle.
+    # This is the one place dispatch.py knows about a specific subscriber, because
+    # the comment lifecycle is intrinsically dispatch-scoped.
+    from a2sdlc.adapters.gh_comment_subscriber import GhCommentSubscriber  # noqa: PLC0415
+
+    ctx.progress_state.subscribe(GhCommentSubscriber(comment, ctx.progress_state))
+
     # 7.5 Load stage config early so stage_start has model/max_turns even for MERGE.
     stage_config = load_stage_config(target_stage.value, ctx.config)
     session_id = ctx.run_id or get_session_id(event.key, target_stage.value)
