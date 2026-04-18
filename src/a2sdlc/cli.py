@@ -96,6 +96,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> None:
     """Entry point."""
+    raw = list(argv) if argv is not None else sys.argv[1:]
+
+    # ``run-stage`` has its own argparse in cli_local; route raw args there
+    # before the dispatch-only top-level parser sees them.
+    if raw and raw[0] == "run-stage":
+        from a2sdlc.cli_local import run_stage_entry  # noqa: PLC0415
+
+        sys.exit(run_stage_entry(raw[1:]))
+
     args = parse_args(argv)
 
     if args.command == "dispatch":

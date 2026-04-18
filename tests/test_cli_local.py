@@ -1,0 +1,147 @@
+"""CLI smoke tests for the ``run-stage`` subcommand."""
+
+from __future__ import annotations
+
+import subprocess
+from pathlib import Path
+
+
+def _init_minimal_repo(tmp_path: Path, ticket_body: str = "Build feature X") -> Path:
+    """Initialize a minimal git repo with .a2sdlc/config.yaml and a ticket file.
+
+    Returns the ticket file path.
+    """
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
+    (tmp_path / ".a2sdlc").mkdir()
+    (tmp_path / ".a2sdlc" / "config.yaml").write_text(
+        "adapters:\n"
+        "  work: local_file\n"
+        "  review: local_noop\n"
+        "  git: local_branch\n"
+        "  progress: gh_actions\n"
+        "spec:\n  self_answer: true\n"
+        "quality:\n  check_command: 'true'\n"
+        "model: claude-sonnet-4-6\n"
+    )
+    ticket = tmp_path / "ticket.md"
+    ticket.write_text(ticket_body)
+    (tmp_path / "README.md").write_text("init")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=tmp_path, check=True)
+    return ticket
+
+
+def test_run_stage_spec_creates_session_branch_and_persists_ticket(
+    tmp_path: Path,
+) -> None:
+    """GIVEN a minimal repo and a ticket file
+    WHEN run-stage spec --ticket <file> --session testsid is invoked
+    THEN a2sdlc/testsid branch exists AND .a2sdlc/ticket.md matches the ticket.
+    """
+    from a2sdlc.cli_local import run_stage_entry
+
+    ticket = _init_minimal_repo(tmp_path)
+
+    exit_code = run_stage_entry(
+        argv=[
+            "spec",
+            "--session",
+            "testsid",
+            "--ticket",
+            str(ticket),
+            "--no-track",
+            str(tmp_path),
+        ],
+        runner_override="fake",
+    )
+    assert exit_code == 0
+
+    branch_check = subprocess.run(
+        ["git", "rev-parse", "--verify", "a2sdlc/testsid"],
+        cwd=tmp_path,
+        capture_output=True,
+    )
+    assert branch_check.returncode == 0
+
+    assert (tmp_path / ".a2sdlc" / "ticket.md").read_text() == "Build feature X"
+
+
+def test_run_stage_spec_generates_ulid_when_session_not_given(tmp_path: Path) -> None:
+    """GIVEN run-stage spec without --session
+    WHEN invoked from a fresh repo
+    THEN a ULID-like session id is generated and a branch with that id exists.
+    """
+    from a2sdlc.cli_local import run_stage_entry
+
+    ticket = _init_minimal_repo(tmp_path)
+    exit_code = run_stage_entry(
+        argv=["spec", "--ticket", str(ticket), "--no-track", str(tmp_path)],
+        runner_override="fake",
+    )
+    assert exit_code == 0
+
+    branches = subprocess.run(
+        ["git", "branch", "--list", "a2sdlc/*"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "a2sdlc/" in branches
+
+
+def test_run_stage_implement_infers_session_from_branch(tmp_path: Path) -> None:
+    """GIVEN we are on branch a2sdlc/fromBranch with existing .a2sdlc/ticket.md
+    WHEN run-stage implement is invoked without --session
+    THEN session_id 'fromBranch' is used (no new branch created).
+    """
+    from a2sdlc.cli_local import run_stage_entry
+
+    _init_minimal_repo(tmp_path)
+    ticket = tmp_path / "ticket.md"
+    run_stage_entry(
+        argv=[
+            "spec",
+            "--session",
+            "fromBranch",
+            "--ticket",
+            str(ticket),
+            "--no-track",
+            str(tmp_path),
+        ],
+        runner_override="fake",
+    )
+
+    exit_code = run_stage_entry(
+        argv=["implement", "--no-track", str(tmp_path)],
+        runner_override="fake",
+    )
+    assert exit_code == 0
+
+    branches = subprocess.run(
+        ["git", "branch", "--list", "a2sdlc/*"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert branches.count("a2sdlc/") == 1
+
+
+def test_run_stage_spec_requires_ticket_on_first_invocation(
+    tmp_path: Path, capsys
+) -> None:
+    """GIVEN no existing .a2sdlc/ticket.md
+    WHEN run-stage spec is invoked without --ticket
+    THEN exit code is non-zero and a helpful error is shown.
+    """
+    from a2sdlc.cli_local import run_stage_entry
+
+    _init_minimal_repo(tmp_path)
+    (tmp_path / ".a2sdlc" / "ticket.md").unlink(missing_ok=True)
+
+    exit_code = run_stage_entry(
+        argv=["spec", "--session", "x", "--no-track", str(tmp_path)],
+        runner_override="fake",
+    )
+    assert exit_code != 0

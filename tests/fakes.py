@@ -297,3 +297,67 @@ class FakeRunner:
         idx = min(self._call_index, len(self._results) - 1)
         self._call_index += 1
         return self._results[idx]
+
+
+class FakeStageRunner:
+    """Default fake runner for CLI smoke tests.
+
+    Returns a successful ``RunResult`` whose ``output`` contains a valid
+    ``a2sdlc`` status block so the dispatch success path runs end-to-end.
+    """
+
+    def __init__(
+        self,
+        status: str = "complete",
+        body: str = "Fake stage handover.",
+    ) -> None:
+        self._status = status
+        self._body = body
+        self.calls: list[RunnerCall] = []
+
+    async def run(  # noqa: PLR0913
+        self,
+        user_prompt: str,
+        system_prompt: str,
+        config: StageConfig,
+        ticket_key: str,
+        stage: StageName,
+        project_root: str,
+        is_resume: bool = False,
+        on_progress: Callable[[str], None] | None = None,
+        branch: str = "",
+    ) -> RunResult:
+        self.calls.append(
+            RunnerCall(
+                user_prompt=user_prompt,
+                system_prompt=system_prompt,
+                config=config,
+                ticket_key=ticket_key,
+                stage=stage,
+                project_root=project_root,
+                is_resume=is_resume,
+                on_progress=on_progress,
+                branch=branch,
+            )
+        )
+        if on_progress is not None:
+            on_progress("fake progress")
+        output = (
+            f"{self._body}\n\n"
+            "```a2sdlc\n"
+            f'{{"status": "{self._status}", "output": "{self._body}"}}\n'
+            "```\n"
+        )
+        return RunResult(
+            success=True,
+            output=output,
+            error=None,
+            session_id="fake-session",
+            total_cost_usd=0.0,
+            duration_ms=1,
+            input_tokens=1,
+            output_tokens=1,
+            num_turns=1,
+            tool_log=[],
+            progress=None,
+        )

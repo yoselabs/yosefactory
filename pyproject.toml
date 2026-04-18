@@ -15,6 +15,7 @@ dependencies = [
     "PyGithub>=2.6",
     "gitpython>=3.1",
     "tenacity>=8.0",
+    "python-ulid>=2.0",
 ]
 
 [project.scripts]

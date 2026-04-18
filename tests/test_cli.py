@@ -187,6 +187,18 @@ class TestSetupLogging:
 
 
 @pytest.mark.unit
+class TestMainRunStage:
+    def test_main_routes_run_stage_to_cli_local(self) -> None:
+        """``a2sdlc run-stage ...`` delegates to cli_local.run_stage_entry."""
+        with patch("a2sdlc.cli_local.run_stage_entry", return_value=0) as mock_entry:
+            with pytest.raises(SystemExit) as exc:
+                main(["run-stage", "spec", "/tmp/repo"])
+
+        assert exc.value.code == 0
+        mock_entry.assert_called_once_with(["spec", "/tmp/repo"])
+
+
+@pytest.mark.unit
 class TestMainDispatch:
     def test_main_dispatch_constructs_github_adapters(self, tmp_path: Path) -> None:
         """main() with 'dispatch' wires GitHub adapters via env-derived token/repo."""
