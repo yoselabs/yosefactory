@@ -175,18 +175,22 @@ async def _handle_assistant_message(
     AssistantMessage there) and threaded in. The handler must not
     increment it — doing so would double-count.
     """
-    # Accumulate usage → emit Metrics
+    # Update token/cost from usage when SDK provides it; emit Metrics on
+    # every assistant message so subscribers see live num_turns + elapsed
+    # even when this particular message has no usage payload.
     usage = getattr(msg, "usage", None)
     if usage:
-        tin = _get_tokens(usage, "input_tokens")
-        tout = _get_tokens(usage, "output_tokens")
-        cost = getattr(msg, "total_cost_usd", None) or progress_state.total_cost_usd
-        await progress_state.update_metrics(
-            tin=tin,
-            tout=tout,
-            cost=cost,
-            turns=num_turns,
-        )
+        progress_state.input_tokens = _get_tokens(usage, "input_tokens")
+        progress_state.output_tokens = _get_tokens(usage, "output_tokens")
+    cost = getattr(msg, "total_cost_usd", None)
+    if cost:
+        progress_state.total_cost_usd = cost
+    await progress_state.update_metrics(
+        tin=progress_state.input_tokens,
+        tout=progress_state.output_tokens,
+        cost=progress_state.total_cost_usd,
+        turns=num_turns,
+    )
 
     # Process content blocks
     content = getattr(msg, "content", None)

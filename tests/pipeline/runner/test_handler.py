@@ -92,7 +92,11 @@ class TestHandleAssistantMessage:
         assert progress.output_tokens == 2000
 
     @pytest.mark.asyncio
-    async def test_cost_accumulation(self) -> None:
+    async def test_cost_updates_even_without_usage_block(self) -> None:
+        """Cost from msg.total_cost_usd lands on progress_state regardless of
+        whether the usage block is present, and a Metrics event is emitted on
+        every assistant message so subscribers see live num_turns / elapsed
+        even when this particular message had no token usage."""
         from claude_agent_sdk.types import AssistantMessage, TextBlock
 
         msg = MagicMock(spec=AssistantMessage)
@@ -105,9 +109,8 @@ class TestHandleAssistantMessage:
         progress = _make_progress()
         await _handle_assistant_message(msg, progress, num_turns=1)
 
-        # cost falls back to progress_state.total_cost_usd when usage is None
-        # (no update_metrics call without usage block)
-        assert progress.total_cost_usd == 0.0  # no usage → no metrics update
+        assert progress.total_cost_usd == 0.42
+        assert progress.num_turns == 1
 
     @pytest.mark.asyncio
     async def test_no_usage(self) -> None:
