@@ -84,7 +84,9 @@ def _infer_session_id(project_root: Path) -> str | None:
     return None
 
 
-def _build_runner(progress, runner_override: str | None) -> StageRunner:
+def _build_runner(
+    progress, runner_override: str | None, effort: str | None = None
+) -> StageRunner:
     """Construct the StageRunner. ``runner_override='fake'`` is a test hook."""
     if runner_override == "fake":
         # Test-only path. Production code never sets runner_override, so the
@@ -94,7 +96,7 @@ def _build_runner(progress, runner_override: str | None) -> StageRunner:
         return FakeStageRunner()
     from a2sdlc.pipeline.runner import SdkStageRunner  # noqa: PLC0415
 
-    return SdkStageRunner(progress=progress)
+    return SdkStageRunner(progress=progress, effort=effort)
 
 
 def _print_post_run(
@@ -169,7 +171,7 @@ def run_stage_entry(argv: list[str], runner_override: str | None = None) -> int:
     git = build_git_adapter(cfg.adapters.git, project_root=project_root)
     progress = build_progress_adapter(cfg.adapters.progress)
 
-    runner = _build_runner(progress, runner_override)
+    runner = _build_runner(progress, runner_override, effort=cfg.effort)
 
     # Pre-create / checkout the session branch so that subsequent calls can
     # infer the session id from HEAD even when dispatch short-circuits.

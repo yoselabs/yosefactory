@@ -144,7 +144,8 @@ class TestStrictKeyValidation:
             "model: claude-sonnet-4-6\n"
             "default_base: main\n"
             "gates: {}\n"
-            "self_answer: true\n",
+            "self_answer: true\n"
+            "effort: high\n",
         )
         # Should not raise.
         config = load_config_file(tmp_path)
@@ -289,6 +290,36 @@ class TestGetSessionId:
 
 
 # ── gate_config ───────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestEffortConfig:
+    def test_effort_omitted_defaults_to_none(self, tmp_path: Path) -> None:
+        """GIVEN a config without an ``effort`` key
+        WHEN loaded
+        THEN ``cfg.effort`` is ``None`` (SDK default)."""
+        _write_config(tmp_path, "model: claude-opus-4-7\n")
+        cfg = load_config_file(tmp_path)
+        assert cfg.effort is None
+
+    @pytest.mark.parametrize("value", ["low", "medium", "high", "xhigh"])
+    def test_effort_accepts_valid_values(self, tmp_path: Path, value: str) -> None:
+        """GIVEN a config with a valid ``effort`` value
+        WHEN loaded
+        THEN ``cfg.effort`` equals that string."""
+        _write_config(tmp_path, f"effort: {value}\n")
+        cfg = load_config_file(tmp_path)
+        assert cfg.effort == value
+
+    def test_effort_rejects_invalid_value(self, tmp_path: Path) -> None:
+        """GIVEN a config with an unsupported ``effort`` value
+        WHEN loaded
+        THEN raises ConfigError listing the allowed values."""
+        _write_config(tmp_path, "effort: ultra\n")
+        from a2sdlc.config import ConfigError
+
+        with pytest.raises(ConfigError, match="effort"):
+            load_config_file(tmp_path)
 
 
 @pytest.mark.unit

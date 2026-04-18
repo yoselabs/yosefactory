@@ -35,8 +35,15 @@ _ALLOWED_TOP_LEVEL_KEYS: frozenset[str] = frozenset(
         "default_base",
         "gates",
         "self_answer",
+        "effort",
     }
 )
+
+
+# Valid values for the top-level ``effort`` config field. Maps to the SDK's
+# ``ClaudeAgentOptions.effort`` — note ``xhigh`` → ``max`` at the runner
+# boundary (see ``pipeline/runner.py``).
+_ALLOWED_EFFORT_VALUES: frozenset[str] = frozenset({"low", "medium", "high", "xhigh"})
 
 
 # ── Stage configuration ───────────────────────────────────────────────
@@ -99,6 +106,7 @@ class ProjectConfig:
     self_answer: bool = False
     default_base: str = "main"
     model: str = "claude-sonnet-4-6"
+    effort: str | None = None
     stage_overrides: dict[str, dict[str, object]] = field(default_factory=dict)
     adapters: AdaptersConfig = field(default_factory=AdaptersConfig)
     quality: QualityConfig = field(default_factory=QualityConfig)
@@ -188,10 +196,23 @@ def load_config_file(project_root: Path) -> ProjectConfig:
             f"Unknown keys in 'quality' block: {e}. Allowed: {sorted(valid)}"
         ) from e
 
+    effort_raw = data.get("effort")
+    if effort_raw is None:
+        effort: str | None = None
+    else:
+        effort_str = str(effort_raw)
+        if effort_str not in _ALLOWED_EFFORT_VALUES:
+            allowed = sorted(_ALLOWED_EFFORT_VALUES)
+            raise ConfigError(
+                f"Invalid value for 'effort': {effort_str!r}. Allowed: {allowed}."
+            )
+        effort = effort_str
+
     config = ProjectConfig(
         self_answer=self_answer,
         default_base=str(data.get("default_base", "main")),
         model=str(data.get("model", "claude-sonnet-4-6")),
+        effort=effort,
         stage_overrides=stage_overrides,
         adapters=adapters,
         quality=quality,

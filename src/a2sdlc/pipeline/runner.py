@@ -34,6 +34,16 @@ logger = logging.getLogger("a2sdlc.pipeline.runner")
 console = Console(force_terminal=True, force_interactive=False)
 
 
+# Maps a2sdlc's ``effort`` config value to the SDK's ``ClaudeAgentOptions.effort``
+# literal. a2sdlc exposes ``xhigh`` as the top tier; the SDK calls it ``max``.
+_EFFORT_SDK_MAP: dict[str, str] = {
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    "xhigh": "max",
+}
+
+
 # ── Main runner ─────────────────────────────────────────────────────
 
 
@@ -48,6 +58,7 @@ async def run_stage(
     on_progress: Callable[[str], None] | None = None,
     branch: str = "",
     progress_adapter: ProgressAdapter | None = None,
+    effort: str | None = None,
 ) -> RunResult:
     """Run a pipeline stage via Claude Agent SDK with streaming progress."""
     from claude_agent_sdk import ClaudeAgentOptions, query  # noqa: PLC0415
@@ -61,14 +72,23 @@ async def run_stage(
         is_resume,
     )
 
-    options = ClaudeAgentOptions(
-        system_prompt=system_prompt,
-        permission_mode="bypassPermissions",
-        allowed_tools=config.allowed_tools,
-        max_turns=config.max_turns,
-        model=config.model,
-        cwd=project_root,
-    )
+    options_kwargs: dict[str, Any] = {
+        "system_prompt": system_prompt,
+        "permission_mode": "bypassPermissions",
+        "allowed_tools": config.allowed_tools,
+        "max_turns": config.max_turns,
+        "model": config.model,
+        "cwd": project_root,
+    }
+    if effort is not None:
+        sdk_effort = _EFFORT_SDK_MAP.get(effort)
+        if sdk_effort is None:
+            raise ValueError(
+                f"Invalid effort {effort!r}. Expected one of {sorted(_EFFORT_SDK_MAP)}."
+            )
+        options_kwargs["effort"] = sdk_effort
+
+    options = ClaudeAgentOptions(**options_kwargs)
     if is_resume:
         options.resume = sid
     else:
@@ -257,8 +277,13 @@ def _handle_assistant_message(
 class SdkStageRunner:
     """StageRunner backed by the Claude Agent SDK. Wraps ``run_stage``."""
 
-    def __init__(self, progress: ProgressAdapter | None = None) -> None:
+    def __init__(
+        self,
+        progress: ProgressAdapter | None = None,
+        effort: str | None = None,
+    ) -> None:
         self._progress = progress
+        self._effort = effort
 
     async def run(
         self,
@@ -283,4 +308,5 @@ class SdkStageRunner:
             on_progress=on_progress,
             branch=branch,
             progress_adapter=self._progress,
+            effort=self._effort,
         )

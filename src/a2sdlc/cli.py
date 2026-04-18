@@ -142,7 +142,7 @@ def main(argv: list[str] | None = None) -> None:
             work=work_adapter,
             git=git,
             review=review_adapter,
-            runner=SdkStageRunner(progress=progress),
+            runner=SdkStageRunner(progress=progress, effort=config.effort),
             progress=progress,
             config=config,
             project_root=project_root,

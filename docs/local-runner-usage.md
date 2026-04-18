@@ -43,6 +43,7 @@ quality:
 
 default_base: main
 model: claude-sonnet-4-6
+effort: high  # low | medium | high | xhigh (xhigh → SDK's "max"); omit for SDK default
 ```
 
 Unknown top-level keys are a hard error. See `src/a2sdlc/config.py` for the

@@ -354,6 +354,82 @@ class TestRunStage:
         assert options_obj.resume is not None
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("effort_in", "effort_sdk"),
+        [
+            ("low", "low"),
+            ("medium", "medium"),
+            ("high", "high"),
+            ("xhigh", "max"),
+        ],
+    )
+    async def test_effort_forwarded_to_sdk(
+        self, effort_in: str, effort_sdk: str
+    ) -> None:
+        """``effort`` kwarg is mapped and passed into ClaudeAgentOptions."""
+        result_msg = _make_result_message()
+        captured: dict[str, object] = {}
+
+        def mock_options_cls(**kwargs: object) -> MagicMock:
+            captured.update(kwargs)
+            obj = MagicMock()
+            for k, v in kwargs.items():
+                setattr(obj, k, v)
+            return obj
+
+        async def mock_query(prompt: str, options: object):  # noqa: ANN201, ARG001
+            yield result_msg
+
+        with (
+            patch("claude_agent_sdk.query", side_effect=mock_query),
+            patch("claude_agent_sdk.ClaudeAgentOptions", side_effect=mock_options_cls),
+        ):
+            result = await run_stage(
+                user_prompt="Build",
+                system_prompt="sys",
+                config=_make_config(),
+                ticket_key="PROJ-1",
+                stage="spec",
+                project_root="/tmp/test",
+                effort=effort_in,
+            )
+
+        assert result.success is True
+        assert captured.get("effort") == effort_sdk
+
+    @pytest.mark.asyncio
+    async def test_effort_none_not_passed_to_sdk(self) -> None:
+        """When ``effort`` is None, it must not appear in ClaudeAgentOptions kwargs."""
+        result_msg = _make_result_message()
+        captured: dict[str, object] = {}
+
+        def mock_options_cls(**kwargs: object) -> MagicMock:
+            captured.update(kwargs)
+            obj = MagicMock()
+            for k, v in kwargs.items():
+                setattr(obj, k, v)
+            return obj
+
+        async def mock_query(prompt: str, options: object):  # noqa: ANN201, ARG001
+            yield result_msg
+
+        with (
+            patch("claude_agent_sdk.query", side_effect=mock_query),
+            patch("claude_agent_sdk.ClaudeAgentOptions", side_effect=mock_options_cls),
+        ):
+            await run_stage(
+                user_prompt="Build",
+                system_prompt="sys",
+                config=_make_config(),
+                ticket_key="PROJ-1",
+                stage="spec",
+                project_root="/tmp/test",
+                effort=None,
+            )
+
+        assert "effort" not in captured
+
+    @pytest.mark.asyncio
     async def test_usage_as_object(self) -> None:
         """Test usage extraction when SDK returns usage as an object, not dict."""
         from claude_agent_sdk.types import ResultMessage
