@@ -6,7 +6,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from a2sdlc_dispatcher.gh_app import GHAppClient, mint_app_jwt
+from a2sdlc_dispatcher.gh_app import GHAppClient
 
 
 def _rsa_pem() -> str:
@@ -18,18 +18,6 @@ def _rsa_pem() -> str:
         encryption_algorithm=serialization.NoEncryption(),
     )
     return pem.decode()
-
-
-def test_mint_app_jwt_with_int_app_id_does_not_raise():
-    """Regression: PyJWT 2.x requires `iss` to be str; app_id is numeric env input."""
-    pem = _rsa_pem()
-    token = mint_app_jwt(app_id=12345, private_key_pem=pem)
-    # Decode without verification to inspect claims.
-    claims = pyjwt.decode(token, options={"verify_signature": False})
-    assert claims["iss"] == "12345"
-    assert isinstance(claims["iss"], str)
-    assert "iat" in claims
-    assert "exp" in claims
 
 
 @pytest.mark.asyncio

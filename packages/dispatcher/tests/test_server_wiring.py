@@ -90,6 +90,8 @@ def test_jira_events_signed_happy_path_reaches_gh_app(monkeypatch):
     from a2sdlc_dispatcher.server import create_app
 
     dispatch_mock = AsyncMock()
+    # Class-level patch: the production call site must invoke this method with
+    # kwargs only — a positional `self` would not be bound by AsyncMock here.
     monkeypatch.setattr(
         gh_app_mod.GHAppClient, "trigger_workflow_dispatch", dispatch_mock
     )

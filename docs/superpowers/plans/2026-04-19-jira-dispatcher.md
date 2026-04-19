@@ -150,14 +150,14 @@ def run() -> None:
     """Run the service via uvicorn — used by the `a2sdlc-dispatcher` script."""
     import uvicorn
 
-    uvicorn.run("a2sdlc_dispatcher.server:app", host="0.0.0.0", port=8000, log_level="info")
+    uvicorn.run("a2sdlc_dispatcher.server:create_app", factory=True, host="0.0.0.0", port=8000, log_level="info")
 ```
 
 - [ ] **Step 5: Sync and verify it starts**
 
 ```bash
 uv sync --all-packages
-uv run --package a2sdlc-dispatcher python -c "from a2sdlc_dispatcher.server import app; print(app.title)"
+uv run --package a2sdlc-dispatcher python -c "from a2sdlc_dispatcher.server import create_app; print(create_app().title)"
 ```
 
 Expected: `a2sdlc-dispatcher`.
@@ -1748,12 +1748,9 @@ def create_app() -> FastAPI:
     return app
 
 
-app = create_app()
-
-
 def run() -> None:
     import uvicorn
-    uvicorn.run("a2sdlc_dispatcher.server:app", host="0.0.0.0", port=8000, log_level="info")
+    uvicorn.run("a2sdlc_dispatcher.server:create_app", factory=True, host="0.0.0.0", port=8000, log_level="info")
 ```
 
 - [ ] **Step 5: Run — expect PASS**

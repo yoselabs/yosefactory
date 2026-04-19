@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 import httpx
 from atlassian import Jira as AtlassianJira
 from fastapi import FastAPI
@@ -16,9 +19,17 @@ from a2sdlc_dispatcher.settings import Settings
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="a2sdlc-dispatcher", version="0.1.0")
     settings = Settings()  # ty: ignore[missing-argument]  # fields loaded from env
     http = httpx.AsyncClient(timeout=30.0)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            await http.aclose()
+
+    app = FastAPI(title="a2sdlc-dispatcher", version="0.1.0", lifespan=lifespan)
 
     gh_app = GHAppClient(
         http=http,
