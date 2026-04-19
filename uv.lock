@@ -2,10 +2,16 @@ version = 1
 revision = 3
 requires-python = ">=3.12"
 
+[manifest]
+members = [
+    "a2sdlc-engine",
+    "a2sdlc-workspace",
+]
+
 [[package]]
-name = "a2sdlc"
+name = "a2sdlc-engine"
 version = "0.1.0"
-source = { editable = "." }
+source = { editable = "packages/engine" }
 dependencies = [
     { name = "claude-agent-sdk" },
     { name = "gitpython" },
@@ -17,17 +23,6 @@ dependencies = [
     { name = "rich" },
     { name = "tenacity" },
     { name = "typer" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "diff-cover" },
-    { name = "import-linter" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-    { name = "pytest-env" },
-    { name = "ruff" },
-    { name = "ty" },
 ]
 
 [package.metadata]
@@ -43,6 +38,24 @@ requires-dist = [
     { name = "tenacity", specifier = ">=8.0" },
     { name = "typer", specifier = ">=0.24.1" },
 ]
+
+[[package]]
+name = "a2sdlc-workspace"
+version = "0"
+source = { virtual = "." }
+
+[package.dev-dependencies]
+dev = [
+    { name = "diff-cover" },
+    { name = "import-linter" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "pytest-env" },
+    { name = "ruff" },
+    { name = "ty" },
+]
+
+[package.metadata]
 
 [package.metadata.requires-dev]
 dev = [

@@ -1,56 +1,18 @@
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
 [project]
-name = "a2sdlc"
-version = "0.1.0"
-description = "Agent-to-SDLC — AI agent pipeline engine for automated software development"
+name = "a2sdlc-workspace"
+version = "0"
 requires-python = ">=3.12"
-dependencies = [
-    "pyyaml>=6.0",
-    "claude-agent-sdk>=0.1.50",
-    "pydantic>=2.0",
-    "rich>=14.0",
-    "PyGithub>=2.6",
-    "gitpython>=3.1",
-    "tenacity>=8.0",
-    "python-ulid>=2.0",
-    "mlflow>=2.15",
-    "typer>=0.24.1",
-]
 
-[project.scripts]
-a2sdlc = "a2sdlc.cli.main:main"
+[tool.uv]
+package = false
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/a2sdlc"]
+[tool.uv.workspace]
+members = ["packages/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["unit", "integration"]
-env = [
-    "A2SDLC_TEST=1",
-]
-
-[tool.ty.src]
-
-[dependency-groups]
-dev = [
-    "pytest-asyncio>=0.24.0",
-    "pytest-cov>=6.0",
-    "pytest-env>=1.6.0",
-    "diff-cover>=9.0",
-    "ruff>=0.15.9",
-    "ty>=0.0.28",
-    "import-linter>=2.0",
-]
-
-# ─── Architecture rules (enforced in CI) ────────────────────────────────
-# Mirrors docs/architecture.md §2. Run locally with: uv run lint-imports
-#
-# We start with the one rule that matters most: domain purity. The rest are
-# encoded as warnings for now (add when drift shows up in review).
+env = ["A2SDLC_TEST=1"]
 
 [tool.importlinter]
 root_packages = ["a2sdlc"]
@@ -82,24 +44,13 @@ forbidden_modules = [
     "a2sdlc.stages",
     "a2sdlc.cli",
 ]
-ignore_imports = [
-    # config.py is a glue point (docs/architecture.md §6) — it lazy-imports
-    # stages to merge stage defaults with project overrides. Legit, bounded.
-    "a2sdlc.config -> a2sdlc.stages",
-]
+ignore_imports = ["a2sdlc.config -> a2sdlc.stages"]
 
 [[tool.importlinter.contracts]]
 name = "lifecycle, assembly, evaluation do not import each other or pipeline"
 type = "forbidden"
-source_modules = [
-    "a2sdlc.lifecycle",
-    "a2sdlc.assembly",
-    "a2sdlc.evaluation",
-]
-forbidden_modules = [
-    "a2sdlc.pipeline",
-    "a2sdlc.cli",
-]
+source_modules = ["a2sdlc.lifecycle", "a2sdlc.assembly", "a2sdlc.evaluation"]
+forbidden_modules = ["a2sdlc.pipeline", "a2sdlc.cli"]
 
 [[tool.importlinter.contracts]]
 name = "lifecycle does not import assembly or evaluation"
@@ -118,3 +69,14 @@ name = "evaluation does not import lifecycle or assembly"
 type = "forbidden"
 source_modules = ["a2sdlc.evaluation"]
 forbidden_modules = ["a2sdlc.lifecycle", "a2sdlc.assembly"]
+
+[dependency-groups]
+dev = [
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0",
+    "pytest-env>=1.6.0",
+    "diff-cover>=9.0",
+    "ruff>=0.15.9",
+    "ty>=0.0.28",
+    "import-linter>=2.0",
+]
