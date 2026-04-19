@@ -31,5 +31,11 @@ class WorkAdapter(Protocol):
 
 from a2sdlc.adapters.work.local_file import LocalFileWorkAdapter  # noqa: E402
 from a2sdlc.adapters.work.github import GitHubWorkAdapter  # noqa: E402
+from a2sdlc.adapters.work.workflow_input import WorkflowInputReader  # noqa: E402
 
-__all__ = ["WorkAdapter", "LocalFileWorkAdapter", "GitHubWorkAdapter"]
+__all__ = [
+    "WorkAdapter",
+    "LocalFileWorkAdapter",
+    "GitHubWorkAdapter",
+    "WorkflowInputReader",
+]
