@@ -2,14 +2,50 @@
 
 from __future__ import annotations
 
+import httpx
+from atlassian import Jira as AtlassianJira
 from fastapi import FastAPI
 
-app = FastAPI(title="a2sdlc-dispatcher", version="0.1.0")
+from a2sdlc_dispatcher.gh_app import GHAppClient
+from a2sdlc_dispatcher.jira_client import JiraClient
+from a2sdlc_dispatcher.routes_events import build_router as build_events_router
+from a2sdlc_dispatcher.routes_github import build_router as build_gh_router
+from a2sdlc_dispatcher.routes_jira import build_router as build_jira_router
+from a2sdlc_dispatcher.runs_table import RunsTable
+from a2sdlc_dispatcher.settings import Settings
 
 
-@app.get("/healthz")
-async def healthz() -> dict[str, str]:
-    return {"status": "ok"}
+def create_app() -> FastAPI:
+    app = FastAPI(title="a2sdlc-dispatcher", version="0.1.0")
+    settings = Settings()  # ty: ignore[missing-argument]  # fields loaded from env
+    http = httpx.AsyncClient(timeout=30.0)
+
+    gh_app = GHAppClient(
+        http=http,
+        app_id=settings.gh_app_id,
+        private_key_pem=settings.gh_app_private_key.get_secret_value(),
+        installation_id=settings.gh_app_installation_id,
+    )
+    raw_jira = AtlassianJira(
+        url=settings.jira_base_url,
+        username=settings.jira_user,
+        password=settings.jira_token.get_secret_value(),
+    )
+    jira = JiraClient(raw_jira)
+    runs = RunsTable()
+
+    app.include_router(build_jira_router(settings=settings, gh_app=gh_app, runs=runs))
+    app.include_router(build_events_router(settings=settings, jira=jira, runs=runs))
+    app.include_router(build_gh_router(settings=settings, jira=jira))
+
+    @app.get("/healthz")
+    async def healthz() -> dict[str, str]:
+        return {"status": "ok"}
+
+    return app
+
+
+app = create_app()
 
 
 def run() -> None:

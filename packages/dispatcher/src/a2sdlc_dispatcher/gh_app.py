@@ -17,7 +17,8 @@ import jwt
 def mint_app_jwt(*, app_id: int, private_key_pem: str, ttl_seconds: int = 540) -> str:
     """Mint a short-lived JWT for the GH App itself (max 10 min per GH policy)."""
     now = int(time.time())
-    payload = {"iat": now - 60, "exp": now + ttl_seconds, "iss": app_id}
+    # PyJWT 2.x rejects non-string `iss`; GH App IDs are numeric.
+    payload = {"iat": now - 60, "exp": now + ttl_seconds, "iss": str(app_id)}
     return jwt.encode(payload, private_key_pem, algorithm="RS256")
 
 
