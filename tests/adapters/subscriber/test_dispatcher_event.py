@@ -91,3 +91,22 @@ async def test_http_failure_is_swallowed():
     )
     # Must not raise — dispatcher outage cannot break the pipeline.
     await sub.handle(StageStart(stage=StageName.SPEC, session_id="s1", started_at=0.0))
+
+
+async def test_chatty_events_are_not_forwarded():
+    from a2sdlc.domain.progress import GroupOpen, Milestone, ToolEntry
+
+    http = FakeHttp()
+    sub = DispatcherEventSubscriber(
+        dispatcher_url="https://d.example",
+        run_id="r1",
+        run_hmac="tok",
+        http=http,
+    )
+    # Metrics, Milestone, ToolEntry, and anything non-Stage are dropped —
+    # MLflow captures per-token telemetry; only lifecycle events hit Jira.
+    await sub.handle(Metrics(0, 0, 0.0, 0, 0.0))
+    await sub.handle(Milestone(timestamp=0.0, label="x"))
+    await sub.handle(ToolEntry(timestamp=0.0, name="Read", target="file"))
+    await sub.handle(GroupOpen(title="noise"))
+    assert http.calls == []
