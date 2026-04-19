@@ -7,7 +7,7 @@ import logging
 import pytest
 
 from a2sdlc.adapters.retry import must_succeed
-from a2sdlc.domain.exceptions import AuthError, TransientError
+from a2sdlc.domain.exceptions import PermanentError, RetryableError
 
 
 @pytest.mark.unit
@@ -31,35 +31,35 @@ class TestMustSucceed:
         def fn() -> str:
             calls.append(1)
             if len(calls) < 3:
-                raise TransientError("flaky")
+                raise RetryableError("flaky")
             return "done"
 
         result = must_succeed(fn, wait_multiplier=0.01, wait_max=0.01)
         assert result == "done"
         assert len(calls) == 3
 
-    def test_raises_immediately_on_auth_error(self) -> None:
+    def test_raises_immediately_on_permanent_error(self) -> None:
         """PermanentError is not retried — function called once."""
         calls = []
 
         def fn() -> None:
             calls.append(1)
-            raise AuthError("token expired")
+            raise PermanentError("token expired")
 
-        with pytest.raises(AuthError):
+        with pytest.raises(PermanentError):
             must_succeed(fn, wait_multiplier=0.01, wait_max=0.01)
 
         assert len(calls) == 1
 
     def test_raises_after_max_attempts_exhausted(self) -> None:
-        """After max_attempts retries all raise TransientError, re-raises last."""
+        """After max_attempts retries all raise RetryableError, re-raises last."""
         calls = []
 
         def fn() -> None:
             calls.append(1)
-            raise TransientError("always fails")
+            raise RetryableError("always fails")
 
-        with pytest.raises(TransientError):
+        with pytest.raises(RetryableError):
             must_succeed(fn, max_attempts=2, wait_multiplier=0.01, wait_max=0.01)
 
         assert len(calls) == 2
@@ -71,7 +71,7 @@ class TestMustSucceed:
         def fn() -> str:
             calls.append(1)
             if len(calls) < 3:
-                raise TransientError("retry me")
+                raise RetryableError("retry me")
             return "ok"
 
         with caplog.at_level(logging.WARNING, logger="a2sdlc.adapters.retry"):

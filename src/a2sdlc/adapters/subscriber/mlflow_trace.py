@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 import mlflow
 
-from a2sdlc.evaluation.progress import (
+from a2sdlc.domain.progress import (
     Metrics,
     Milestone,
     ProgressEvent,

@@ -1,10 +1,4 @@
-"""WorkAdapter Protocol + in-tree work impls.
-
-Note: ``PipelineEvent`` moved to ``a2sdlc.domain.pipeline_event`` in the
-adapters-layout refactor. This module re-exports it for backward
-compatibility with callers that used ``from a2sdlc.adapters.work import
-PipelineEvent``. New code should import directly from domain.
-"""
+"""WorkAdapter Protocol + in-tree work impls."""
 
 from __future__ import annotations
 
@@ -35,14 +29,7 @@ class WorkAdapter(Protocol):
     def find_last_handover(self, key: str) -> HandoverComment | None: ...
 
 
-# NOTE: impls below import PipelineEvent (and WorkAdapter) from this module.
-# PipelineEvent is bound above via re-import from a2sdlc.domain.pipeline_event
-# BEFORE these submodule imports run, so the name is already available in
-# this module's namespace when the impls' `from a2sdlc.adapters.work import
-# PipelineEvent` would resolve (though impls now import direct from domain).
-# Keep these re-exports LAST — moving them above the Protocol definition
-# would break the partial-init chain with ImportError.
 from a2sdlc.adapters.work.local_file import LocalFileWorkAdapter  # noqa: E402
 from a2sdlc.adapters.work.github import GitHubWorkAdapter  # noqa: E402
 
-__all__ = ["PipelineEvent", "WorkAdapter", "LocalFileWorkAdapter", "GitHubWorkAdapter"]
+__all__ = ["WorkAdapter", "LocalFileWorkAdapter", "GitHubWorkAdapter"]

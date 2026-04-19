@@ -22,7 +22,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from a2sdlc.cli_local import run_stage_entry
+from a2sdlc.cli.run_stage import run_stage_entry
 
 
 def _init_minimal_repo(tmp_path: Path, ticket_body: str = "Add hello world") -> Path:

@@ -26,13 +26,13 @@ from a2sdlc.domain.models import (
     strip_status_block,
 )
 from a2sdlc.lifecycle.pr import PRLifecycle
-from a2sdlc.evaluation.progress import (
-    ProgressState,
+from a2sdlc.domain.progress import ProgressState
+from a2sdlc.domain.progress_format import (
     context_window_for_model,
     format_error,
     format_final,
 )
-from a2sdlc.evaluation.stats import StageRunStats
+from a2sdlc.domain.stats import StageRunStats
 from a2sdlc.assembly.prompt import assemble_system_prompt
 from a2sdlc.pipeline.stage_executor import StageExecutor
 from a2sdlc.stages import next_stage

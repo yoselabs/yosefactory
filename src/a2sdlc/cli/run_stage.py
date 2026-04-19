@@ -30,13 +30,13 @@ from a2sdlc.adapters.review import LocalNoopReviewAdapter
 from a2sdlc.config import load_config_file
 from a2sdlc.domain.exceptions import BlockedError
 from a2sdlc.domain.models import StageName
-from a2sdlc.evaluation.progress import ProgressState
+from a2sdlc.domain.progress import ProgressState
 from a2sdlc.pipeline.dispatch import DispatchContext, DispatchResult, dispatch
 
 if TYPE_CHECKING:
     from a2sdlc.adapters.runner import StageRunner
 
-logger = logging.getLogger("a2sdlc.cli_local")
+logger = logging.getLogger("a2sdlc.cli.run_stage")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
@@ -233,18 +233,13 @@ def run_stage_entry(argv: list[str], runner_override: str | None = None) -> int:
                 child.log_tag("dirty_tree_before", "true" if dirty else "false")
                 child.log_tag("session_id", session_id)
                 result = asyncio.run(dispatch(ctx))
-                stats = getattr(result, "stats", None)
+                stats = result.stats
                 if stats is not None:
-                    if hasattr(stats, "tokens_in"):
-                        child.log_metric("tokens_in", stats.tokens_in)
-                    if hasattr(stats, "tokens_out"):
-                        child.log_metric("tokens_out", stats.tokens_out)
-                    if hasattr(stats, "cost_usd"):
-                        child.log_metric("cost_usd", stats.cost_usd)
-                    if hasattr(stats, "num_turns"):
-                        child.log_metric("turns", stats.num_turns)
-                    if hasattr(stats, "duration_ms"):
-                        child.log_metric("duration_ms", stats.duration_ms)
+                    child.log_metric("tokens_in", stats.tokens_in)
+                    child.log_metric("tokens_out", stats.tokens_out)
+                    child.log_metric("cost_usd", stats.cost_usd)
+                    child.log_metric("turns", stats.num_turns)
+                    child.log_metric("duration_ms", stats.duration_ms)
 
                 # Persist the agent's output as a JSON artifact so the whole
                 # stage result (body + metadata) can be inspected from MLflow.
@@ -255,16 +250,13 @@ def run_stage_entry(argv: list[str], runner_override: str | None = None) -> int:
                 if result is not None:
                     stats_payload: dict[str, float | int] = {}
                     if stats is not None:
-                        for attr in (
-                            "tokens_in",
-                            "tokens_out",
-                            "cost_usd",
-                            "num_turns",
-                            "duration_ms",
-                        ):
-                            val = getattr(stats, attr, None)
-                            if val is not None:
-                                stats_payload[attr] = val
+                        stats_payload = {
+                            "tokens_in": stats.tokens_in,
+                            "tokens_out": stats.tokens_out,
+                            "cost_usd": stats.cost_usd,
+                            "num_turns": stats.num_turns,
+                            "duration_ms": stats.duration_ms,
+                        }
                     _mlflow.log_dict(
                         {
                             "stage": stage.value,

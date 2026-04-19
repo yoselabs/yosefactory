@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 from a2sdlc.domain.models import StageName
-from a2sdlc.evaluation.progress import (
+from a2sdlc.domain.progress import (
     Metrics,
     ProgressEvent,
     ProgressState,
     StageEnd,
     StageStart,
-    format_progress,
 )
-from a2sdlc.evaluation.throttle import Throttle
+from a2sdlc.domain.progress_format import format_progress
+from a2sdlc.adapters.subscriber._throttle import Throttle
 
 
 class GhCommentSubscriber:

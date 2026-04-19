@@ -15,7 +15,7 @@ from a2sdlc.domain.models import StageName
 from a2sdlc.domain.run_result import RunResult
 
 if TYPE_CHECKING:
-    from a2sdlc.evaluation.progress import ProgressState
+    from a2sdlc.domain.progress import ProgressState
 
 
 class StageRunner(Protocol):

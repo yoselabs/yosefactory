@@ -11,20 +11,28 @@ domain this small.
 
 ```
 src/a2sdlc/
-├── cli.py, __main__.py          # entry points — root only
+├── cli/, __main__.py            # entry points — root only
+│   └── cli/main.py              # top-level dispatcher (routes subcommands)
+│   └── cli/dispatch.py          # ``a2sdlc dispatch`` — GitHub pipeline entry
+│   └── cli/run_stage.py         # ``a2sdlc run-stage`` — local stage runner
 │
 ├── domain/                      # pure types, zero I/O, zero framework imports
 │   ├── models.py                # StageName, StageStatus, TicketState, GateConfig, ...
 │   ├── handover.py              # parse/format handover comments
 │   ├── directives.py            # parse [a2sdlc ...] directives
-│   └── exceptions.py            # typed pipeline errors
+│   ├── exceptions.py            # typed pipeline errors
+│   ├── pipeline_event.py        # PipelineEvent — external trigger shape
+│   ├── run_result.py            # RunResult — stage execution result
+│   ├── progress.py              # events + Subscriber Protocol + ProgressState bus
+│   ├── progress_format.py       # pure format/extract helpers on progress data
+│   └── stats.py                 # StageRunStats — cost/tokens/duration accumulator
 │
 ├── pipeline/                    # application layer — orchestration
 │   ├── dispatch.py              # composition root (the hub)
 │   ├── stage_executor.py        # run a single stage
 │   ├── runner.py                # Claude Agent SDK wrapper
 │   ├── feedback_routing.py      # map feedback event → target stage
-│   └── context_assembly.py      # build agent context from handover + feedback
+│   └── context.py               # build agent context from handover + feedback
 │
 ├── lifecycle/                   # "manage X over time"
 │   ├── comment.py               # one-comment-per-stage-run lifecycle
@@ -35,19 +43,23 @@ src/a2sdlc/
 │   └── prompt.py                # load + concatenate stage prompt files
 │
 ├── evaluation/                  # measure what happened (first-class concern)
-│   ├── progress.py              # live run tracking + formatting
-│   └── stats.py                 # cost/tokens/duration accumulator
+│   ├── mlflow_sink.py           # MLflow run/metric sink
+│   └── quality_gate.py          # post-implement make-check wrapper
 │                                # (future: eval harness, scorers, run comparison)
 │
 ├── config.py                    # stays flat — small, stable, imported everywhere
 │
-├── adapters/                    # ports & adapters (platform I/O)
-│   ├── protocols.py             # ports: WorkAdapter, ReviewAdapter, GitAdapter, StageRunner
-│   ├── work.py, review.py, git.py, github.py, retry.py
+├── adapters/                    # ports & adapters (platform I/O) — kind-first layout
+│   ├── work/                    # WorkAdapter Protocol + github, local_file impls
+│   ├── review/                  # ReviewAdapter Protocol + github, local_noop impls
+│   ├── git/                     # GitAdapter Protocol + local, local_branch impls
+│   ├── runner/                  # StageRunner Protocol (impl in pipeline/runner.py)
+│   ├── subscriber/              # Subscriber impls (Protocol in domain/progress.py)
+│   ├── factory.py               # name → adapter factory
+│   └── retry.py                 # tenacity retry wrapper
 │
 ├── stages/                      # stage definitions (data, not behavior)
-├── prompts/                     # prompt files (package resources)
-└── hooks/                       # runtime hooks
+└── prompts/                     # prompt files (package resources)
 ```
 
 ## 2. Layering rules
@@ -58,7 +70,7 @@ src/a2sdlc/
 | `adapters/` | `domain/`, `config.py`. Never from `pipeline/`, `lifecycle/`, `assembly/`, `evaluation/`. |
 | `lifecycle/`, `assembly/`, `evaluation/` | `domain/`, `config.py`, `adapters/`. Not from each other. Not from `pipeline/`. |
 | `pipeline/` | everything else. This is the composition layer. |
-| `cli.py` | `pipeline/`, `config.py`, `domain/`. |
+| `cli/` | `pipeline/`, `config.py`, `domain/`, `adapters/` (one composition point per subcommand). |
 | `stages/` | `domain/`, `config.py`. Stage definitions are data, not orchestration. |
 
 **Invariant:** dependency arrows point inward (`adapters` → `domain`), never outward.
@@ -99,7 +111,8 @@ Either split its responsibilities or promote it to a deliberate composition poin
 ## 6. What stays flat
 
 Small, stable, universally-imported modules stay at `src/a2sdlc/` root:
-- `cli.py`, `__main__.py`, `__init__.py` — entry points
+- `cli/`, `__main__.py`, `__init__.py` — entry points (`cli/` is a package holding
+  per-subcommand modules; `cli.main:main` is the console-script entry)
 - `config.py` — configuration loading (imported by almost everything)
 
 Everything else earns its way into a package via the rules above.

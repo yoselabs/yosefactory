@@ -89,11 +89,9 @@ class QualityConfig:
 # ── Session helpers ──────────────────────────────────────────────────
 
 
-def get_session_id(ticket_key: str, stage: str, review_cycles: int = 0) -> str:
-    """Deterministic UUID from ticket key + stage name + review_cycles."""
-    return str(
-        uuid.uuid5(uuid.NAMESPACE_URL, f"a2sdlc:{ticket_key}:{stage}:{review_cycles}")
-    )
+def get_session_id(ticket_key: str, stage: str) -> str:
+    """Deterministic UUID from ticket key + stage name."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"a2sdlc:{ticket_key}:{stage}"))
 
 
 # ── Project configuration ─────────────────────────────────────────────

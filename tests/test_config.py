@@ -263,31 +263,6 @@ class TestGetSessionId:
         sid2 = get_session_id("PROJ-1", "implement")
         assert sid1 != sid2
 
-    def test_different_review_cycles_produce_different_ids(self) -> None:
-        from a2sdlc.config import get_session_id
-
-        sid0 = get_session_id("PROJ-1", "review", review_cycles=0)
-        sid1 = get_session_id("PROJ-1", "review", review_cycles=1)
-        sid2 = get_session_id("PROJ-1", "review", review_cycles=2)
-        assert sid0 != sid1
-        assert sid1 != sid2
-        assert sid0 != sid2
-
-    def test_deterministic_with_review_cycles(self) -> None:
-        from a2sdlc.config import get_session_id
-
-        sid1 = get_session_id("PROJ-42", "review", review_cycles=3)
-        sid2 = get_session_id("PROJ-42", "review", review_cycles=3)
-        assert sid1 == sid2
-
-    def test_default_review_cycles_backward_compat(self) -> None:
-        from a2sdlc.config import get_session_id
-
-        # Calling with explicit 0 should match default
-        sid_default = get_session_id("PROJ-1", "spec")
-        sid_explicit = get_session_id("PROJ-1", "spec", review_cycles=0)
-        assert sid_default == sid_explicit
-
 
 # ── gate_config ───────────────────────────────────────────────────────
 

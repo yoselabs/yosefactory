@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from a2sdlc.config import StageConfig
-from a2sdlc.evaluation.progress import Milestone, ProgressState, ToolEntry
+from a2sdlc.domain.progress import Milestone, ProgressState, ToolEntry
 from a2sdlc.pipeline.runner import RunResult, run_stage
 
 

@@ -40,7 +40,7 @@ def test_run_stage_spec_creates_session_branch_and_persists_ticket(
     WHEN run-stage spec --ticket <file> --session testsid is invoked
     THEN a2sdlc/testsid branch exists AND .a2sdlc/ticket.md matches the ticket.
     """
-    from a2sdlc.cli_local import run_stage_entry
+    from a2sdlc.cli.run_stage import run_stage_entry
 
     ticket = _init_minimal_repo(tmp_path)
 
@@ -73,7 +73,7 @@ def test_run_stage_spec_generates_ulid_when_session_not_given(tmp_path: Path) ->
     WHEN invoked from a fresh repo
     THEN a ULID-like session id is generated and a branch with that id exists.
     """
-    from a2sdlc.cli_local import run_stage_entry
+    from a2sdlc.cli.run_stage import run_stage_entry
 
     ticket = _init_minimal_repo(tmp_path)
     exit_code = run_stage_entry(
@@ -96,7 +96,7 @@ def test_run_stage_implement_infers_session_from_branch(tmp_path: Path) -> None:
     WHEN run-stage implement is invoked without --session
     THEN session_id 'fromBranch' is used (no new branch created).
     """
-    from a2sdlc.cli_local import run_stage_entry
+    from a2sdlc.cli.run_stage import run_stage_entry
 
     _init_minimal_repo(tmp_path)
     ticket = tmp_path / "ticket.md"
@@ -136,7 +136,7 @@ def test_run_stage_implement_with_tracking_logs_quality_gate(
     THEN the quality gate runs inside the stage_run, the metric
          quality_passed=1 is logged, and exit code is 0.
     """
-    from a2sdlc.cli_local import run_stage_entry
+    from a2sdlc.cli.run_stage import run_stage_entry
 
     _init_minimal_repo(tmp_path)
     ticket = tmp_path / "ticket.md"
@@ -176,7 +176,7 @@ def test_run_stage_implement_quality_gate_pass_exits_zero(tmp_path: Path) -> Non
     WHEN run-stage implement runs successfully
     THEN exit code is 0.
     """
-    from a2sdlc.cli_local import run_stage_entry
+    from a2sdlc.cli.run_stage import run_stage_entry
 
     _init_minimal_repo(tmp_path)
     ticket = tmp_path / "ticket.md"
@@ -205,7 +205,7 @@ def test_run_stage_implement_quality_gate_fail_exits_nonzero(tmp_path: Path) -> 
     WHEN run-stage implement completes
     THEN exit code is non-zero.
     """
-    from a2sdlc.cli_local import run_stage_entry
+    from a2sdlc.cli.run_stage import run_stage_entry
 
     _init_minimal_repo(tmp_path)
     cfg = tmp_path / ".a2sdlc" / "config.yaml"
@@ -238,7 +238,7 @@ def test_run_stage_spec_requires_ticket_on_first_invocation(
     WHEN run-stage spec is invoked without --ticket
     THEN exit code is non-zero and a helpful error is shown.
     """
-    from a2sdlc.cli_local import run_stage_entry
+    from a2sdlc.cli.run_stage import run_stage_entry
 
     _init_minimal_repo(tmp_path)
     (tmp_path / ".a2sdlc" / "ticket.md").unlink(missing_ok=True)

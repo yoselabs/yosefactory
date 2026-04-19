@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 
-from a2sdlc.evaluation.progress import (
+from a2sdlc.domain.progress import (
     GroupClose,
     GroupOpen,
     ProgressEvent,

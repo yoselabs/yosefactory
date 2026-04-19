@@ -23,30 +23,6 @@ class PermanentError(AdapterError):
     """Error that cannot be retried — propagate immediately."""
 
 
-class RateLimitError(RetryableError):
-    """Rate limit hit — retry after a delay."""
-
-    def __init__(self, message: str, retry_after: float = 0.0) -> None:
-        self.retry_after = retry_after
-        super().__init__(message)
-
-
-class TransientError(RetryableError):
-    """Transient adapter failure — safe to retry."""
-
-
-class AuthError(PermanentError):
-    """Authentication or authorisation failure."""
-
-
-class NotFoundError(PermanentError):
-    """Requested resource does not exist."""
-
-
-class PlatformValidationError(PermanentError):
-    """Platform rejected the request due to invalid input."""
-
-
 class BlockedError(PermanentError):
     """Unrecoverable error — set stage:blocked label and exit."""
 

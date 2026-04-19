@@ -1,7 +1,7 @@
 """Normalized result from a stage execution.
 
 Lives in domain/ because it crosses the pipeline ↔ adapters boundary
-(the StageRunner port in adapters/protocols.py returns it).
+(the StageRunner port in adapters/runner/ returns it).
 
 The ``progress`` field carries an ``evaluation.progress.ProgressState``
 at runtime, typed opaquely here to keep domain/ free of evaluation imports.

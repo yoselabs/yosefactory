@@ -1,4 +1,4 @@
-"""CLI entry point — dispatch only."""
+"""``a2sdlc dispatch`` subcommand — GitHub-backed pipeline dispatch."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-logger = logging.getLogger("a2sdlc.cli")
+logger = logging.getLogger("a2sdlc.cli.dispatch")
 
 
 # ── Logging ──────────────────────────────────────────────────────────
@@ -25,13 +25,11 @@ def setup_logging(ticket_key: str, stage: str, project_root: Path) -> None:
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
 
-    # Stderr handler.
     stderr_handler = logging.StreamHandler(sys.stderr)
     stderr_handler.setLevel(logging.INFO)
     stderr_handler.setFormatter(formatter)
     root.addHandler(stderr_handler)
 
-    # File handler.
     log_dir = project_root / ".a2sdlc" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -73,10 +71,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    # dispatch subcommand
     dispatch_parser = sub.add_parser("dispatch", help="Run pipeline dispatch")
     dispatch_parser.add_argument("--project-root", type=Path, default=None)
-    # Local dev overrides
     dispatch_parser.add_argument(
         "--stage", default=None, help="Override stage (local dev)"
     )
@@ -94,17 +90,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 # ── Main ─────────────────────────────────────────────────────────────
 
 
-def main(argv: list[str] | None = None) -> None:
-    """Entry point."""
-    raw = list(argv) if argv is not None else sys.argv[1:]
-
-    # ``run-stage`` has its own argparse in cli_local; route raw args there
-    # before the dispatch-only top-level parser sees them.
-    if raw and raw[0] == "run-stage":
-        from a2sdlc.cli_local import run_stage_entry  # noqa: PLC0415
-
-        sys.exit(run_stage_entry(raw[1:]))
-
+def dispatch_entry(argv: list[str] | None = None) -> None:
+    """Run the dispatch subcommand."""
     args = parse_args(argv)
 
     if args.command == "dispatch":
@@ -116,20 +103,20 @@ def main(argv: list[str] | None = None) -> None:
         config = load_config_file(project_root)
         setup_logging("dispatch", "dispatch", project_root)
 
-        # Construct adapters
-        from a2sdlc.adapters._github import connect  # noqa: PLC0415
+        from github import Github  # noqa: PLC0415
+
         from a2sdlc.adapters.review import GitHubReviewAdapter  # noqa: PLC0415
         from a2sdlc.adapters.work import GitHubWorkAdapter  # noqa: PLC0415
 
         token = os.environ.get("GITHUB_TOKEN", os.environ.get("GH_TOKEN", ""))
         repo_name = os.environ.get("GITHUB_REPOSITORY", "")
-        repo = connect(repo_name, token)
+        repo = Github(token).get_repo(repo_name)
         work_adapter = GitHubWorkAdapter(repo)
         review_adapter = GitHubReviewAdapter(repo)
 
-        from a2sdlc.adapters.subscriber.gh_actions import GhActionsLogSubscriber  # noqa: PLC0415
         from a2sdlc.adapters.git import LocalGitAdapter  # noqa: PLC0415
-        from a2sdlc.evaluation.progress import ProgressState  # noqa: PLC0415
+        from a2sdlc.adapters.subscriber.gh_actions import GhActionsLogSubscriber  # noqa: PLC0415
+        from a2sdlc.domain.progress import ProgressState  # noqa: PLC0415
         from a2sdlc.pipeline.runner import SdkStageRunner  # noqa: PLC0415
 
         git = LocalGitAdapter(project_root)

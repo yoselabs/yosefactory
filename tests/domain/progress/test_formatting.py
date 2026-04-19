@@ -6,15 +6,9 @@ from typing import Any
 
 import pytest
 
-from a2sdlc.evaluation.progress import (
-    Milestone,
-    ProgressState,
-    ToolEntry,
-    format_error,
-    format_final,
-    format_progress,
-)
-from a2sdlc.evaluation.stats import StageRunStats
+from a2sdlc.domain.progress import Milestone, ProgressState, ToolEntry
+from a2sdlc.domain.progress_format import format_error, format_final, format_progress
+from a2sdlc.domain.stats import StageRunStats
 
 
 def _make_progress(**overrides: Any) -> ProgressState:

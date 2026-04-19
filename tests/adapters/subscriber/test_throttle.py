@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from a2sdlc.evaluation.throttle import Throttle
+from a2sdlc.adapters.subscriber._throttle import Throttle
 
 
 def test_first_call_admitted() -> None:

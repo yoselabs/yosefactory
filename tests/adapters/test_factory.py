@@ -77,7 +77,7 @@ def test_build_git_adapter_unknown_raises(tmp_path):
 
 def test_build_work_adapter_jira_deferred(tmp_path):
     """GIVEN name='jira' WHEN build_work_adapter is called THEN NotImplementedError signals deferred wiring."""
-    with pytest.raises(NotImplementedError, match="jira adapter"):
+    with pytest.raises(NotImplementedError, match="jira work adapter"):
         build_work_adapter(
             "jira",
             project_root=tmp_path,

@@ -10,7 +10,7 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.text import Text
 
-from a2sdlc.evaluation.progress import (
+from a2sdlc.domain.progress import (
     GroupClose,
     GroupOpen,
     Metrics,

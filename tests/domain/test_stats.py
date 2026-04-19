@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from a2sdlc.domain.run_result import RunResult
-from a2sdlc.evaluation.stats import StageRunStats
+from a2sdlc.domain.stats import StageRunStats
 
 
 @pytest.mark.unit

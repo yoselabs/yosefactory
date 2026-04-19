@@ -6,7 +6,7 @@ import pytest
 
 from a2sdlc.adapters.subscriber.gh_comment import GhCommentSubscriber
 from a2sdlc.domain.models import StageName
-from a2sdlc.evaluation.progress import (
+from a2sdlc.domain.progress import (
     Metrics,
     Milestone,
     ProgressState,

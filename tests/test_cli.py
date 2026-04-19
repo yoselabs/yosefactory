@@ -7,12 +7,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from a2sdlc.cli import (
+from a2sdlc.cli.dispatch import (
     find_project_root,
-    main,
     parse_args,
     setup_logging,
 )
+from a2sdlc.cli.main import main
 from a2sdlc.assembly.prompt import assemble_system_prompt
 
 
@@ -27,14 +27,14 @@ class TestFindProjectRoot:
         subdir = tmp_path / "src" / "deep"
         subdir.mkdir(parents=True)
 
-        with patch("a2sdlc.cli.Path.cwd", return_value=subdir):
+        with patch("a2sdlc.cli.dispatch.Path.cwd", return_value=subdir):
             result = find_project_root()
 
         assert result == tmp_path
 
     def test_find_project_root_not_found(self, tmp_path: Path) -> None:
         """Empty temp dir with no .a2sdlc/, verify returns cwd."""
-        with patch("a2sdlc.cli.Path.cwd", return_value=tmp_path):
+        with patch("a2sdlc.cli.dispatch.Path.cwd", return_value=tmp_path):
             result = find_project_root()
 
         assert result == tmp_path
@@ -188,9 +188,11 @@ class TestSetupLogging:
 
 @pytest.mark.unit
 class TestMainRunStage:
-    def test_main_routes_run_stage_to_cli_local(self) -> None:
-        """``a2sdlc run-stage ...`` delegates to cli_local.run_stage_entry."""
-        with patch("a2sdlc.cli_local.run_stage_entry", return_value=0) as mock_entry:
+    def test_main_routes_run_stage_to_cli_run_stage(self) -> None:
+        """``a2sdlc run-stage ...`` delegates to cli.run_stage.run_stage_entry."""
+        with patch(
+            "a2sdlc.cli.run_stage.run_stage_entry", return_value=0
+        ) as mock_entry:
             with pytest.raises(SystemExit) as exc:
                 main(["run-stage", "spec", "/tmp/repo"])
 
@@ -208,7 +210,7 @@ class TestMainDispatch:
         dispatch_result = MagicMock(blocked=False, error=None)
 
         with (
-            patch("a2sdlc.adapters._github.connect") as mock_connect,
+            patch("github.Github") as mock_github,
             # NOTE: these three patch() calls target the package namespace where cli.py looks up the names (via `from a2sdlc.adapters.<kind> import X`), not the submodule where they're defined. patch()ing the submodule attribute would miss the binding cli.py uses and the tests would silently pass with mock_call_count == 0.
             patch("a2sdlc.adapters.work.GitHubWorkAdapter") as mock_work,
             patch("a2sdlc.adapters.review.GitHubReviewAdapter") as mock_review,
@@ -221,7 +223,8 @@ class TestMainDispatch:
             ),
         ):
             mock_git.return_value = MagicMock(name="git")
-            mock_connect.return_value = MagicMock(name="repo")
+            mock_repo = MagicMock(name="repo")
+            mock_github.return_value.get_repo.return_value = mock_repo
 
             async def _fake_dispatch(_ctx: object) -> object:
                 return dispatch_result
@@ -230,9 +233,10 @@ class TestMainDispatch:
 
             main(["dispatch", "--project-root", str(tmp_path)])
 
-        # connect called with env-derived (repo, token); GitHubWorkAdapter
-        # called with just the repo (no trigger_mention override).
-        mock_connect.assert_called_once_with("o/r", "tkn")
+        # Github(token).get_repo(repo_name) called with env-derived values;
+        # GitHubWorkAdapter called with just the repo (no trigger_mention override).
+        mock_github.assert_called_once_with("tkn")
+        mock_github.return_value.get_repo.assert_called_once_with("o/r")
         assert mock_work.call_count == 1
         assert "trigger_mention" not in mock_work.call_args.kwargs
         mock_review.assert_called_once()

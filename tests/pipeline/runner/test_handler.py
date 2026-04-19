@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from a2sdlc.evaluation.progress import ProgressState
+from a2sdlc.domain.progress import ProgressState
 from a2sdlc.pipeline.runner import _handle_assistant_message
 
 

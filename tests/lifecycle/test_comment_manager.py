@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from a2sdlc.lifecycle.comment import CommentManager
-from a2sdlc.domain.exceptions import TransientError
+from a2sdlc.domain.exceptions import RetryableError
 from tests.fakes import FakeWorkAdapter
 
 
@@ -112,7 +112,7 @@ def test_double_finalize_is_idempotent(
 
 
 class _FlakyFinalizeAdapter(FakeWorkAdapter):
-    """Raises TransientError on the first finalize_comment call."""
+    """Raises RetryableError on the first finalize_comment call."""
 
     def __init__(self) -> None:
         super().__init__(event=None, ticket_body="", labels=None)
@@ -121,11 +121,11 @@ class _FlakyFinalizeAdapter(FakeWorkAdapter):
     def finalize_comment(self, comment_id: str, body: str) -> None:
         if self._first_finalize:
             self._first_finalize = False
-            raise TransientError("flaky network")
+            raise RetryableError("flaky network")
         super().finalize_comment(comment_id, body)
 
 
-def test_finalize_retries_on_transient_error() -> None:
+def test_finalize_retries_on_retryable_error() -> None:
     adapter = _FlakyFinalizeAdapter()
     manager = CommentManager(work=adapter, ticket_key="PROJ-2")
     manager.start("spec")

@@ -7,7 +7,7 @@ import pytest
 from a2sdlc.config import StageConfig
 from a2sdlc.domain.models import StageName, StageStatus
 from a2sdlc.domain.run_result import RunResult
-from a2sdlc.evaluation.progress import ProgressState
+from a2sdlc.domain.progress import ProgressState
 from tests.fakes import FakeRunner
 
 
@@ -203,7 +203,7 @@ async def test_progress_state_from_last_result():
 @pytest.mark.asyncio
 async def test_milestones_from_progress_state():
     """ExecutionResult.milestones come from the last progress state."""
-    from a2sdlc.evaluation.progress import Milestone
+    from a2sdlc.domain.progress import Milestone
 
     milestone = Milestone(timestamp=1.0, label="test milestone")
     prog = ProgressState(project_root="/repo")
