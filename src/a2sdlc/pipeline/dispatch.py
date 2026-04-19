@@ -32,7 +32,7 @@ from a2sdlc.domain.progress_format import (
     format_error,
     format_final,
 )
-from a2sdlc.domain.stats import StageRunStats
+from a2sdlc.domain.run_result import DispatchResult
 from a2sdlc.assembly.prompt import assemble_system_prompt
 from a2sdlc.pipeline.stage_executor import StageExecutor
 from a2sdlc.stages import next_stage
@@ -52,22 +52,6 @@ class DispatchContext:
     project_root: Path
     logger: logging.Logger
     run_id: str | None = None
-
-
-@dataclass
-class DispatchResult:
-    """What happened — for testing and logging."""
-
-    stage: StageName
-    status: StageStatus | None = None
-    next_stage: StageName | None = None
-    blocked: bool = False
-    error: str | None = None
-    # Cost/token telemetry from the stage run (only populated on success path).
-    stats: StageRunStats | None = None
-    # Raw agent output (runner's final message). Empty string on paths that
-    # never reach the runner (e.g. early validation failures).
-    output: str = ""
 
 
 async def dispatch(ctx: DispatchContext) -> DispatchResult:

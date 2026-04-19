@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from a2sdlc.domain.run_result import RunResult
+if TYPE_CHECKING:
+    from a2sdlc.domain.run_result import RunResult
 
 
 @dataclass

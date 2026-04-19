@@ -100,9 +100,7 @@ def _make_config(**overrides: object) -> StageConfig:
         allowed_tools=[],
     )
     if overrides:
-        from dataclasses import replace
-
-        config = replace(config, **overrides)
+        config = config.model_copy(update=overrides)
     return config
 
 

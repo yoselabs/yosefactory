@@ -9,7 +9,6 @@ import pytest
 
 from a2sdlc.cli.dispatch import (
     find_project_root,
-    parse_args,
     setup_logging,
 )
 from a2sdlc.cli.main import main
@@ -38,42 +37,6 @@ class TestFindProjectRoot:
             result = find_project_root()
 
         assert result == tmp_path
-
-
-# ── parse_args ───────────────────────────────────────────────────────
-
-
-@pytest.mark.unit
-class TestParseArgs:
-    def test_parse_args_dispatch(self) -> None:
-        args = parse_args(["dispatch"])
-        assert args.command == "dispatch"
-        assert args.project_root is None
-        assert args.stage is None
-        assert args.key is None
-        assert args.flag == []
-
-    def test_parse_args_dispatch_with_overrides(self) -> None:
-        args = parse_args(
-            [
-                "dispatch",
-                "--project-root",
-                "/tmp/proj",
-                "--stage",
-                "implement",
-                "--key",
-                "PROJ-42",
-                "--flag",
-                "self_answer",
-                "--flag",
-                "auto_merge",
-            ]
-        )
-        assert args.command == "dispatch"
-        assert args.project_root == Path("/tmp/proj")
-        assert args.stage == "implement"
-        assert args.key == "PROJ-42"
-        assert args.flag == ["self_answer", "auto_merge"]
 
 
 # ── assemble_system_prompt ───────────────────────────────────────────
@@ -188,16 +151,16 @@ class TestSetupLogging:
 
 @pytest.mark.unit
 class TestMainRunStage:
-    def test_main_routes_run_stage_to_cli_run_stage(self) -> None:
-        """``a2sdlc run-stage ...`` delegates to cli.run_stage.run_stage_entry."""
-        with patch(
-            "a2sdlc.cli.run_stage.run_stage_entry", return_value=0
-        ) as mock_entry:
+    def test_main_routes_run_stage_to_impl(self, tmp_path: Path) -> None:
+        """``a2sdlc run-stage ...`` delegates to the run_stage subcommand."""
+        with patch("a2sdlc.cli.run_stage._run_stage_impl", return_value=0) as mock_impl:
             with pytest.raises(SystemExit) as exc:
-                main(["run-stage", "spec", "/tmp/repo"])
+                main(["run-stage", "spec", str(tmp_path)])
 
         assert exc.value.code == 0
-        mock_entry.assert_called_once_with(["spec", "/tmp/repo"])
+        mock_impl.assert_called_once()
+        assert mock_impl.call_args.kwargs["stage"].value == "spec"
+        assert mock_impl.call_args.kwargs["project_root"] == tmp_path.resolve()
 
 
 @pytest.mark.unit
@@ -231,7 +194,9 @@ class TestMainDispatch:
 
             mock_dispatch.side_effect = _fake_dispatch
 
-            main(["dispatch", "--project-root", str(tmp_path)])
+            with pytest.raises(SystemExit) as exc:
+                main(["dispatch", "--project-root", str(tmp_path)])
+            assert exc.value.code == 0
 
         # Github(token).get_repo(repo_name) called with env-derived values;
         # GitHubWorkAdapter called with just the repo (no trigger_mention override).

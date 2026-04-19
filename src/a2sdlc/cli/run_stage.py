@@ -1,4 +1,4 @@
-"""Local runner CLI internals — backs the ``a2sdlc run-stage`` subcommand.
+"""``a2sdlc run-stage`` subcommand — local stage runner.
 
 Drives a single pipeline stage against a local checkout using the
 file-backed adapters (``local_file`` work, ``local_noop`` review,
@@ -11,14 +11,13 @@ progress adapter so live consoles (rich, GH actions) can render them.
 
 from __future__ import annotations
 
-import argparse
-import asyncio
 import logging
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 
+import typer
 from ulid import ULID
 
 from a2sdlc.adapters.factory import (
@@ -27,11 +26,13 @@ from a2sdlc.adapters.factory import (
     build_work_adapter,
 )
 from a2sdlc.adapters.review import LocalNoopReviewAdapter
+from a2sdlc.assembly.wire import build_progress_state
 from a2sdlc.config import load_config_file
 from a2sdlc.domain.exceptions import BlockedError
 from a2sdlc.domain.models import StageName
-from a2sdlc.domain.progress import ProgressState
-from a2sdlc.pipeline.dispatch import DispatchContext, DispatchResult, dispatch
+from a2sdlc.domain.run_result import DispatchResult
+from a2sdlc.evaluation.tracked_run import run_tracked
+from a2sdlc.pipeline.dispatch import DispatchContext, dispatch
 
 if TYPE_CHECKING:
     from a2sdlc.adapters.runner import StageRunner
@@ -45,10 +46,7 @@ logger = logging.getLogger("a2sdlc.cli.run_stage")
 def _git_head_sha(root: Path) -> str:
     """Return the short commit SHA at HEAD, or ``"unknown"`` if git fails."""
     r = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=root,
-        capture_output=True,
-        text=True,
+        ["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True
     )
     return r.stdout.strip() if r.returncode == 0 else "unknown"
 
@@ -56,20 +54,13 @@ def _git_head_sha(root: Path) -> str:
 def _is_dirty(root: Path) -> bool:
     """Return True if the working tree has uncommitted changes."""
     r = subprocess.run(
-        ["git", "status", "--porcelain"],
-        cwd=root,
-        capture_output=True,
-        text=True,
+        ["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True
     )
     return bool(r.stdout.strip())
 
 
 def _infer_session_id(project_root: Path) -> str | None:
-    """Return the session id implied by the current branch, or None.
-
-    Reads ``git rev-parse --abbrev-ref HEAD`` in *project_root* and strips
-    the leading ``a2sdlc/`` prefix when present.
-    """
+    """Return the session id implied by the current branch, or None."""
     res = subprocess.run(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
         cwd=project_root,
@@ -89,8 +80,6 @@ def _build_runner(
 ) -> StageRunner:
     """Construct the StageRunner. ``runner_override='fake'`` is a test hook."""
     if runner_override == "fake":
-        # Test-only path. Production code never sets runner_override, so the
-        # tests/ import below stays out of the runtime import graph.
         from tests.fakes import FakeStageRunner  # noqa: PLC0415
 
         return FakeStageRunner()
@@ -116,41 +105,31 @@ def _print_post_run(
         print(f"  Error:    {result.error}")  # noqa: T201
 
 
-# ── Entry point ───────────────────────────────────────────────────────
+# ── Core ──────────────────────────────────────────────────────────────
 
 
-def run_stage_entry(argv: list[str], runner_override: str | None = None) -> int:
-    """Run a single pipeline stage against a local repo. Returns an exit code."""
-    parser = argparse.ArgumentParser(prog="a2sdlc run-stage")
-    parser.add_argument("stage", choices=[s.value for s in StageName])
-    parser.add_argument("--session", default=None)
-    parser.add_argument("--ticket", default=None, type=Path)
-    parser.add_argument(
-        "--no-track",
-        action="store_true",
-        help="Skip metric tracking sinks (MLflow, etc.)",
-    )
-    parser.add_argument("repo", type=Path)
-    args = parser.parse_args(argv)
-
-    project_root = args.repo.resolve()
-    stage = StageName(args.stage)
-
-    session_id = args.session or _infer_session_id(project_root) or str(ULID())
-
+def _run_stage_impl(
+    stage: StageName,
+    project_root: Path,
+    *,
+    session: str | None,
+    ticket: Path | None,
+    no_track: bool,
+    runner_override: str | None = None,
+) -> int:
+    """Run a single pipeline stage. Returns an exit code."""
+    session_id = session or _infer_session_id(project_root) or str(ULID())
     cfg = load_config_file(project_root)
 
-    # Telemetry sink — created up front so we fail fast if MLflow is unreachable.
     sink = None
-    if not args.no_track:
-        # Lazy import so --no-track paths never pay the mlflow import cost.
+    if not no_track:
         from a2sdlc.evaluation.mlflow_sink import MlflowSink  # noqa: PLC0415
 
         mlflow_uri = f"file://{Path.home() / '.a2sdlc' / 'mlflow'}"
         sink = MlflowSink(tracking_uri=mlflow_uri, experiment_name=project_root.name)
         sink.verify_reachable()
 
-    if stage == StageName.SPEC and args.ticket is None:
+    if stage == StageName.SPEC and ticket is None:
         existing_ticket = project_root / ".a2sdlc" / "ticket.md"
         if not existing_ticket.exists():
             print(  # noqa: T201
@@ -165,40 +144,16 @@ def run_stage_entry(argv: list[str], runner_override: str | None = None) -> int:
         project_root=project_root,
         session_id=session_id,
         stage=stage,
-        ticket_path=args.ticket,
+        ticket_path=ticket,
     )
     review = build_review_adapter(cfg.adapters.review, project_root=project_root)
     git = build_git_adapter(cfg.adapters.git, project_root=project_root)
 
-    # Build ProgressState and attach the configured subscriber.
-    progress_state = ProgressState(project_root=str(project_root))
-    _progress_adapter_name = cfg.adapters.progress
-    if _progress_adapter_name == "gh_actions":
-        from a2sdlc.adapters.subscriber.gh_actions import GhActionsLogSubscriber  # noqa: PLC0415
-
-        progress_state.subscribe(GhActionsLogSubscriber())
-    elif _progress_adapter_name == "console":  # pragma: no cover
-        # Branch was already uncovered pre-refactor; diff-coverage would flag
-        # the import-path edit as a new uncovered line without this pragma.
-        from a2sdlc.adapters.subscriber.console import ConsoleSubscriber  # noqa: PLC0415
-
-        progress_state.subscribe(ConsoleSubscriber(progress_state))
-
-    # MLflow trace subscriber — only when a sink is active (i.e. tracking is on).
-    # Writes one span per stage + one child span per tool call into the run that
-    # MlflowSink opens below. Registered last so its errors don't mask the
-    # user-facing subscribers above.
-    if sink is not None:
-        from a2sdlc.adapters.subscriber.mlflow_trace import (  # noqa: PLC0415
-            MlflowTraceSubscriber,
-        )
-
-        progress_state.subscribe(MlflowTraceSubscriber())
-
+    progress_state = build_progress_state(
+        project_root, cfg.adapters.progress, with_mlflow_trace=sink is not None
+    )
     runner = _build_runner(runner_override, effort=cfg.effort)
 
-    # Pre-create / checkout the session branch so that subsequent calls can
-    # infer the session id from HEAD even when dispatch short-circuits.
     branch_name = f"a2sdlc/{session_id}"
     try:
         git.setup_branch(branch_name, cfg.default_base)
@@ -217,109 +172,84 @@ def run_stage_entry(argv: list[str], runner_override: str | None = None) -> int:
         logger=logging.getLogger("a2sdlc.pipeline.dispatch"),
     )
 
-    sha_before = _git_head_sha(project_root)
-    dirty = _is_dirty(project_root)
-
     result: DispatchResult | None = None
     quality = None
     ok = False
     try:
-        if sink is not None:
-            with (
-                sink.session(session_id) as sess,
-                sess.stage_run(stage=stage.value) as child,
-            ):
-                child.log_tag("git_sha_before", sha_before)
-                child.log_tag("dirty_tree_before", "true" if dirty else "false")
-                child.log_tag("session_id", session_id)
-                result = asyncio.run(dispatch(ctx))
-                stats = result.stats
-                if stats is not None:
-                    child.log_metric("tokens_in", stats.tokens_in)
-                    child.log_metric("tokens_out", stats.tokens_out)
-                    child.log_metric("cost_usd", stats.cost_usd)
-                    child.log_metric("turns", stats.num_turns)
-                    child.log_metric("duration_ms", stats.duration_ms)
-
-                # Persist the agent's output as a JSON artifact so the whole
-                # stage result (body + metadata) can be inspected from MLflow.
-                # Single mlflow import covers this block plus the quality-gate
-                # artifact upload below.
-                import mlflow as _mlflow  # noqa: PLC0415
-
-                if result is not None:
-                    stats_payload: dict[str, float | int] = {}
-                    if stats is not None:
-                        stats_payload = {
-                            "tokens_in": stats.tokens_in,
-                            "tokens_out": stats.tokens_out,
-                            "cost_usd": stats.cost_usd,
-                            "num_turns": stats.num_turns,
-                            "duration_ms": stats.duration_ms,
-                        }
-                    _mlflow.log_dict(
-                        {
-                            "stage": stage.value,
-                            "session_id": session_id,
-                            "success": not result.blocked and result.error is None,
-                            "blocked": result.blocked,
-                            "error": result.error,
-                            "status": result.status.value if result.status else None,
-                            "next_stage": result.next_stage.value
-                            if result.next_stage
-                            else None,
-                            "output": result.output,
-                            "stats": stats_payload,
-                        },
-                        f"{stage.value}-output.json",
-                    )
-                # Run quality gate inside the stage_run so metrics/artifacts
-                # attach to the active MLflow child run.
-                if (
-                    stage == StageName.IMPLEMENT
-                    and result is not None
-                    and not result.blocked
-                    and result.error is None
-                ):
-                    from a2sdlc.evaluation.quality_gate import (  # noqa: PLC0415
-                        run_quality_gate,
-                    )
-
-                    quality = run_quality_gate(
-                        project_root=project_root,
-                        command=cfg.quality.check_command,
-                    )
-                    child.log_metric("quality_passed", 1 if quality.passed else 0)
-
-                    artifact_path = project_root / ".a2sdlc" / "quality.log"
-                    artifact_path.parent.mkdir(parents=True, exist_ok=True)
-                    artifact_path.write_text(quality.output)
-                    _mlflow.log_artifact(str(artifact_path))
-        else:
-            result = asyncio.run(dispatch(ctx))
-            if (
-                stage == StageName.IMPLEMENT
-                and result is not None
-                and not result.blocked
-                and result.error is None
-            ):
-                from a2sdlc.evaluation.quality_gate import (  # noqa: PLC0415
-                    run_quality_gate,
-                )
-
-                quality = run_quality_gate(
-                    project_root=project_root,
-                    command=cfg.quality.check_command,
-                )
+        result, quality = run_tracked(
+            dispatch_fn=lambda: dispatch(ctx),
+            sink=sink,
+            stage=stage,
+            session_id=session_id,
+            project_root=project_root,
+            quality_command=cfg.quality.check_command,
+            sha_before=_git_head_sha(project_root),
+            dirty=_is_dirty(project_root),
+        )
     finally:
         ok = result is not None and not result.blocked and result.error is None
 
     if ok and isinstance(review, LocalNoopReviewAdapter):
         review.mark_feedback_consumed()
 
-    # Quality-gate failure doesn't block REVIEW, but it does affect CLI exit code.
     if ok and quality is not None and not quality.passed:
         ok = False
 
     _print_post_run(stage, session_id, project_root, result)
     return 0 if ok else 1
+
+
+# ── Subcommand + test shim ────────────────────────────────────────────
+
+
+def run_stage_command(
+    stage: Annotated[StageName, typer.Argument(help="Stage to run.")],
+    repo: Annotated[
+        Path,
+        typer.Argument(help="Path to the repo root.", exists=True, file_okay=False),
+    ],
+    session: Annotated[
+        str | None, typer.Option("--session", help="Session id override.")
+    ] = None,
+    ticket: Annotated[
+        Path | None,
+        typer.Option("--ticket", help="Ticket markdown file (required on first SPEC)."),
+    ] = None,
+    no_track: Annotated[
+        bool, typer.Option("--no-track", help="Skip MLflow + quality gate tracking.")
+    ] = False,
+) -> None:
+    """Run a single pipeline stage against a local repo."""
+    rc = _run_stage_impl(
+        stage=stage,
+        project_root=repo.resolve(),
+        session=session,
+        ticket=ticket,
+        no_track=no_track,
+    )
+    raise typer.Exit(code=rc)
+
+
+def run_stage_entry(argv: list[str], runner_override: str | None = None) -> int:
+    """Programmatic entry — argparse-parses ``argv`` for test use.
+
+    Production uses ``run_stage_command`` via the typer app.
+    """
+    import argparse  # noqa: PLC0415
+
+    parser = argparse.ArgumentParser(prog="a2sdlc run-stage")
+    parser.add_argument("stage", choices=[s.value for s in StageName])
+    parser.add_argument("--session", default=None)
+    parser.add_argument("--ticket", default=None, type=Path)
+    parser.add_argument("--no-track", action="store_true")
+    parser.add_argument("repo", type=Path)
+    args = parser.parse_args(argv)
+
+    return _run_stage_impl(
+        stage=StageName(args.stage),
+        project_root=args.repo.resolve(),
+        session=args.session,
+        ticket=args.ticket,
+        no_track=args.no_track,
+        runner_override=runner_override,
+    )

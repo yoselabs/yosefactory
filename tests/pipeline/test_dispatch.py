@@ -2,24 +2,23 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime, timezone
-from pathlib import Path
 
 import pytest
 
-from a2sdlc.domain.pipeline_event import PipelineEvent
 from a2sdlc.config import ProjectConfig
-from a2sdlc.domain.progress import ProgressState
-from a2sdlc.pipeline.dispatch import DispatchContext, dispatch
 from a2sdlc.domain.handover import FeedbackItem, HandoverComment
 from a2sdlc.domain.models import StageName, StageStatus
+from a2sdlc.domain.pipeline_event import PipelineEvent
 from a2sdlc.domain.run_result import RunResult
+from a2sdlc.pipeline.dispatch import DispatchContext, dispatch
 from tests.fakes import (
     FakeGitAdapter,
     FakeReviewAdapter,
     FakeRunner,
     FakeWorkAdapter,
+    default_run_result,
+    make_dispatch_context,
 )
 
 _COMPLETE_OUTPUT = '```a2sdlc\n{"status": "complete", "output": "Done"}\n```'
@@ -35,35 +34,12 @@ def _ctx(
 ) -> tuple[
     DispatchContext, FakeWorkAdapter, FakeGitAdapter, FakeReviewAdapter, FakeRunner
 ]:
-    event = PipelineEvent(key="35", trigger_stage=stage)
-    work = FakeWorkAdapter(event=event, ticket_body=ticket_body, labels=None)
-    git = FakeGitAdapter()
-    review = FakeReviewAdapter()
-    result_list = results or [
-        RunResult(
-            success=True,
-            output=output,
-            total_cost_usd=0.5,
-            input_tokens=1000,
-            output_tokens=2000,
-            duration_ms=5000,
-            num_turns=10,
-        )
-    ]
-    runner = FakeRunner(result_list)
-    config = ProjectConfig()
-    ctx = DispatchContext(
-        work=work,
-        git=git,
-        review=review,
-        runner=runner,
-        progress_state=ProgressState(project_root="/tmp/test"),
-        config=config,
-        project_root=Path("/tmp/test"),
-        logger=logging.getLogger("test"),
+    return make_dispatch_context(
+        event=PipelineEvent(key="35", trigger_stage=stage),
+        ticket_body=ticket_body,
+        runner_results=results or [default_run_result(output)],
         run_id=run_id,
     )
-    return ctx, work, git, review, runner
 
 
 class TestHappyPath:
@@ -191,30 +167,20 @@ class TestReviewLoop:
     async def test_changes_requested_posts_review(self) -> None:
         """changes_requested posts REQUEST_CHANGES review on PR."""
         changes_output = '```a2sdlc\n{"status": "changes_requested"}\n```'
-        event = PipelineEvent(key="35", trigger_stage=StageName.REVIEW, pr_number=42)
-        work = FakeWorkAdapter(event=event, ticket_body="Review this", labels=None)
-        git = FakeGitAdapter()
-        review = FakeReviewAdapter()
-        runner = FakeRunner(
-            RunResult(
-                success=True,
-                output=changes_output,
-                total_cost_usd=0.1,
-                input_tokens=100,
-                output_tokens=200,
-                duration_ms=1000,
-                num_turns=5,
-            )
-        )
-        ctx = DispatchContext(
-            work=work,
-            git=git,
-            review=review,
-            runner=runner,
-            progress_state=ProgressState(project_root="/tmp/test"),
-            config=ProjectConfig(),
-            project_root=Path("/tmp/test"),
-            logger=logging.getLogger("test"),
+        ctx, _, _, review, _ = make_dispatch_context(
+            event=PipelineEvent(key="35", trigger_stage=StageName.REVIEW, pr_number=42),
+            ticket_body="Review this",
+            runner_results=[
+                RunResult(
+                    success=True,
+                    output=changes_output,
+                    total_cost_usd=0.1,
+                    input_tokens=100,
+                    output_tokens=200,
+                    duration_ms=1000,
+                    num_turns=5,
+                )
+            ],
             run_id="run-review",
         )
         await dispatch(ctx)
@@ -366,24 +332,12 @@ def _feedback_ctx(
     issue_handover: HandoverComment | None = None,
     issue_feedback: list[FeedbackItem] | None = None,
 ) -> tuple[DispatchContext, FakeRunner]:
-    event = PipelineEvent(key="42", is_feedback=True)
-    work = FakeWorkAdapter(
-        event=event,
+    ctx, _, _, _, runner = make_dispatch_context(
+        event=PipelineEvent(key="42", is_feedback=True),
         ticket_body="Build form",
-        labels=None,
         last_handover=issue_handover,
         issue_feedback=issue_feedback or [],
-    )
-    runner = FakeRunner(_DEFAULT_RUN)
-    ctx = DispatchContext(
-        work=work,
-        git=FakeGitAdapter(),
-        review=FakeReviewAdapter(),
-        runner=runner,
-        progress_state=ProgressState(project_root="/tmp/test"),
-        config=ProjectConfig(),
-        project_root=Path("/tmp/test"),
-        logger=logging.getLogger("test"),
+        runner_results=[_DEFAULT_RUN],
         run_id="run-fb-1",
     )
     return ctx, runner
@@ -447,24 +401,12 @@ def _proceed_ctx(
     handover: HandoverComment | None = None,
     state_json: str | None = None,
 ) -> tuple[DispatchContext, FakeGitAdapter]:
-    event = PipelineEvent(key="42", trigger_stage=None, is_feedback=False)
-    work = FakeWorkAdapter(
-        event=event,
+    ctx, _, git, _, _ = make_dispatch_context(
+        event=PipelineEvent(key="42", trigger_stage=None, is_feedback=False),
         ticket_body="Build form",
-        labels=None,
         last_handover=handover,
-    )
-    git = FakeGitAdapter(state_json=state_json)
-    runner = FakeRunner(_DEFAULT_RUN)
-    ctx = DispatchContext(
-        work=work,
-        git=git,
-        review=FakeReviewAdapter(),
-        runner=runner,
-        progress_state=ProgressState(project_root="/tmp/test"),
-        config=ProjectConfig(),
-        project_root=Path("/tmp/test"),
-        logger=logging.getLogger("test"),
+        state_json=state_json,
+        runner_results=[_DEFAULT_RUN],
         run_id="run-proceed",
     )
     return ctx, git

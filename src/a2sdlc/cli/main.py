@@ -1,21 +1,27 @@
-"""CLI top-level entry — routes between ``dispatch`` and ``run-stage``."""
+"""CLI top-level entry — typer app with ``dispatch`` and ``run-stage`` subcommands."""
 
 from __future__ import annotations
 
-import sys
+import typer
+
+from a2sdlc.cli.dispatch import dispatch_command
+from a2sdlc.cli.run_stage import run_stage_command
+
+app = typer.Typer(
+    name="a2sdlc",
+    help="Agent-to-SDLC pipeline engine.",
+    add_completion=False,
+    no_args_is_help=True,
+)
+
+app.command("dispatch", help="Run pipeline dispatch (GitHub Actions entry).")(
+    dispatch_command
+)
+app.command("run-stage", help="Run a single pipeline stage against a local repo.")(
+    run_stage_command
+)
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Entry point."""
-    raw = list(argv) if argv is not None else sys.argv[1:]
-
-    # ``run-stage`` has its own argparse; route raw args to it before the
-    # dispatch-only top-level parser sees them.
-    if raw and raw[0] == "run-stage":
-        from a2sdlc.cli.run_stage import run_stage_entry  # noqa: PLC0415
-
-        sys.exit(run_stage_entry(raw[1:]))
-
-    from a2sdlc.cli.dispatch import dispatch_entry  # noqa: PLC0415
-
-    dispatch_entry(argv)
+    """Entry point — delegates to the typer app."""
+    app(args=argv, prog_name="a2sdlc", standalone_mode=True)

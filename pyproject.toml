@@ -17,6 +17,7 @@ dependencies = [
     "tenacity>=8.0",
     "python-ulid>=2.0",
     "mlflow>=2.15",
+    "typer>=0.24.1",
 ]
 
 [project.scripts]

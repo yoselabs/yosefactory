@@ -7,18 +7,21 @@ assert on the exact sequence of adapter interactions.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 from a2sdlc.adapters.review import Approval, ReviewComment
-from a2sdlc.domain.pipeline_event import PipelineEvent
-from a2sdlc.config import StageConfig
+from a2sdlc.config import ProjectConfig, StageConfig
 from a2sdlc.domain.exceptions import BlockedError, SkipEvent
 from a2sdlc.domain.handover import FeedbackItem, HandoverComment
 from a2sdlc.domain.models import StageName
-from a2sdlc.domain.run_result import RunResult
+from a2sdlc.domain.pipeline_event import PipelineEvent
 from a2sdlc.domain.progress import ProgressEvent, ProgressState
+from a2sdlc.domain.run_result import RunResult
+from a2sdlc.pipeline.dispatch import DispatchContext
 
 
 # ── RecordingSubscriber ───────────────────────────────────────────────
@@ -347,3 +350,67 @@ class FakeStageRunner:
             tool_log=[],
             progress=None,
         )
+
+
+# ── DispatchContext factory ───────────────────────────────────────────
+
+
+_DEFAULT_COMPLETE_OUTPUT = '```a2sdlc\n{"status": "complete", "output": "Done"}\n```'
+
+
+def default_run_result(output: str = _DEFAULT_COMPLETE_OUTPUT) -> RunResult:
+    """Canonical RunResult used in dispatch tests."""
+    return RunResult(
+        success=True,
+        output=output,
+        total_cost_usd=0.5,
+        input_tokens=1000,
+        output_tokens=2000,
+        duration_ms=5000,
+        num_turns=10,
+    )
+
+
+def make_dispatch_context(
+    *,
+    event: PipelineEvent | None = None,
+    ticket_body: str = "Build patient form",
+    labels: list[str] | None = None,
+    last_handover: HandoverComment | None = None,
+    issue_feedback: Sequence[FeedbackItem] = (),
+    state_json: str | None = None,
+    runner_results: list[RunResult] | None = None,
+    run_id: str | None = "run-1",
+    project_root: Path | None = None,
+    config: ProjectConfig | None = None,
+) -> tuple[
+    DispatchContext, FakeWorkAdapter, FakeGitAdapter, FakeReviewAdapter, FakeRunner
+]:
+    """Build a DispatchContext with fakes for all adapters.
+
+    Returns the context plus each fake so tests can assert on recorded calls.
+    """
+    event = event or PipelineEvent(key="35", trigger_stage=StageName.SPEC)
+    work = FakeWorkAdapter(
+        event=event,
+        ticket_body=ticket_body,
+        labels=labels,
+        last_handover=last_handover,
+        issue_feedback=issue_feedback,
+    )
+    git = FakeGitAdapter(state_json=state_json)
+    review = FakeReviewAdapter()
+    runner = FakeRunner(runner_results or [default_run_result()])
+    project_root = project_root or Path("/tmp/test")
+    ctx = DispatchContext(
+        work=work,
+        git=git,
+        review=review,
+        runner=runner,
+        progress_state=ProgressState(project_root=str(project_root)),
+        config=config or ProjectConfig(),
+        project_root=project_root,
+        logger=logging.getLogger("test"),
+        run_id=run_id,
+    )
+    return ctx, work, git, review, runner

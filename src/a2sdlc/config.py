@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-import dataclasses
 import logging
 import uuid
-from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Any, Literal
 
 import yaml
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from a2sdlc.domain.models import GateConfig, GateMode
+from a2sdlc.domain.models import GateConfig
 
 logger = logging.getLogger("a2sdlc.config")
+
 
 # ── Errors ────────────────────────────────────────────────────────────
 
@@ -21,43 +22,24 @@ class ConfigError(ValueError):
     """Raised when the config file is malformed or contains unknown keys."""
 
 
-# Strict allowlist for the top-level keys in ``.a2sdlc/config.yaml``.
-# Only keys that the loader actually parses appear here — YAGNI. Reserved
-# names (e.g. ``max_turns_per_stage``, ``resume``, ``timeouts``) will be
-# added back when a later task implements their parsing.
-_ALLOWED_TOP_LEVEL_KEYS: frozenset[str] = frozenset(
-    {
-        "adapters",
-        "stages",
-        "spec",
-        "quality",
-        "model",
-        "default_base",
-        "gates",
-        "self_answer",
-        "effort",
-    }
-)
-
-
-# Valid values for the top-level ``effort`` config field. Maps to the SDK's
-# ``ClaudeAgentOptions.effort`` — note ``xhigh`` → ``max`` at the runner
-# boundary (see ``pipeline/runner.py``).
-_ALLOWED_EFFORT_VALUES: frozenset[str] = frozenset({"low", "medium", "high", "xhigh"})
+# Maps to the SDK's ``ClaudeAgentOptions.effort`` — note ``xhigh`` → ``max``
+# at the runner boundary (see ``pipeline/runner.py``).
+EffortLevel = Literal["low", "medium", "high", "xhigh"]
 
 
 # ── Stage configuration ───────────────────────────────────────────────
 
 
-@dataclass
-class StageConfig:
+class StageConfig(BaseModel):
     """Configuration for a single pipeline stage."""
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str
     model: str = "claude-sonnet-4-6"
     max_turns: int = 25
     timeout_minutes: int = 60
-    allowed_tools: list[str] = field(default_factory=list)
+    allowed_tools: list[str] = Field(default_factory=list)
     code_reviews: int = 0
     max_review_cycles: int = 2
 
@@ -65,13 +47,10 @@ class StageConfig:
 # ── Adapter / quality blocks ──────────────────────────────────────────
 
 
-@dataclass(frozen=True)
-class AdaptersConfig:
-    """Names of the adapters to wire for a run.
+class AdaptersConfig(BaseModel):
+    """Names of the adapters to wire for a run."""
 
-    Values are short identifiers resolved by the adapter factory at
-    composition time (e.g. ``"jira"``, ``"github"``, ``"local_file"``).
-    """
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     work: str = "jira"
     review: str = "github"
@@ -79,9 +58,10 @@ class AdaptersConfig:
     progress: str = "gh_actions"
 
 
-@dataclass(frozen=True)
-class QualityConfig:
+class QualityConfig(BaseModel):
     """Deterministic quality gate configuration."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     check_command: str = "make check"
 
@@ -97,39 +77,57 @@ def get_session_id(ticket_key: str, stage: str) -> str:
 # ── Project configuration ─────────────────────────────────────────────
 
 
-@dataclass
-class ProjectConfig:
+class ProjectConfig(BaseModel):
     """Per-repo settings read from ``.a2sdlc/config.yaml``."""
+
+    model_config = ConfigDict(extra="forbid")
 
     self_answer: bool = False
     default_base: str = "main"
     model: str = "claude-sonnet-4-6"
-    effort: str | None = None
-    stage_overrides: dict[str, dict[str, object]] = field(default_factory=dict)
-    adapters: AdaptersConfig = field(default_factory=AdaptersConfig)
-    quality: QualityConfig = field(default_factory=QualityConfig)
-    _gates: GateConfig = field(default_factory=GateConfig, repr=False, compare=False)
+    effort: EffortLevel | None = None
+    stage_overrides: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    adapters: AdaptersConfig = Field(default_factory=AdaptersConfig)
+    quality: QualityConfig = Field(default_factory=QualityConfig)
+    gates: GateConfig = Field(default_factory=GateConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_yaml_shape(cls, data: Any) -> Any:
+        """Fold YAML-specific keys into their in-memory equivalents.
+
+        - ``stages:`` block becomes ``stage_overrides``.
+        - ``spec: {self_answer: ...}`` folds into top-level ``self_answer``
+          (top-level wins if both are set).
+        """
+        if not isinstance(data, dict):
+            return data
+
+        if "stages" in data and "stage_overrides" not in data:
+            data["stage_overrides"] = data.pop("stages")
+
+        spec = data.pop("spec", None)
+        if isinstance(spec, dict):
+            extra = set(spec) - {"self_answer"}
+            if extra:
+                raise ValueError(
+                    f"Unknown keys in 'spec' block: {sorted(extra)}. "
+                    "Only 'self_answer' is accepted."
+                )
+            if "self_answer" in spec and "self_answer" not in data:
+                data["self_answer"] = spec["self_answer"]
+        return data
 
     def gate_config(self) -> GateConfig:
         """Return the gate configuration."""
-        return self._gates
-
-
-def _validate_keys(data: dict[str, object]) -> None:
-    """Raise ``ConfigError`` if ``data`` has any top-level keys outside the allowlist."""
-    unknown = sorted(set(data.keys()) - _ALLOWED_TOP_LEVEL_KEYS)
-    if unknown:
-        allowed = sorted(_ALLOWED_TOP_LEVEL_KEYS)
-        raise ConfigError(
-            f"Unknown config keys: {unknown}. Allowed top-level keys: {allowed}."
-        )
+        return self.gates
 
 
 def load_config_file(project_root: Path) -> ProjectConfig:
     """Load project config from ``project_root/.a2sdlc/config.yaml``.
 
-    Raises ``FileNotFoundError`` if the file is missing, and ``ConfigError``
-    if any top-level key is not in the allowlist.
+    Raises ``FileNotFoundError`` if the file is missing and ``ConfigError``
+    if the YAML is malformed or contains unknown keys.
     """
     config_path = project_root / ".a2sdlc" / "config.yaml"
     if not config_path.is_file():
@@ -141,90 +139,33 @@ def load_config_file(project_root: Path) -> ProjectConfig:
         )
 
     with config_path.open() as fh:
-        data: dict[str, object] = yaml.safe_load(fh) or {}
+        data: Any = yaml.safe_load(fh) or {}
 
     if not isinstance(data, dict):
         raise ConfigError(
             f"Config at {config_path} must be a YAML mapping at the top level."
         )
 
-    _validate_keys(data)
+    try:
+        config = ProjectConfig.model_validate(data)
+    except ValidationError as exc:
+        raise ConfigError(_format_pydantic_error(exc)) from exc
 
     logger.info("Loaded config from %s", config_path)
-
-    gates_raw = data.get("gates", {})
-    gates_raw = gates_raw if isinstance(gates_raw, dict) else {}
-    merge_mode = (
-        GateMode(str(gates_raw["merge"])) if "merge" in gates_raw else GateMode.HUMAN
-    )
-    spec_mode = (
-        GateMode(str(gates_raw["spec"])) if "spec" in gates_raw else GateMode.AUTO
-    )
-    gates = GateConfig(merge=merge_mode, spec=spec_mode)
-
-    stages_raw = data.get("stages", {})
-    stage_overrides: dict[str, dict[str, object]] = {}
-    if isinstance(stages_raw, dict):
-        for stage_name, stage_data in stages_raw.items():
-            if isinstance(stage_data, dict):
-                stage_overrides[str(stage_name)] = stage_data
-
-    spec_raw = data.get("spec", {})
-    spec_raw = spec_raw if isinstance(spec_raw, dict) else {}
-    # ``self_answer`` may be set either at the top level or inside ``spec:``.
-    self_answer = bool(spec_raw.get("self_answer", data.get("self_answer", False)))
-
-    adapters_raw = data.get("adapters", {})
-    adapters_raw = adapters_raw if isinstance(adapters_raw, dict) else {}
-    try:
-        adapters = AdaptersConfig(**adapters_raw)
-    except TypeError as e:
-        valid = {f.name for f in dataclasses.fields(AdaptersConfig)}
-        raise ConfigError(
-            f"Unknown keys in 'adapters' block: {e}. Allowed: {sorted(valid)}"
-        ) from e
-
-    quality_raw = data.get("quality", {})
-    quality_raw = quality_raw if isinstance(quality_raw, dict) else {}
-    try:
-        quality = QualityConfig(**quality_raw)
-    except TypeError as e:
-        valid = {f.name for f in dataclasses.fields(QualityConfig)}
-        raise ConfigError(
-            f"Unknown keys in 'quality' block: {e}. Allowed: {sorted(valid)}"
-        ) from e
-
-    effort_raw = data.get("effort")
-    if effort_raw is None:
-        effort: str | None = None
-    else:
-        effort_str = str(effort_raw)
-        if effort_str not in _ALLOWED_EFFORT_VALUES:
-            allowed = sorted(_ALLOWED_EFFORT_VALUES)
-            raise ConfigError(
-                f"Invalid value for 'effort': {effort_str!r}. Allowed: {allowed}."
-            )
-        effort = effort_str
-
-    config = ProjectConfig(
-        self_answer=self_answer,
-        default_base=str(data.get("default_base", "main")),
-        model=str(data.get("model", "claude-sonnet-4-6")),
-        effort=effort,
-        stage_overrides=stage_overrides,
-        adapters=adapters,
-        quality=quality,
-    )
-    config._gates = gates  # noqa: SLF001
     return config
 
 
-def load_stage_config(stage_name: str, project: ProjectConfig) -> StageConfig:
-    """Return a StageConfig for ``stage_name``, merged with project overrides.
+def _format_pydantic_error(exc: ValidationError) -> str:
+    """Turn a pydantic ValidationError into a single-line config message."""
+    lines: list[str] = []
+    for err in exc.errors():
+        loc = ".".join(str(p) for p in err["loc"]) or "<root>"
+        lines.append(f"{loc}: {err['msg']}")
+    return "; ".join(lines)
 
-    Base config comes from the stage class; project ``stage_overrides`` are
-    applied on top using ``dataclasses.replace``.
-    """
+
+def load_stage_config(stage_name: str, project: ProjectConfig) -> StageConfig:
+    """Return a StageConfig for ``stage_name``, merged with project overrides."""
     from a2sdlc.stages import get_stage  # noqa: PLC0415
 
     stage_obj = get_stage(stage_name)
@@ -234,7 +175,4 @@ def load_stage_config(stage_name: str, project: ProjectConfig) -> StageConfig:
     if not overrides:
         return base
 
-    # Only pass fields that actually exist on StageConfig.
-    valid_fields = {f.name for f in dataclasses.fields(StageConfig)}
-    patches = {k: v for k, v in overrides.items() if k in valid_fields}
-    return replace(base, **patches)
+    return base.model_copy(update=overrides)

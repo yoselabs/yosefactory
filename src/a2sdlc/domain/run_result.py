@@ -1,17 +1,18 @@
-"""Normalized result from a stage execution.
+"""Stage and dispatch result types.
 
-Lives in domain/ because it crosses the pipeline ↔ adapters boundary
-(the StageRunner port in adapters/runner/ returns it).
-
-The ``progress`` field carries an ``evaluation.progress.ProgressState``
-at runtime, typed opaquely here to keep domain/ free of evaluation imports.
-Consumers that need progress structure cast or import ProgressState directly.
+Both live in domain/ because they cross layer boundaries:
+- ``RunResult`` returned by the ``StageRunner`` port (adapters/runner/).
+- ``DispatchResult`` returned by ``pipeline/dispatch.py``, consumed by
+  CLI and evaluation layers.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
+
+from a2sdlc.domain.models import StageName, StageStatus
+from a2sdlc.domain.stats import StageRunStats
 
 
 @dataclass
@@ -28,6 +29,22 @@ class RunResult:
     output_tokens: int = 0
     num_turns: int = 0
     tool_log: list[str] = field(default_factory=list)
-    # Runtime type: evaluation.progress.ProgressState | None. Opaque here to
-    # preserve domain purity — consumers in evaluation/pipeline cast as needed.
+    # Runtime type: domain.progress.ProgressState | None. Opaque here to
+    # avoid a cyclic import — consumers cast as needed.
     progress: Any = None
+
+
+@dataclass
+class DispatchResult:
+    """What happened during dispatch — for testing and logging."""
+
+    stage: StageName
+    status: StageStatus | None = None
+    next_stage: StageName | None = None
+    blocked: bool = False
+    error: str | None = None
+    # Cost/token telemetry from the stage run (only populated on success path).
+    stats: StageRunStats | None = None
+    # Raw agent output (runner's final message). Empty string on paths that
+    # never reach the runner (e.g. early validation failures).
+    output: str = ""
