@@ -1,0 +1,26 @@
+# .github/workflows/a2sdlc-run.yml (in the TARGET repo)
+# Trigger: any event that GitHubWorkAdapter knows how to dispatch.
+# See docs/mode2/README.md for the label state machine.
+
+name: a2sdlc
+
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+  pull_request:
+    types: [labeled]
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_comment:
+    types: [created]
+
+jobs:
+  dispatch:
+    uses: yoselabs/a2sdlc-engine/.github/workflows/run-native.yml@main
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+      MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+      MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
