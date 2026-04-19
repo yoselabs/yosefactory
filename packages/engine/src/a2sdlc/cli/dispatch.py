@@ -87,24 +87,66 @@ def dispatch_command(
     config = load_config_file(root)
     setup_logging("dispatch", "dispatch", root)
 
-    from github import Github  # noqa: PLC0415
-
-    from a2sdlc.adapters.review import GitHubReviewAdapter  # noqa: PLC0415
-    from a2sdlc.adapters.work import GitHubWorkAdapter  # noqa: PLC0415
-
-    token = os.environ.get("GITHUB_TOKEN", os.environ.get("GH_TOKEN", ""))
-    repo_name = os.environ.get("GITHUB_REPOSITORY", "")
-    repo = Github(token).get_repo(repo_name)
-    work_adapter = GitHubWorkAdapter(repo)
-    review_adapter = GitHubReviewAdapter(repo)
-
     from a2sdlc.adapters.git import LocalGitAdapter  # noqa: PLC0415
-    from a2sdlc.adapters.subscriber.gh_comment import GhCommentSubscriber  # noqa: PLC0415
     from a2sdlc.assembly.wire import build_progress_state  # noqa: PLC0415
     from a2sdlc.pipeline.runner import SdkStageRunner  # noqa: PLC0415
 
     git = LocalGitAdapter(root)
     progress_state = build_progress_state(root, config.adapters.progress)
+
+    # Mode selection is ambient — DISPATCHER_URL signals Jira-dispatcher mode,
+    # otherwise we use the existing GH-native composition.
+    dispatcher_url = os.environ.get("DISPATCHER_URL")
+
+    if dispatcher_url:
+        # ── Mode 1 (dispatcher-driven) ────────────────────────────────
+        from a2sdlc.adapters.subscriber.dispatcher_event import (  # noqa: PLC0415
+            DispatcherEventSubscriber,
+        )
+        from a2sdlc.adapters.subscriber.console import ConsoleSubscriber  # noqa: PLC0415
+        from a2sdlc.adapters.work.workflow_input import WorkflowInputReader  # noqa: PLC0415
+        from github import Github  # noqa: PLC0415
+        from a2sdlc.adapters.review import GitHubReviewAdapter  # noqa: PLC0415
+        import httpx  # noqa: PLC0415
+
+        work_adapter = WorkflowInputReader()
+        # The engine still opens PRs via GH — review adapter needs GH auth,
+        # but this is narrowly-scoped to the target repo's GITHUB_TOKEN.
+        token = os.environ["GITHUB_TOKEN"]
+        repo_name = os.environ["GITHUB_REPOSITORY"]
+        review_adapter = GitHubReviewAdapter(Github(token).get_repo(repo_name))
+
+        run_id = os.environ["RUN_ID"]
+        run_hmac = os.environ["RUN_HMAC"]
+        http = httpx.Client(timeout=30.0)
+        dispatcher_sub = DispatcherEventSubscriber(
+            dispatcher_url=dispatcher_url,
+            run_id=run_id,
+            run_hmac=run_hmac,
+            http=http,
+        )
+        progress_state.subscribe(dispatcher_sub)
+
+        # Dispatcher mode: comments flow to Jira via DispatcherEventSubscriber.
+        # We still need *some* comment subscriber per DispatchContext contract —
+        # ConsoleSubscriber is harmless local stdout, not tracker-bound.
+        def make_comment_subscriber(_comment):
+            return ConsoleSubscriber(progress_state)
+    else:
+        # ── Mode 2 / legacy CI (GH-native) ────────────────────────────
+        from github import Github  # noqa: PLC0415
+        from a2sdlc.adapters.review import GitHubReviewAdapter  # noqa: PLC0415
+        from a2sdlc.adapters.subscriber.gh_comment import GhCommentSubscriber  # noqa: PLC0415
+        from a2sdlc.adapters.work import GitHubWorkAdapter  # noqa: PLC0415
+
+        token = os.environ.get("GITHUB_TOKEN", os.environ.get("GH_TOKEN", ""))
+        repo_name = os.environ.get("GITHUB_REPOSITORY", "")
+        repo = Github(token).get_repo(repo_name)
+        work_adapter = GitHubWorkAdapter(repo)
+        review_adapter = GitHubReviewAdapter(repo)
+
+        def make_comment_subscriber(comment):
+            return GhCommentSubscriber(comment, progress_state)
 
     ctx = DispatchContext(
         work=work_adapter,
@@ -115,9 +157,7 @@ def dispatch_command(
         config=config,
         project_root=root,
         logger=logging.getLogger("a2sdlc.pipeline.dispatch"),
-        make_comment_subscriber=lambda comment: GhCommentSubscriber(
-            comment, progress_state
-        ),
+        make_comment_subscriber=make_comment_subscriber,
     )
 
     try:

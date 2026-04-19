@@ -205,3 +205,59 @@ class TestMainDispatch:
         assert mock_work.call_count == 1
         assert "trigger_mention" not in mock_work.call_args.kwargs
         mock_review.assert_called_once()
+
+    def test_main_dispatch_dispatcher_mode(self, tmp_path: Path) -> None:
+        """When DISPATCHER_URL is set, use WorkflowInputReader + DispatcherEventSubscriber."""
+        (tmp_path / ".a2sdlc").mkdir()
+        (tmp_path / ".a2sdlc" / "config.yaml").write_text("default_base: main\n")
+
+        dispatch_result = MagicMock(blocked=False, error=None)
+
+        with (
+            patch("github.Github") as mock_github,
+            patch("a2sdlc.adapters.review.GitHubReviewAdapter") as mock_review,
+            patch("a2sdlc.adapters.git.LocalGitAdapter") as mock_git,
+            patch(
+                "a2sdlc.adapters.work.workflow_input.WorkflowInputReader"
+            ) as mock_work,
+            patch(
+                "a2sdlc.adapters.subscriber.dispatcher_event.DispatcherEventSubscriber"
+            ) as mock_dispatcher_sub,
+            patch("a2sdlc.adapters.subscriber.console.ConsoleSubscriber"),
+            patch("httpx.Client") as mock_httpx,
+            patch("a2sdlc.pipeline.dispatch.dispatch") as mock_dispatch,
+            patch.dict(
+                "os.environ",
+                {
+                    "DISPATCHER_URL": "http://dispatcher.example.com",
+                    "GITHUB_TOKEN": "tkn",
+                    "GITHUB_REPOSITORY": "o/r",
+                    "RUN_ID": "run-123",
+                    "RUN_HMAC": "hmac-abc",
+                },
+                clear=False,
+            ),
+        ):
+            mock_git.return_value = MagicMock(name="git")
+            mock_repo = MagicMock(name="repo")
+            mock_github.return_value.get_repo.return_value = mock_repo
+
+            async def _fake_dispatch(_ctx: object) -> object:
+                return dispatch_result
+
+            mock_dispatch.side_effect = _fake_dispatch
+
+            with pytest.raises(SystemExit) as exc:
+                main(["dispatch", "--project-root", str(tmp_path)])
+            assert exc.value.code == 0
+
+        # Dispatcher mode: WorkflowInputReader is the work adapter, not GitHubWorkAdapter.
+        assert mock_work.call_count == 1
+        mock_review.assert_called_once()
+        # DispatcherEventSubscriber is constructed with env-derived values.
+        mock_dispatcher_sub.assert_called_once_with(
+            dispatcher_url="http://dispatcher.example.com",
+            run_id="run-123",
+            run_hmac="hmac-abc",
+            http=mock_httpx.return_value,
+        )
