@@ -1,0 +1,34 @@
+# Dokploy compose for the a2sdlc dispatcher.
+# Assumes external Traefik network `traefik-public` and a Cloudflare
+# wildcard DNS record for `*.yose.tld` pointing at Dokploy host.
+
+services:
+  dispatcher:
+    image: ghcr.io/yoselabs/a2sdlc-dispatcher:main
+    restart: unless-stopped
+    environment:
+      JIRA_BASE_URL: ${JIRA_BASE_URL}
+      JIRA_USER: ${JIRA_USER}
+      JIRA_TOKEN: ${JIRA_TOKEN}
+      GH_APP_ID: ${GH_APP_ID}
+      GH_APP_PRIVATE_KEY: ${GH_APP_PRIVATE_KEY}
+      GH_APP_INSTALLATION_ID: ${GH_APP_INSTALLATION_ID}
+      HMAC_SIGNING_KEY: ${HMAC_SIGNING_KEY}
+      JIRA_WEBHOOK_SECRET: ${JIRA_WEBHOOK_SECRET}
+      GH_WEBHOOK_SECRET: ${GH_WEBHOOK_SECRET}
+      DOKPLOY_DEPLOY_TOKEN: ${DOKPLOY_DEPLOY_TOKEN}
+      PROJECTS_JSON: ${PROJECTS_JSON}
+      SELF_URL: ${SELF_URL}
+    networks:
+      - traefik-public
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.a2sdlc-dispatcher.rule: "Host(`dispatcher.yose.tld`)"
+      traefik.http.routers.a2sdlc-dispatcher.entrypoints: "websecure"
+      traefik.http.routers.a2sdlc-dispatcher.tls: "true"
+      traefik.http.routers.a2sdlc-dispatcher.tls.certresolver: "cloudflare"
+      traefik.http.services.a2sdlc-dispatcher.loadbalancer.server.port: "8000"
+
+networks:
+  traefik-public:
+    external: true
