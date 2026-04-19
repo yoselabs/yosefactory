@@ -1,0 +1,51 @@
+# .github/workflows/run-native.yml
+# Reusable workflow: runs `a2sdlc dispatch` on a single GitHub event.
+# Consumer workflows pass the event context through and provide secrets.
+
+name: a2sdlc — run (native)
+
+on:
+  workflow_call:
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: true
+      MLFLOW_TRACKING_URI:
+        required: false
+      MLFLOW_TRACKING_USERNAME:
+        required: false
+      MLFLOW_TRACKING_PASSWORD:
+        required: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write        # push branches
+      issues: write          # comment, label, close
+      pull-requests: write   # open, review, merge
+      statuses: write        # commit-status writes (if the engine posts any)
+      checks: write          # check-run annotations (if the engine posts any)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Install engine
+        run: |
+          uv tool install --from 'git+https://github.com/yoselabs/a2sdlc-engine@main' a2sdlc-engine
+          # TEMP for pre-release: install from source until a tag is cut.
+
+      - name: Dispatch
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+          MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+          MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+        run: |
+          uv tool run a2sdlc dispatch
