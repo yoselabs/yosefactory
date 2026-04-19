@@ -45,13 +45,14 @@ def create_app() -> FastAPI:
     return app
 
 
-app = create_app()
-
-
 def run() -> None:
     """Run the service via uvicorn — used by the `a2sdlc-dispatcher` script."""
     import uvicorn
 
     uvicorn.run(
-        "a2sdlc_dispatcher.server:app", host="0.0.0.0", port=8000, log_level="info"
+        "a2sdlc_dispatcher.server:create_app",
+        factory=True,
+        host="0.0.0.0",
+        port=8000,
+        log_level="info",
     )
