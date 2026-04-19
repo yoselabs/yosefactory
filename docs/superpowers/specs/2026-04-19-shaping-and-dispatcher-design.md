@@ -1,8 +1,8 @@
-# Shaping & Dispatcher — Design
+# Shaping, GH-Native Runtime, and Jira Dispatcher — Design
 
 **Date:** 2026-04-19
 **Status:** Draft, pending user review
-**Revision:** 1
+**Revision:** 2 (reordered: GH-native runtime is Day 1; Jira dispatcher is Days 2–3)
 
 ## Problem
 
@@ -11,305 +11,381 @@ Today a2sdlc is a per-ticket pipeline (SPEC → IMPLEMENT → REVIEW → MERGE).
 1. **Requirements → tickets.** There is no interactive shaping layer that turns vague requirements into a dependency-ordered set of tickets. Humans author tickets manually today.
 2. **Ticket orchestration.** No component watches the tracker to launch pipeline runs for newly-unblocked tickets, nor to transition tickets when a PR merges.
 
-We need both layers to show a client demo in 4 days: vague requirements in Confluence → interactive shaping → Jira epic + stories → agents pick up unblocked tickets → PRs → merges unblock next → final app deployed. The solution must be the real foundation, not throwaway glue.
+We ship this in two milestones:
+
+- **Day 1 — GH-only runtime (Mode 2):** Issues, Discussions, and Actions only. No server, no Jira. Validates the full loop (shape → schedule → build → PR → merge → unblock next) and gives the OSS/content pitch its first runnable artifact.
+- **Days 2–3 — Jira+GH runtime (Mode 1):** adds a thin dispatcher service on Dokploy that fronts Jira and triggers the same engine in GH Actions. Purely additive on top of Day 1.
+
+The local-eval workflow (`cli_local.py`) remains the third composition branch and is not regressed.
 
 ## Goals
 
-1. **End-to-end automation from "ticket is ready" to "PR is merged" to "next ticket is ready."** No manual intervention between shaping and deploy.
-2. **Engine stays ticket-system-agnostic.** Engine emits domain events; no new Jira awareness inside the engine.
-3. **Target-repo install footprint is a single workflow file.** No secrets, no per-repo mappings.
-4. **Adapters already in the engine stay there.** Dispatcher is not a duplicate adapter layer; it is the remote end of one specific adapter (`DispatcherClient`).
-5. **One config store.** Routing/credentials live in the dispatcher deployment only. Per-project preferences live in the target repo. No duplication.
-6. **Mode is ambient, not declared.** Engine picks its adapters from environment signals — no `--mode` flag, no dotfile mode switch.
-7. **MLflow is optional.** Engine runs fine without it. If env vars are set, telemetry subscriber activates.
+1. **End-to-end automation** from "ticket ready" to "PR merged" to "next ticket ready." No human click-glue in between.
+2. **One engine codebase, three composition modes** (local / GH-native / Jira-dispatcher), selected ambient from env. No mode flag, no dotfile switch.
+3. **Engine is ticket-system-agnostic.** Jira-aware code lives only in the dispatcher; GH-aware code lives only in the `GH*` adapters.
+4. **Target-repo install footprint is tiny:** 2 workflow files (Mode 2) or 1 workflow file (Mode 1). No secrets beyond Anthropic / MLflow / GITHUB_TOKEN. No per-repo mapping files.
+5. **MLflow is a first-class telemetry subscriber** across all three modes. Activated by env var; silent when not set.
+6. **Local eval workflow is preserved.** `feat/local-runner` behaviour continues to work unchanged as the fallback composition branch.
+7. **Day 2–3 additions are purely additive.** No refactor of Day 1 code when the dispatcher lands.
 
 ## Non-Goals (v1)
 
-- Multi-tracker clients (Jira + Linear at the same deployment). One tracker per dispatcher for now.
-- GitLab / Azure Boards / ClickUp adapters. Follow-up.
-- Native GH-issues mode (Mode 2) as a shipped runtime. Architecture supports it; we don't build it in v1.
-- Shared MLflow across dispatchers, dashboards, or eval comparison UI.
-- Parallel A/B variant runs triggered by the dispatcher. The engine supports variants via `branches.prefix`; orchestrated A/B is follow-up.
-- Replacing or generalizing `config/projects.yaml` with a UI. (Edit via Dokploy env/volume.)
-- Retry policies, dead-letter queues, crash recovery for in-flight runs. First failure is surfaced; re-run is manual.
-- OIDC / token-exchange auth. HMAC capability tokens are the v1 mechanism.
+- Multi-tracker deployment (Jira + Linear in the same dispatcher). One tracker per dispatcher.
+- GitLab / Azure Boards / ClickUp adapters.
+- Parallel A/B variant orchestration triggered from Jira/GH. Engine supports variants via `branches.prefix` and MLflow tagging; matrix orchestration is a cherry on top, deferred.
+- Admin UI over projects config.
+- Retry policies, DLQ, crash recovery.
+- OIDC / token exchange. HMAC capability tokens only.
+- Webhook-less "install one action" marketplace publication (comes after Day 1 ships).
 
-## Architecture
+## Architecture — Shared foundations
 
-Three components in the final picture:
+### Engine layout (uv workspace, flat layout under each package's src/)
 
 ```
-              ┌───────────────────────────── Dokploy host ─────────────────────────┐
-              │                                                                    │
-              │  ┌──────────────────────────────────────────┐                      │
-              │  │  dispatcher  (tiny FastAPI service)      │                      │
-              │  │                                          │                      │
-              │  │  POST /jira/events                       │                      │
-              │  │  POST /gh/events                         │                      │
-              │  │  POST /runs/{run_id}/events (HMAC)       │                      │
-              │  │                                          │                      │
-              │  │  config/projects.yaml                    │                      │
-              │  │  env: JIRA_TOKEN, GH_APP_PRIVATE_KEY,    │                      │
-              │  │       HMAC_SIGNING_KEY                   │                      │
-              │  └──────────────────────────────────────────┘                      │
-              │                                                                    │
-              │  ┌──────────────────────────────────────────┐                      │
-              │  │  mlflow (optional)                        │                      │
-              │  │  basic-auth + serve-artifacts            │                      │
-              │  └──────────────────────────────────────────┘                      │
-              └────┬────────────────────────────────────────┬──────────────────────┘
-                   ▲                                        │
-     webhooks (Jira, GitHub)                   workflow_dispatch + per-run inputs
-                   │                                        ▼
-           ┌───────────────┐                     ┌───────────────────────────────────┐
-           │  Jira, GitHub │                     │  GH Actions in target repo        │
-           └───────────────┘                     │                                   │
-                                                 │  uses: yoselabs/a2sdlc-engine      │
-                                                 │                                   │
-                                                 │  engine runs pipeline             │
-                                                 │    → DispatcherClient adapter      │
-                                                 │      POSTs domain events          │
-                                                 │    → Code adapter opens PR        │
-                                                 │    → MLflowTraceSubscriber         │
-                                                 │      (if MLFLOW_TRACKING_URI set)  │
-                                                 └───────────────────────────────────┘
+./
+├── pyproject.toml                    # workspace root (virtual)
+├── uv.lock
+├── packages/
+│   ├── engine/                       # Day 1
+│   │   ├── pyproject.toml            # name = "a2sdlc-engine"
+│   │   └── src/
+│   │       └── a2sdlc/               # existing code, unchanged imports
+│   └── dispatcher/                   # Day 2
+│       ├── pyproject.toml            # name = "a2sdlc-dispatcher"
+│       └── src/
+│           └── a2sdlc_dispatcher/
+├── tests/
+├── Dockerfile.engine
+├── Dockerfile.dispatcher             # added Day 2
+└── Makefile
 ```
 
-### Component responsibilities
+Root `pyproject.toml`:
 
-**Shaping (Claude Code Desktop + skills + MCP).** Human-driven, interactive. Output = Jira epic with linked stories. Not a service, not part of the engine.
+```toml
+[tool.uv]
+package = false
 
-**Dispatcher (new).** Thin FastAPI service on Dokploy. Three jobs:
-1. Receive tracker webhooks, decide whether to trigger engine runs.
-2. Ingest domain events from running engine jobs (authenticated via per-run HMAC) and translate them into tracker actions (comments, status transitions).
-3. Receive code-host webhooks (PR merged), transition the corresponding ticket to Done, and unblock dependents.
+[tool.uv.workspace]
+members = ["packages/*"]
 
-**Engine (existing, minor additions).** Gains two new adapters and an env-driven composition root. Pipeline stages unchanged.
+[dependency-groups]
+dev = ["pytest", "ruff", "mypy", "pytest-cov"]
+```
 
-## Shaping Flow (Option C: hybrid with approval gate)
+Rationale: flat layout under each package keeps a single `src/` level per package (not nested), matches uv's reference docs, and follows PyPA's src-layout recommendation for library isolation.
 
-Owned by the human, not the engine. Documented here so the whole story holds together.
+### Adapter split — the load-bearing contract
 
-### Inputs
+Every ticket interaction is one of:
 
-The shaping skill accepts three input kinds:
+- **Input (read-once, at run start):** fetch the ticket body / context. Abstracted as `TicketInputReader`.
+- **Output (emit throughout the run):** progress, comments, status changes. Piggybacks on the existing subscriber bus via a `TicketOutputSubscriber`.
 
-| Scheme | Backing | Used in |
+Engine code never calls a ticket system directly. It reads once through the input reader; it emits events through the subscriber bus.
+
+Implementations per mode:
+
+| Mode | Input reader | Output subscriber |
 |---|---|---|
-| `confluence://<space>/<page-id>` | a2atlassian MCP | Jira-tracker projects |
-| `github://discussions/<repo>/<number>` | `gh api graphql` | GH-native projects |
-| `file://<path>` | local filesystem | local experiments / standalone |
+| Local | `LocalFileReader` (existing `.a2sdlc/ticket.md`) | none (transcript + console + optional MLflow) |
+| GH-native (Day 1) | `GHIssueReader` (gh API) | `GHIssueSubscriber` (comments + label transitions) |
+| Jira-dispatcher (Day 2) | `WorkflowInputReader` (inputs passed by dispatcher) | `DispatcherEventSubscriber` (HTTP POST of domain events) |
 
-All three normalize into raw text that the skill consumes.
+### Env-driven composition root
 
-### Interaction
+```python
+def build_input_reader() -> TicketInputReader:
+    if os.getenv("DISPATCHER_URL"):
+        return WorkflowInputReader(...)
+    if os.getenv("GITHUB_ACTIONS") == "true":
+        return GHIssueReader(token=os.environ["GITHUB_TOKEN"], ...)
+    return LocalFileReader(...)
 
-1. Load the input document.
-2. Ask the user clarifying questions one at a time (project scope, audience, constraints, success criteria).
-3. Draft a pitch list (Shape Up style — appetite, problem, solution sketch, dependencies).
-4. Present the draft as a reviewable artifact (markdown block in Claude Code Desktop + proposed diff to the Confluence page).
-5. After user approval, commit to the tracker:
-   - Create an epic for the milestone.
-   - Create a story per pitch, linked to the epic.
-   - Add `is blocked by` links between stories to encode the intended order.
-   - First story transitions to `Ready`. Remaining stories stay in `Blocked`.
+def build_subscribers() -> list[Subscriber]:
+    subs: list[Subscriber] = [ConsoleSubscriber(), TranscriptLogSubscriber()]
+    if os.getenv("MLFLOW_TRACKING_URI"):
+        subs.append(MLflowTraceSubscriber(...))
+    if os.getenv("DISPATCHER_URL"):
+        subs.append(DispatcherEventSubscriber(...))
+    elif os.getenv("GITHUB_ACTIONS") == "true":
+        subs.append(GHIssueSubscriber(...))
+    return subs
+```
 
-### Why Option C
+No mode flag. No config file selects the mode. The runtime environment chooses.
 
-- Nothing lands in Jira until the user types "ship it." Safe even if the session derailed.
-- The pitch-list artifact is reviewable and editable as plain markdown.
-- The Confluence page retains the living doc; Jira stories link back to it for traceability.
+### Domain event model (shared by all modes)
 
-### Out of scope for v1
+Engine emits the same in-process event stream regardless of mode. Subscribers translate to the appropriate sink.
 
-- Automatic brand/palette/design stage per pitch.
-- Parallel-agent shaping (multiple agents proposing pitch slices).
-- Reading input from private sources other than Confluence / Discussions / file.
+| Kind | Fields | GH-native translation | Jira-dispatcher translation |
+|---|---|---|---|
+| `run_started` | `run_id`, `mlflow_url?` | label → `in-progress`, remove `ready`; comment | status → In Progress, comment |
+| `stage_started` | `stage` | comment | comment |
+| `stage_completed` | `stage`, `ok`, `summary?` | (ok: no-op; !ok: label → `blocked` + comment) | (ok: no-op; !ok: status → Blocked + comment) |
+| `pr_opened` | `url`, `base`, `head` | comment (GH auto-links) | comment |
+| `pr_updated` | `url`, `kind` | comment | comment; `approved` → In Review |
+| `run_completed` | `pr_url?`, `outcome` | label → `in-review` | status → In Review |
+| `run_failed` | `error`, `mlflow_url?` | label → `blocked` + comment | status → Blocked + comment |
 
-## Dispatcher Service
+Unknown kinds are accepted silently by every subscriber (forward compatibility).
 
-### HTTP surface
+### MLflow — first-class, env-gated
+
+`MLflowTraceSubscriber` activates when `MLFLOW_TRACKING_URI` is set. Works in all three modes. Tags every run with:
+
+- `ticket_key` (issue number in Mode 2, Jira key in Mode 1, session_id locally)
+- `run_id`
+- `branch` (`{ticket_key}/{variant}`)
+- `variant` (default `main`)
+- `mode` (`local` / `gh-native` / `jira-dispatcher`)
+
+Artifacts uploaded through `--serve-artifacts` proxy mode — no S3 creds in CI. Self-hosted MLflow deployment on Dokploy is documented in a separate ops doc (`docs/ops/self-hosted-mlflow.md`), not in this spec.
+
+## Day 1 — GH-Native Runtime (Mode 2)
+
+### Architecture
+
+```
+GH Discussion (requirements thread)
+      │
+      ▼  (human + shaping skill in CC Desktop)
+GH Issues (epic + stories, tasklist-encoded deps)
+      │  label "ready" applied to first issue
+      ▼
+┌───────────────────────────────────────────────────────┐
+│  GH Actions — a2sdlc-run.yml                          │
+│  trigger: on: issues, types: [labeled]                │
+│  if: label.name == 'ready'                            │
+│                                                       │
+│  uses: yoselabs/a2sdlc-engine/run-native.yml@v1       │
+│  env: GITHUB_TOKEN, ANTHROPIC_API_KEY, MLFLOW_*        │
+│                                                       │
+│  engine:                                              │
+│    GHIssueReader → fetch issue body                   │
+│    pipeline (SPEC → IMPLEMENT → REVIEW → MERGE)       │
+│    GHIssueSubscriber → comments + labels               │
+│    MLflowTraceSubscriber (if env set)                  │
+│    opens PR with "Closes #N"                          │
+└───────────────────────────────────────────────────────┘
+      │
+      ▼  (PR merged — human or auto-merge)
+GH auto-closes issue #N (because "Closes #N")
+      │
+      ▼
+┌───────────────────────────────────────────────────────┐
+│  GH Actions — a2sdlc-unblock.yml                      │
+│  trigger: on: issues, types: [closed]                 │
+│                                                       │
+│  step 1: gh api graphql — find all open issues whose  │
+│          tasklist contains `- [ ] #N`                 │
+│  step 2: for each, check all tasklist deps are closed │
+│  step 3: if fully unblocked, add label "ready"        │
+│          (which fires a2sdlc-run.yml above)           │
+└───────────────────────────────────────────────────────┘
+```
+
+### Dependency encoding — GH tasklists
+
+Story issue body includes a native GH tasklist under a known heading:
+
+```markdown
+## Description
+Implement authentication flow.
+
+## Blocked by
+- [ ] #12
+- [ ] #14
+
+## Acceptance criteria
+- ...
+```
+
+GH renders this with progress bars and exposes it via GraphQL `issue.trackedInIssues` / `issue.tasklistReferences`. The unblock workflow parses via `gh api graphql`.
+
+Why tasklists over labels or body conventions: native, robust against issue renames, already supported by GH's own progress UI. Survives copy-paste.
+
+### Label state machine
+
+One label drives the whole lifecycle:
+
+| Label | Meaning | Who sets it |
+|---|---|---|
+| `ready` | queue for engine | shaping skill (first issue), unblock workflow (subsequent) |
+| `in-progress` | engine is working | engine (on `run_started`) |
+| `in-review` | PR awaiting merge | engine (on `run_completed`) |
+| `blocked` | engine failed | engine (on `run_failed`) |
+
+Engine removes `ready` when it picks up an issue and replaces it with `in-progress`. No race because GH API operations are serialized per-issue.
+
+### Target-repo install
+
+Two workflow files in `.github/workflows/`:
+
+**`a2sdlc-run.yml`**
+
+```yaml
+name: a2sdlc — run
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  engine:
+    if: github.event.label.name == 'ready'
+    uses: yoselabs/a2sdlc-engine/.github/workflows/run-native.yml@v1
+    secrets:
+      ANTHROPIC_API_KEY:        ${{ secrets.ANTHROPIC_API_KEY }}
+      MLFLOW_TRACKING_URI:      ${{ secrets.MLFLOW_TRACKING_URI }}
+      MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+      MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+```
+
+**`a2sdlc-unblock.yml`**
+
+```yaml
+name: a2sdlc — unblock
+on:
+  issues:
+    types: [closed]
+
+jobs:
+  unblock:
+    uses: yoselabs/a2sdlc-engine/.github/workflows/unblock-native.yml@v1
+```
+
+No tracker secrets. No project mapping. `GITHUB_TOKEN` is ambient in Actions.
+
+### Shaping skill — GH mode
+
+Input: GH Discussion or local file.
+
+```
+shape-gh <discussion_url | file_path>  [--repo owner/name]
+```
+
+1. Read discussion body via `gh api graphql`.
+2. Interactive Q&A session (one question per turn), augmenting the draft.
+3. Draft a pitch list as markdown with proposed issue titles, bodies, and dependency tasklists.
+4. Preview the draft to the user. On approval:
+   - `gh issue create` for each story (save the assigned numbers).
+   - Second pass: patch each issue body to insert the tasklist with the actual numbers.
+   - Add `ready` label to the root (non-blocked) issues.
+
+Out of scope for Day 1: per-pitch design stage, brand/palette, parallel shaping.
+
+### Engine — Day 1 additions
+
+- `packages/engine/src/a2sdlc/adapters/ticket/gh_issue_reader.py` — fetches issue body + metadata via `gh api`.
+- `packages/engine/src/a2sdlc/adapters/ticket/gh_issue_subscriber.py` — consumes domain events, calls `gh issue comment` / labels.
+- Composition root updates in `cli.py` to add the new branches shown above.
+
+Existing code unchanged.
+
+### Reusable workflows (in engine repo)
+
+- `.github/workflows/run-native.yml` — installs `a2sdlc-engine`, runs the pipeline with Mode 2 env.
+- `.github/workflows/unblock-native.yml` — parses tasklists of all open issues that reference the just-closed issue, applies `ready` label to fully-unblocked ones.
+
+### Local eval — unchanged
+
+`a2sdlc run-stage --session <id> --ticket docs/tickets/ABC-1.md <repo>` continues to work. Neither `DISPATCHER_URL` nor `GITHUB_ACTIONS` is set → local composition branch. Subscribers: console + transcript + MLflow (if env set).
+
+## Days 2–3 — Jira Dispatcher (Mode 1)
+
+### Architecture additions
+
+```
+Jira ──webhook──► dispatcher (Dokploy)
+                     │
+                     ▼  workflow_dispatch + inputs
+              GH Actions (target repo, Mode 1 workflow)
+                     │
+                     ▼
+         engine → DispatcherEventSubscriber
+                 → POST domain events to dispatcher
+                 → dispatcher translates → Jira comments / transitions
+                     │
+                     ▼
+                 PR opened → merged → GH webhook → dispatcher
+                     │
+                     ▼  Jira done + unblock dependents
+```
+
+### Dispatcher service — `packages/dispatcher/`
+
+FastAPI. Routes:
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| POST | `/jira/events` | Jira webhook secret | Ticket transitioned to Ready → maybe trigger workflow |
-| POST | `/gh/events` | GitHub webhook secret (or GH App signature) | PR merged → transition ticket + unblock dependents |
-| POST | `/runs/{run_id}/events` | per-run HMAC (bearer) | Ingest domain events from a running engine job |
+| POST | `/jira/events` | Jira webhook signature | trigger engine workflow for ready ticket |
+| POST | `/gh/events` | GH webhook signature | on PR merge, transition ticket + unblock dependents |
+| POST | `/runs/{run_id}/events` | per-run HMAC | ingest domain events from running engine |
 | GET | `/healthz` | none | liveness |
 
-No other endpoints. No arbitrary Jira passthrough — only domain events.
+### Config — `PROJECTS_JSON` env var
 
-### Config (`config/projects.yaml`)
+Array of project configs:
 
-Single YAML file, shipped in the image or mounted from Dokploy volume/env.
-
-```yaml
-projects:
-  A2X:
-    ticket_source: jira
-    code_host: github
-    repo: acme/webapp
-    default_base: main
-    jira_ready_status: "Ready"
-    jira_in_progress_status: "In Progress"
-    jira_review_status: "In Review"
-    jira_done_status: "Done"
-    jira_blocked_status: "Blocked"
+```
+PROJECTS_JSON=[
+  {
+    "jira_key": "A2X",
+    "repo": "acme/webapp",
+    "default_base": "main",
+    "status_ready": "Ready",
+    "status_in_progress": "In Progress",
+    "status_review": "In Review",
+    "status_done": "Done",
+    "status_blocked": "Blocked"
+  }
+]
 ```
 
-### Secrets (Dokploy env)
+Parsed with Pydantic on startup. Hard-fails on malformed input.
 
-- `JIRA_BASE_URL`, `JIRA_USER`, `JIRA_TOKEN`
-- `GH_APP_ID`, `GH_APP_PRIVATE_KEY` (preferred) or `GH_PAT`
-- `HMAC_SIGNING_KEY` (random 32 bytes, per-deployment)
-- `DOKPLOY_DEPLOY_TOKEN` (for final-milestone deploy trigger)
-- Optional: `JIRA_WEBHOOK_SECRET`, `GH_WEBHOOK_SECRET`
+Dispatcher-wide secrets (Dokploy env):
 
-### Per-run HMAC capability token
+```
+JIRA_BASE_URL, JIRA_USER, JIRA_TOKEN
+GH_APP_ID, GH_APP_PRIVATE_KEY
+HMAC_SIGNING_KEY
+JIRA_WEBHOOK_SECRET, GH_WEBHOOK_SECRET
+DOKPLOY_DEPLOY_TOKEN
+```
 
-When the dispatcher triggers a workflow, it mints an HMAC signing a `(run_id, ticket_key, exp)` tuple:
+### Per-run HMAC capability
 
 ```
 run_hmac = HMAC-SHA256(HMAC_SIGNING_KEY, f"{run_id}|{ticket_key}|{exp}")
 token    = base64(f"{run_id}|{ticket_key}|{exp}|{run_hmac}")
 ```
 
-Passed to the workflow as a `workflow_dispatch` input. The engine attaches it to every `/runs/{run_id}/events` request. The dispatcher validates HMAC + expiry on ingestion. `exp` is `now + 24h` — long enough for the longest pipeline run, short enough to bound misuse.
+`exp = now + 24h`. Single-purpose: ingest events for this run. Cannot transition arbitrary tickets.
 
-This token is a narrow capability: it can only ingest events for this run. It cannot transition arbitrary tickets, cannot read Jira, cannot call GitHub.
+### Engine — Days 2–3 additions
 
-### Trigger flow (Jira → workflow_dispatch)
+- `packages/engine/src/a2sdlc/adapters/ticket/workflow_input_reader.py` — reads ticket body + context from workflow inputs.
+- `packages/engine/src/a2sdlc/adapters/ticket/dispatcher_event_subscriber.py` — consumes domain events, POSTs to dispatcher.
+- Composition root already has the correct env checks from Day 1.
 
-1. Jira webhook arrives on `/jira/events`.
-2. Dispatcher extracts ticket key (e.g. `A2X-42`) and verifies payload signature.
-3. Lookup `projects[A2X]` for repo + adapter settings.
-4. Confirm ticket status == `Ready` and all `is blocked by` links resolve to `Done`. If not, ignore (defence-in-depth).
-5. Check no active run already exists for this ticket (MLflow query by `tags.jira_key='A2X-42' AND status='RUNNING'`, or a simple in-memory lock).
-6. Mint `run_id` (ULID) and `run_hmac`.
-7. Call GitHub REST `POST /repos/acme/webapp/actions/workflows/a2sdlc.yml/dispatches` with inputs:
+### Target-repo install (Mode 1)
 
-    ```json
-    {
-      "ref": "main",
-      "inputs": {
-        "ticket_key": "A2X-42",
-        "run_id": "01H...",
-        "dispatcher_url": "https://dispatcher.yose.tld",
-        "run_hmac": "…",
-        "base_branch": "main"
-      }
-    }
-    ```
-
-8. Record the run intent locally (small in-memory map `run_id → ticket_key`) so `/runs/{run_id}/events` can route.
-
-### PR-merged flow (GitHub → Jira unblock)
-
-1. GitHub PR-merged webhook arrives on `/gh/events`.
-2. Parse PR body for `Closes <KEY>` (or fall back to branch-name prefix match).
-3. Transition `<KEY>` to `Done`.
-4. Query Jira: `jql=project=<proj> AND status=Blocked AND "is blocked by" = <KEY>`.
-5. For each candidate, verify *all* its blockers are now Done.
-6. Transition those to `Ready`. Each transition fires a Jira webhook → back to the trigger flow.
-7. If no more tickets remain in the milestone's epic, call Dokploy deploy API.
-
-### Event ingest flow (`/runs/{run_id}/events`)
-
-Engine POSTs a domain event, e.g.
-
-```json
-{ "kind": "stage_started", "stage": "implement" }
-```
-
-Dispatcher resolves `run_id → ticket_key`, validates HMAC, and dispatches to the tracker adapter:
-
-```python
-ticket_source.apply(ticket_key, event)
-```
-
-Adapter (`jira_adapter.py`) has a finite `match` statement translating event kinds into comments + transitions. Unknown event kinds are logged but do not fail the request.
-
-## Engine Changes
-
-### New adapters
-
-Both under `adapters/ticket/`:
-
-- **`dispatcher_client.py`** — `TicketAdapter` implementation that emits domain events over HTTP to `{DISPATCHER_URL}/runs/{RUN_ID}/events`, authed by `{RUN_HMAC}`. Does not know Jira.
-- **`github_native.py`** (follow-up, not v1) — `TicketAdapter` that reads/writes GH issues via `gh` CLI. Listed here for completeness; not implemented in v1.
-
-### Subscriber
-
-- **`dispatcher_event_subscriber.py`** — listens to the existing subscriber event stream, translates to the domain-event HTTP contract, POSTs via `dispatcher_client`. Mirror of `gh_comment_subscriber.py`.
-
-### Env-driven composition root
-
-Location: engine entry point (extends existing `cli.py` / `cli_local.py`). Adds a branch for split-brain CI context:
-
-```python
-def build_ticket_adapter() -> TicketAdapter:
-    if os.getenv("DISPATCHER_URL"):
-        return DispatcherClient(
-            url=os.environ["DISPATCHER_URL"],
-            run_id=os.environ["RUN_ID"],
-            hmac=os.environ["RUN_HMAC"],
-        )
-    if os.getenv("GITHUB_ACTIONS") == "true" and os.getenv("GITHUB_EVENT_NAME") == "issues":
-        return GitHubNative(token=os.environ["GITHUB_TOKEN"])  # follow-up, not v1
-    return LocalFile(...)  # existing local runner behaviour
-
-def build_subscribers() -> list[Subscriber]:
-    subs = [ConsoleSubscriber(), TranscriptLogSubscriber()]
-    if os.getenv("DISPATCHER_URL"):
-        subs.append(DispatcherEventSubscriber(...))
-    if os.getenv("MLFLOW_TRACKING_URI"):
-        subs.append(MLflowTraceSubscriber(...))
-    return subs
-```
-
-No mode flag anywhere. No dotfile mode switch. Engine reads its environment.
-
-### Domain event contract (v1)
-
-Event kinds the engine emits via `DispatcherEventSubscriber`:
-
-| Kind | Fields | Dispatcher → Jira translation |
-|---|---|---|
-| `run_started` | `run_id`, `mlflow_url?` | status → In Progress, comment "Run started" |
-| `stage_started` | `stage` | comment "Entering stage: <stage>" |
-| `stage_completed` | `stage`, `ok`, `summary?` | (no-op on ok; on !ok, status → Blocked + comment with summary) |
-| `pr_opened` | `url`, `base`, `head` | comment with PR link |
-| `pr_updated` | `url`, `kind` (ci-green / changes-requested / approved) | comment; on approved status → In Review |
-| `run_completed` | `pr_url?`, `outcome` | on success: leave In Review for merge; on failure: → Blocked with error |
-| `run_failed` | `error`, `mlflow_url?` | status → Blocked, comment with error + MLflow link |
-
-Unknown event kinds MUST be accepted by `/runs/{run_id}/events` and logged — the engine may add new kinds ahead of dispatcher awareness. The dispatcher's `match` statement ignores unknown kinds.
-
-### What does not change
-
-- `stages/*` — unchanged.
-- `pipeline/dispatch.py` — unchanged.
-- `domain/` — unchanged.
-- `assembly/`, `lifecycle/`, `evaluation/` — unchanged.
-- Existing adapters (`github.py`, `git.py`, `work.py`, `review.py`, existing subscribers) — unchanged.
-
-## Target Repo Contract
-
-### Required: one workflow file
-
-`.github/workflows/a2sdlc.yml`:
+Single workflow file:
 
 ```yaml
-name: a2sdlc
-
+name: a2sdlc — dispatched
 on:
   workflow_dispatch:
     inputs:
-      ticket_key:     { required: true,  type: string }
-      run_id:         { required: true,  type: string }
-      dispatcher_url: { required: true,  type: string }
-      run_hmac:       { required: true,  type: string }
+      ticket_key:     { required: true, type: string }
+      run_id:         { required: true, type: string }
+      dispatcher_url: { required: true, type: string }
+      run_hmac:       { required: true, type: string }
       base_branch:    { required: false, type: string, default: main }
+      ticket_body:    { required: true, type: string }
 
 jobs:
   engine:
@@ -320,16 +396,44 @@ jobs:
       dispatcher_url: ${{ inputs.dispatcher_url }}
       run_hmac:       ${{ inputs.run_hmac }}
       base_branch:    ${{ inputs.base_branch }}
+      ticket_body:    ${{ inputs.ticket_body }}
     secrets:
-      MLFLOW_TRACKING_URI:      ${{ secrets.MLFLOW_TRACKING_URI }}      # optional
-      MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }} # optional
-      MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }} # optional
       ANTHROPIC_API_KEY:        ${{ secrets.ANTHROPIC_API_KEY }}
+      MLFLOW_TRACKING_URI:      ${{ secrets.MLFLOW_TRACKING_URI }}
+      MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+      MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
 ```
 
-No Jira creds, no GH PAT beyond the default `GITHUB_TOKEN`, no project mapping.
+No Jira creds. No mapping file. Tracker body arrives as a workflow input.
 
-### Optional: `.a2sdlc.yml` for project preferences
+### Shaping skill — Jira mode
+
+Input: Confluence page via a2atlassian MCP.
+
+1. Read Confluence page content.
+2. Same interactive Q&A loop as GH mode.
+3. Draft pitches as markdown preview.
+4. On approval:
+   - a2atlassian MCP creates Jira epic.
+   - Creates stories linked to epic.
+   - Adds `is blocked by` links between stories.
+   - Transitions the first story to `Ready`.
+
+### Full flow (Mode 1)
+
+1. Shaping skill creates Jira tickets → first → `Ready`.
+2. Jira webhook → dispatcher `/jira/events`.
+3. Dispatcher looks up `PROJECTS_JSON[A2X]`, mints `run_id` + `run_hmac`, calls `workflow_dispatch` on `acme/webapp` with `ticket_body` in inputs.
+4. GH Actions runs the engine with `DISPATCHER_URL` set → `WorkflowInputReader` + `DispatcherEventSubscriber` composed.
+5. Engine emits domain events → dispatcher → Jira comments + transitions.
+6. Engine opens PR `Closes A2X-42` → `run_completed` → Jira `In Review`.
+7. Human merges PR → GH webhook → dispatcher `/gh/events`.
+8. Dispatcher transitions `A2X-42` → `Done`. Queries Jira for tickets blocked only by `A2X-42`; transitions those to `Ready`. Each fires step 2.
+9. Last ticket in epic → dispatcher calls Dokploy deploy API.
+
+## Optional `.a2sdlc.yml` (per-project preferences)
+
+Applies to all modes. Entirely optional — engine ships defaults.
 
 ```yaml
 models:
@@ -340,8 +444,8 @@ models:
 stages: [spec, implement, review, merge]
 
 gates:
-  lint:     make lint
-  test:     make test
+  lint:         make lint
+  test:         make test
   coverage_min: 80
 
 branches:
@@ -350,112 +454,74 @@ branches:
 
 review:
   require_security_pass: true
-  auto_merge_on_green: false
+  auto_merge_on_green:   false
 ```
 
-Engine ships defaults for every field; the dotfile is purely for overrides. Engine schema-validates on startup.
-
-## End-to-End Trace (Jira mode)
-
-1. Human opens CC Desktop, invokes shaping skill against `confluence://ACME/12345`.
-2. Skill asks questions; human answers. Skill drafts pitch list; human approves.
-3. Skill writes Jira: epic `A2X-40`, stories `A2X-41..A2X-45` with blocker chain. `A2X-41` → `Ready`, rest → `Blocked`.
-4. Jira fires webhook to `https://dispatcher.yose.tld/jira/events`.
-5. Dispatcher validates, looks up `projects[A2X] = acme/webapp`, mints `run_id=01H...` + `run_hmac`, calls GitHub `workflow_dispatch`.
-6. `acme/webapp`'s `a2sdlc.yml` workflow starts. Reusable workflow `yoselabs/a2sdlc-engine/run-split.yml` runs the engine.
-7. Engine composition root reads `DISPATCHER_URL` → installs `DispatcherClient` + `DispatcherEventSubscriber`; reads `MLFLOW_TRACKING_URI` → installs `MLflowTraceSubscriber`.
-8. Engine emits `run_started` → POST to dispatcher → Jira status → `In Progress`, comment with MLflow link.
-9. Pipeline runs. Each stage emits `stage_started` / `stage_completed` events; dispatcher comments on Jira.
-10. Pipeline's MERGE stage calls the code adapter → opens PR against `main`. `pr_opened` event → Jira comment with PR URL.
-11. Engine emits `run_completed(outcome=awaiting_merge)`. Workflow exits 0.
-12. Human (or auto-merge on green) merges the PR.
-13. GitHub fires PR-merged webhook to `/gh/events`.
-14. Dispatcher parses `Closes A2X-41`, transitions `A2X-41` → `Done`, queries Jira for newly unblocked tickets, transitions `A2X-42` → `Ready`.
-15. Back to step 4 for `A2X-42`.
-16. When the last story in epic `A2X-40` transitions to `Done`, dispatcher calls Dokploy deploy API.
+Schema-validated at engine startup. Absent file = full defaults.
 
 ## Security
 
-- **Webhook endpoints** verify Jira / GitHub signatures.
-- **Per-run HMAC** scopes the engine's event ingestion to a single run and expires in 24h. Cannot be replayed for other tickets.
-- **Target repo has no persistent tracker secrets.** Only `ANTHROPIC_API_KEY` and optional `MLFLOW_*` live in its secrets.
-- **Dispatcher creds** live only on Dokploy env. Rotation = update env + redeploy.
-- **TLS** terminated at Traefik on Dokploy host.
-- **Engine in CI cannot read from Jira.** Dispatcher pushes the ticket body and any user answers into the workflow inputs or the engine's prompt context as needed. (If richer context is required, add specific fields to the `workflow_dispatch` inputs or a signed one-shot `GET /runs/{run_id}/ticket` endpoint. v1 passes the minimum.)
+- Webhook signatures validated on every `/jira/events` and `/gh/events` request.
+- Per-run HMAC scopes event ingestion to a single run and 24h window.
+- Target repos hold only `ANTHROPIC_API_KEY` and optional `MLFLOW_*` secrets.
+- Dispatcher creds (`JIRA_TOKEN`, `GH_APP_PRIVATE_KEY`, `HMAC_SIGNING_KEY`) live only on Dokploy env.
+- Engine in CI cannot call Jira directly — it only speaks to the dispatcher via the domain-event endpoint.
+- Engine in GH-native mode uses only `GITHUB_TOKEN`, scoped to the target repo by Actions.
 
 ## Observability
 
-- Every engine run = one GH Actions workflow run → logs, steps, duration, re-run button come for free.
-- Dispatcher posts `Running: <gh-actions-run-url>` to the Jira ticket at `run_started` — the live URL is the observability UI.
-- MLflow (optional) captures structured metrics, artifacts, and prompt/response traces. Tagged with `jira_key`, `run_id`, `branch`, `variant`.
-- Dispatcher logs retained per Dokploy container defaults.
+- Every engine run = one GH Actions workflow run URL → live logs, steps, timings, re-run button.
+- Engine comments the GH Actions run URL and MLflow run URL onto the ticket.
+- MLflow captures structured traces, metrics, artifacts, prompt/response pairs — tagged with ticket_key, run_id, branch, variant, mode.
+- Dispatcher logs live in Dokploy container logs.
 
-## Deployment (Dispatcher on Dokploy)
+## Scope by milestone
 
-Single compose service + Traefik labels + optional MLflow sibling service (see `docs/ops/self-hosted-mlflow.md`, separate from this spec).
+### Day 1 (today) — Mode 2
 
-```yaml
-services:
-  dispatcher:
-    image: ghcr.io/yoselabs/a2sdlc-dispatcher:v1
-    environment:
-      JIRA_BASE_URL: ${JIRA_BASE_URL}
-      JIRA_TOKEN:    ${JIRA_TOKEN}
-      GH_APP_ID:     ${GH_APP_ID}
-      GH_APP_PRIVATE_KEY: ${GH_APP_PRIVATE_KEY}
-      HMAC_SIGNING_KEY:   ${HMAC_SIGNING_KEY}
-      DOKPLOY_DEPLOY_TOKEN: ${DOKPLOY_DEPLOY_TOKEN}
-    volumes:
-      - ./projects.yaml:/app/config/projects.yaml:ro
-    labels:
-      traefik.enable: "true"
-      traefik.http.routers.dispatcher.rule: "Host(`dispatcher.yose.tld`)"
-      traefik.http.routers.dispatcher.tls.certresolver: cloudflare
-```
+- uv workspace with `packages/engine/`.
+- Adapter split: `TicketInputReader`, `TicketOutputSubscriber`.
+- `GHIssueReader`, `GHIssueSubscriber`.
+- Composition root env branches for local / GH-native.
+- Reusable workflows: `run-native.yml`, `unblock-native.yml`.
+- Shaping skill GH mode.
+- Docs: onboarding README for target repos.
 
-## Demo Scope (4-day client demo)
+### Days 2–3 — Mode 1 additive
 
-**In scope:**
+- `packages/dispatcher/` with FastAPI service.
+- `PROJECTS_JSON` config parsing.
+- HMAC capability tokens.
+- `WorkflowInputReader`, `DispatcherEventSubscriber`.
+- Reusable workflow: `run-split.yml`.
+- Shaping skill Jira mode (a2atlassian MCP).
+- Dokploy compose for dispatcher.
+- Dokploy deploy trigger on epic-complete.
+- Docker: `Dockerfile.dispatcher`, `Dockerfile.engine` split.
 
-- Shaping skill (Confluence input, Jira output, option-C UX).
-- Dispatcher service (Jira + GitHub, one project).
-- Engine `DispatcherClient` adapter + `DispatcherEventSubscriber`.
-- Reusable workflow `run-split.yml` in the engine repo.
-- Target repo setup: `.github/workflows/a2sdlc.yml` + optional `.a2sdlc.yml`.
-- MLflow optional subscriber (env-gated).
-- Final-milestone Dokploy deploy trigger.
+### Deferred (post-demo)
 
-**Deferred:**
-
-- GitHub-native mode runtime (architecture supports it; no shipped code in v1).
-- GitLab adapter.
-- A/B parallel runs via workflow matrix.
-- UI over `projects.yaml`.
-- Per-pitch design / brandbook stage.
-- Multi-tracker deployment.
-- Automated retry / dead-letter queue.
+- Parallel A/B variant matrix orchestration (from both Jira trigger and GH label).
+- GitLab / Azure Boards adapters.
+- Admin UI over `PROJECTS_JSON`.
+- Marketplace-published reusable workflows (`yoselabs/a2sdlc-engine@v1` tagged release).
+- Per-pitch design / brandbook stage in shaping.
+- OIDC token exchange in place of HMAC.
+- YAML/SQLite storage for projects (upgrade path from `PROJECTS_JSON`).
 
 ## Open Questions
 
-1. **Ticket body access in CI.** The engine needs the ticket description. Options: (a) dispatcher passes `ticket_body` as a workflow input; (b) engine calls `GET /runs/{run_id}/ticket` on the dispatcher. Recommend (a) for v1 — zero extra endpoints; watch for 1MB workflow-input size limit.
-2. **Jira custom field for MLflow link.** Nice-to-have. If not wanted, MLflow URL goes in a comment only.
-3. **Concurrency policy.** One run per ticket at a time (enforced by the dispatcher). Engine-level concurrency across tickets is capped by GH Actions concurrency keys — default unset (parallel).
-4. **HMAC expiry tradeoff.** 24h is long. Shorter expiry requires refresh, more code. Pick 24h for v1.
-5. **Shaping skill packaging.** Part of `a2sdlc-engine` repo under `skills/`, or a separate `yoselabs/shaping-skill` repo? v1: in engine repo for now; extract later.
+1. **Ticket body size.** Workflow-input size limit is ~1MB. Overflow is unlikely but should gracefully degrade to a dispatcher endpoint (`GET /runs/{run_id}/ticket`). v1: pass as input; track occurrences.
+2. **Shaping skill packaging.** Lives in `packages/engine/` under `skills/` for Day 1. Extract later if it gains independent lifecycle.
+3. **HMAC expiry duration.** 24h for v1; shorten when refresh flow exists.
+4. **Unblock workflow token scope.** Reading tasklists and adding labels needs `issues:write`; `GITHUB_TOKEN` default suffices. No PAT required.
 
 ## Invariants (must hold)
 
-- Engine has no Jira-specific code in CI-loaded modules. Only `dispatcher_client.py` and `dispatcher_event_subscriber.py` are aware of the dispatcher's existence, and neither knows what a ticket system is.
-- Target repo has no secrets or mappings beyond what is listed in the workflow file above.
-- Dispatcher never reads or writes target repo code.
-- MLflow is optional at every layer — if env unset, no MLflow code path is executed.
+- Engine has no Jira-specific code. Jira logic lives exclusively in `packages/dispatcher/`.
+- Target repo in either mode has zero persistent tracker credentials.
+- Dispatcher never reads or writes target repo code directly.
+- MLflow activation is strictly env-gated — unset env = no MLflow code path executed.
 - Per-run HMAC is never reused and never exceeds its expiry.
-
-## Follow-ups (post-demo)
-
-- Mode 2 (GH-native) runtime: implement `github_native.py` adapter + `run-native.yml` reusable workflow + issue-labeled trigger. Ships as the "install one action" OSS pitch.
-- GitLab adapter pair (`gitlab_native.py` + GitLab webhook on the dispatcher).
-- Per-pitch design stage in shaping (optional brand/palette generation).
-- A/B variant orchestration via GH Actions `strategy.matrix`.
-- Dispatcher Jira-proxy mode for the rare Mode 3 case where CI must not hold MLflow creds.
-- Promote `projects.yaml` + `run_id → ticket_key` map to SQLite when the engine gains multi-dispatcher deployments or a UI.
+- Local mode is the fallback composition when no ambient runtime signal is set.
+- Day 2–3 adds code but does not modify Day 1 engine code paths.
