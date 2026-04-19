@@ -513,6 +513,7 @@ def test_loads_required_fields(monkeypatch):
     monkeypatch.setenv("JIRA_TOKEN", "x")
     monkeypatch.setenv("GH_APP_ID", "12345")
     monkeypatch.setenv("GH_APP_PRIVATE_KEY", "dummy-pem")
+    monkeypatch.setenv("GH_APP_INSTALLATION_ID", "99")
     monkeypatch.setenv("HMAC_SIGNING_KEY", "k" * 32)
 
     s = Settings()
@@ -536,6 +537,7 @@ def test_unknown_project_key(monkeypatch):
     monkeypatch.setenv("JIRA_TOKEN", "x")
     monkeypatch.setenv("GH_APP_ID", "12345")
     monkeypatch.setenv("GH_APP_PRIVATE_KEY", "dummy-pem")
+    monkeypatch.setenv("GH_APP_INSTALLATION_ID", "99")
     monkeypatch.setenv("HMAC_SIGNING_KEY", "k" * 32)
 
     s = Settings()
@@ -595,6 +597,14 @@ class Settings(BaseSettings):
     jira_webhook_secret: SecretStr | None = None
     gh_webhook_secret: SecretStr | None = None
     dokploy_deploy_token: SecretStr | None = None
+
+    # Public URL the dispatcher is reachable at (what engine runs in CI call).
+    # Set in Dokploy env to e.g. "https://dispatcher.yose.tld". Prefer this
+    # over reading request.base_url so TLS/host rewriting via Traefik can't mislead us.
+    self_url: str = ""
+
+    # GH App installation id — for JWT-based token refresh instead of long-lived PAT.
+    gh_app_installation_id: int = 0
 
     @field_validator("projects", mode="before")
     @classmethod
@@ -677,6 +687,17 @@ def test_active_run_for_ticket():
     assert t.active_run_for("A2X-1") == "r1"
     t.finish("r1")
     assert t.active_run_for("A2X-1") is None
+
+
+def test_in_progress_flag_defaults_false_and_flips_once():
+    t = RunsTable()
+    t.register(run_id="r1", ticket_key="A2X-1", repo="acme/webapp", project_key="A2X")
+    assert t.has_in_progress_been_sent("r1") is False
+    t.mark_in_progress_sent("r1")
+    assert t.has_in_progress_been_sent("r1") is True
+    # Idempotent second call is a no-op.
+    t.mark_in_progress_sent("r1")
+    assert t.has_in_progress_been_sent("r1") is True
 ```
 
 - [ ] **Step 2: Run — expect FAIL**
@@ -723,6 +744,7 @@ class RunsTable:
     def __init__(self) -> None:
         self._by_run: dict[str, RunEntry] = {}
         self._by_ticket: dict[str, str] = {}
+        self._in_progress_sent: set[str] = set()
         self._lock = RLock()
 
     def register(self, *, run_id: str, ticket_key: str, repo: str, project_key: str) -> None:
@@ -740,12 +762,22 @@ class RunsTable:
     def finish(self, run_id: str) -> None:
         with self._lock:
             entry = self._by_run.pop(run_id, None)
+            self._in_progress_sent.discard(run_id)
             if entry and self._by_ticket.get(entry.ticket_key) == run_id:
                 self._by_ticket.pop(entry.ticket_key, None)
 
     def active_run_for(self, ticket_key: str) -> str | None:
         with self._lock:
             return self._by_ticket.get(ticket_key)
+
+    def mark_in_progress_sent(self, run_id: str) -> None:
+        """Idempotent — flag that this run has already had its In Progress transition applied."""
+        with self._lock:
+            self._in_progress_sent.add(run_id)
+
+    def has_in_progress_been_sent(self, run_id: str) -> bool:
+        with self._lock:
+            return run_id in self._in_progress_sent
 ```
 
 - [ ] **Step 4: Run — expect PASS**
@@ -869,7 +901,11 @@ class JiraClient:
     def find_issues_blocked_only_by(
         self, ticket_key: str, *, project_key: str, blocked_status: str
     ) -> list[str]:
-        """Return open tickets with ticket_key as a blocker.
+        """Return tickets that have ticket_key as a blocker.
+
+        Uses Jira's linkedIssues() JQL — "blocks" is the outward link type
+        whose inward label is "is blocked by". A ticket X that `blocks` Y
+        appears in `linkedIssues(X, "blocks")` as Y.
 
         Caller must verify each candidate's OTHER blockers are also Done
         before transitioning it to Ready.
@@ -877,7 +913,7 @@ class JiraClient:
         jql = (
             f'project = "{project_key}" '
             f'AND status = "{blocked_status}" '
-            f'AND "is blocked by" = "{ticket_key}"'
+            f'AND issue in linkedIssues("{ticket_key}", "blocks")'
         )
         result = self._raw.jql(jql, fields="key")
         return [issue["key"] for issue in result.get("issues", [])]
@@ -930,36 +966,50 @@ def proj() -> ProjectConfig:
     return ProjectConfig(jira_key="A2X", repo="acme/webapp")
 
 
-def test_run_started_transitions_and_comments():
+def _runs_with_registered(run_id="r1", ticket="A2X-42"):
+    from a2sdlc_dispatcher.runs_table import RunsTable
+    t = RunsTable()
+    t.register(run_id=run_id, ticket_key=ticket, repo="acme/webapp", project_key="A2X")
+    return t
+
+
+def test_first_stage_started_transitions_in_progress_and_dedupes():
     jira = MagicMock()
-    evt = RunStarted(run_id="r1", mlflow_url="https://m/r/1")
-    translate_event_to_jira(jira, project=proj(), ticket_key="A2X-42", event=evt)
+    runs = _runs_with_registered()
+    evt = StageStarted(stage="spec")
+    translate_event_to_jira(jira, project=proj(), ticket_key="A2X-42", run_id="r1", runs=runs, event=evt)
     jira.transition.assert_called_once_with("A2X-42", to_status="In Progress")
-    jira.add_comment.assert_called_once()
-    assert "https://m/r/1" in jira.add_comment.call_args[0][1]
-
-
-def test_stage_started_comments_only():
-    jira = MagicMock()
-    evt = StageStarted(stage="implement")
-    translate_event_to_jira(jira, project=proj(), ticket_key="A2X-42", event=evt)
+    # Idempotent: second stage_started in the same run does NOT re-transition.
+    jira.reset_mock()
+    evt2 = StageStarted(stage="implement")
+    translate_event_to_jira(jira, project=proj(), ticket_key="A2X-42", run_id="r1", runs=runs, event=evt2)
     jira.transition.assert_not_called()
     jira.add_comment.assert_called_once()
     assert "implement" in jira.add_comment.call_args[0][1]
 
 
-def test_stage_completed_ok_is_noop():
+def test_stage_completed_ok_non_merge_is_noop():
     jira = MagicMock()
+    runs = _runs_with_registered()
     evt = StageCompleted(stage="implement", ok=True)
-    translate_event_to_jira(jira, project=proj(), ticket_key="A2X-42", event=evt)
+    translate_event_to_jira(jira, project=proj(), ticket_key="A2X-42", run_id="r1", runs=runs, event=evt)
     jira.transition.assert_not_called()
     jira.add_comment.assert_not_called()
 
 
+def test_stage_completed_merge_ok_transitions_in_review():
+    jira = MagicMock()
+    runs = _runs_with_registered()
+    evt = StageCompleted(stage="merge", ok=True, summary="PR #1 opened")
+    translate_event_to_jira(jira, project=proj(), ticket_key="A2X-42", run_id="r1", runs=runs, event=evt)
+    jira.transition.assert_called_once_with("A2X-42", to_status="In Review")
+
+
 def test_stage_completed_failure_transitions_to_blocked():
     jira = MagicMock()
+    runs = _runs_with_registered()
     evt = StageCompleted(stage="implement", ok=False, summary="syntax error")
-    translate_event_to_jira(jira, project=proj(), ticket_key="A2X-42", event=evt)
+    translate_event_to_jira(jira, project=proj(), ticket_key="A2X-42", run_id="r1", runs=runs, event=evt)
     jira.transition.assert_called_once_with("A2X-42", to_status="Blocked")
     jira.add_comment.assert_called_once()
     assert "syntax error" in jira.add_comment.call_args[0][1]
@@ -967,30 +1017,26 @@ def test_stage_completed_failure_transitions_to_blocked():
 
 def test_pr_opened_comments_pr_url():
     jira = MagicMock()
+    runs = _runs_with_registered()
     evt = PROpened(url="https://github.com/x/y/pull/1", base="main", head="x/y")
-    translate_event_to_jira(jira, project=proj(), ticket_key="A2X-42", event=evt)
+    translate_event_to_jira(jira, project=proj(), ticket_key="A2X-42", run_id="r1", runs=runs, event=evt)
     jira.add_comment.assert_called_once()
     assert "pull/1" in jira.add_comment.call_args[0][1]
 
 
 def test_pr_updated_approved_transitions_in_review():
     jira = MagicMock()
+    runs = _runs_with_registered()
     evt = PRUpdated(url="https://github.com/x/y/pull/1", update_kind="approved")
-    translate_event_to_jira(jira, project=proj(), ticket_key="A2X-42", event=evt)
-    jira.transition.assert_called_once_with("A2X-42", to_status="In Review")
-
-
-def test_run_completed_awaiting_merge_transitions_in_review():
-    jira = MagicMock()
-    evt = RunCompleted(pr_url="https://g/p/1", outcome="awaiting_merge")
-    translate_event_to_jira(jira, project=proj(), ticket_key="A2X-42", event=evt)
+    translate_event_to_jira(jira, project=proj(), ticket_key="A2X-42", run_id="r1", runs=runs, event=evt)
     jira.transition.assert_called_once_with("A2X-42", to_status="In Review")
 
 
 def test_run_failed_transitions_blocked():
     jira = MagicMock()
+    runs = _runs_with_registered()
     evt = RunFailed(error="rate limit")
-    translate_event_to_jira(jira, project=proj(), ticket_key="A2X-42", event=evt)
+    translate_event_to_jira(jira, project=proj(), ticket_key="A2X-42", run_id="r1", runs=runs, event=evt)
     jira.transition.assert_called_once_with("A2X-42", to_status="Blocked")
     jira.add_comment.assert_called_once()
     assert "rate limit" in jira.add_comment.call_args[0][1]
@@ -999,8 +1045,9 @@ def test_run_failed_transitions_blocked():
 def test_unknown_event_is_silent():
     from a2sdlc_dispatcher.domain_events import UnknownEvent
     jira = MagicMock()
+    runs = _runs_with_registered()
     evt = UnknownEvent(kind="future_v2")
-    translate_event_to_jira(jira, project=proj(), ticket_key="A2X-42", event=evt)
+    translate_event_to_jira(jira, project=proj(), ticket_key="A2X-42", run_id="r1", runs=runs, event=evt)
     jira.transition.assert_not_called()
     jira.add_comment.assert_not_called()
 ```
@@ -1016,7 +1063,18 @@ Expected: FAIL.
 - [ ] **Step 3: Implement `event_translator.py`**
 
 ```python
-"""Translate engine-emitted domain events into Jira comments + transitions."""
+"""Translate engine-emitted domain events into Jira comments + transitions.
+
+Key semantics:
+
+- Engine invocations in CI are one-stage-per-run-per-process. To avoid spamming
+  Jira with re-transitions, the dispatcher itself dedupes "Ready → In Progress"
+  using a flag in RunsTable — fired on the FIRST stage_started received for
+  a given run_id. Subsequent stage_started events become comments only.
+- The final `stage_completed(stage="merge", ok=True)` means the PR has been
+  opened and is awaiting human merge — transition to In Review.
+- Any `stage_completed(ok=False)` transitions to Blocked with the summary.
+"""
 from __future__ import annotations
 
 from a2sdlc_dispatcher.domain_events import (
@@ -1024,12 +1082,12 @@ from a2sdlc_dispatcher.domain_events import (
     PRUpdated,
     RunCompleted,
     RunFailed,
-    RunStarted,
     StageCompleted,
     StageStarted,
     UnknownEvent,
 )
 from a2sdlc_dispatcher.jira_client import JiraClient
+from a2sdlc_dispatcher.runs_table import RunsTable
 from a2sdlc_dispatcher.settings import ProjectConfig
 
 
@@ -1038,28 +1096,34 @@ def translate_event_to_jira(
     *,
     project: ProjectConfig,
     ticket_key: str,
+    run_id: str,
+    runs: RunsTable,
     event,
 ) -> None:
     """Dispatch on event type.
 
     Unknown event kinds are silently ignored (forward compat).
     """
-    if isinstance(event, RunStarted):
-        jira.transition(ticket_key, to_status=project.status_in_progress)
-        body = f":rocket: Run started ({event.run_id})"
-        if event.mlflow_url:
-            body += f"\nMLflow: {event.mlflow_url}"
-        jira.add_comment(ticket_key, body)
-
-    elif isinstance(event, StageStarted):
-        jira.add_comment(ticket_key, f"▶ Entering stage: **{event.stage}**")
+    if isinstance(event, StageStarted):
+        if not runs.has_in_progress_been_sent(run_id):
+            jira.transition(ticket_key, to_status=project.status_in_progress)
+            runs.mark_in_progress_sent(run_id)
+            jira.add_comment(ticket_key, f":rocket: Run started — entering stage: **{event.stage}**")
+        else:
+            jira.add_comment(ticket_key, f"▶ Entering stage: **{event.stage}**")
 
     elif isinstance(event, StageCompleted):
-        if event.ok:
+        if not event.ok:
+            jira.transition(ticket_key, to_status=project.status_blocked)
+            summary = event.summary or "(no summary)"
+            jira.add_comment(ticket_key, f":x: Stage `{event.stage}` failed: {summary}")
             return
-        jira.transition(ticket_key, to_status=project.status_blocked)
-        summary = event.summary or "(no summary)"
-        jira.add_comment(ticket_key, f":x: Stage `{event.stage}` failed: {summary}")
+        if event.stage == "merge":
+            jira.transition(ticket_key, to_status=project.status_review)
+            body = ":white_check_mark: Merge stage complete — PR awaiting human review/merge"
+            if event.summary:
+                body += f"\n{event.summary}"
+            jira.add_comment(ticket_key, body)
 
     elif isinstance(event, PROpened):
         jira.add_comment(ticket_key, f":open_file_folder: PR opened: {event.url} ({event.head} → {event.base})")
@@ -1070,9 +1134,10 @@ def translate_event_to_jira(
             jira.transition(ticket_key, to_status=project.status_review)
 
     elif isinstance(event, RunCompleted):
+        # Kept for forward-compat; current engine drives review transition via
+        # StageCompleted(stage="merge", ok=True) instead.
         if event.outcome == "awaiting_merge":
             jira.transition(ticket_key, to_status=project.status_review)
-        # 'merged' is handled by the PR-merged webhook; 'failed' shouldn't arrive here (RunFailed does).
 
     elif isinstance(event, RunFailed):
         jira.transition(ticket_key, to_status=project.status_blocked)
@@ -1234,7 +1299,13 @@ async def test_trigger_workflow_dispatch_calls_right_endpoint():
     http = AsyncMock()
     http.post.return_value = MagicMock(status_code=204)
 
-    client = GHAppClient(http=http, installation_token="ghs_xxx")
+    client = GHAppClient(
+        http=http,
+        app_id=1,
+        private_key_pem="dummy",
+        installation_id=1,
+        installation_token="ghs_xxx",
+    )
     await client.trigger_workflow_dispatch(
         repo="acme/webapp",
         workflow_filename="a2sdlc-split.yml",
@@ -1248,6 +1319,7 @@ async def test_trigger_workflow_dispatch_calls_right_endpoint():
     body = http.post.await_args.kwargs["json"]
     assert body["ref"] == "main"
     assert body["inputs"]["ticket_key"] == "A2X-42"
+    assert http.post.await_args.kwargs["headers"]["Authorization"] == "Bearer ghs_xxx"
 ```
 
 - [ ] **Step 2: Run — expect FAIL**
@@ -1258,45 +1330,24 @@ uv run --package a2sdlc-dispatcher pytest packages/dispatcher/tests/test_gh_app.
 
 Expected: FAIL.
 
-- [ ] **Step 3: Implement `gh_app.py`**
+- [ ] **Step 3: Implement `gh_app.py` with lazy-refreshing installation tokens**
+
+GitHub installation tokens expire after 1h. To avoid a "works for the first hour, silently breaks forever" failure mode, the client mints a fresh installation token via JWT exchange on demand and caches it until 5 minutes before expiry.
 
 ```python
-"""GitHub App helper — mint installation tokens + trigger workflows.
+"""GitHub App helper — mints App JWT + exchanges for installation tokens.
 
-For v1, the caller mints installation tokens externally (tests inject them;
-production uses `_mint_installation_token` via PyJWT). Keeps the client
-thin and test-friendly.
+Installation tokens are short-lived (1h). We cache the current token in
+memory and refresh on demand when we're within 5 minutes of expiry.
 """
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
 import jwt
-
-
-class GHAppClient:
-    def __init__(self, *, http: httpx.AsyncClient, installation_token: str) -> None:
-        self._http = http
-        self._token = installation_token
-
-    async def trigger_workflow_dispatch(
-        self,
-        *,
-        repo: str,
-        workflow_filename: str,
-        ref: str,
-        inputs: dict[str, Any],
-    ) -> None:
-        url = f"https://api.github.com/repos/{repo}/actions/workflows/{workflow_filename}/dispatches"
-        headers = {
-            "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {self._token}",
-            "X-GitHub-Api-Version": "2022-11-28",
-        }
-        r = await self._http.post(url, json={"ref": ref, "inputs": inputs}, headers=headers)
-        r.raise_for_status()
 
 
 def mint_app_jwt(*, app_id: int, private_key_pem: str, ttl_seconds: int = 540) -> str:
@@ -1308,7 +1359,11 @@ def mint_app_jwt(*, app_id: int, private_key_pem: str, ttl_seconds: int = 540) -
 
 async def exchange_for_installation_token(
     *, http: httpx.AsyncClient, app_jwt: str, installation_id: int
-) -> str:
+) -> tuple[str, int]:
+    """Exchange an App JWT for a short-lived installation token.
+
+    Returns (token, expires_at_unix_seconds).
+    """
     url = f"https://api.github.com/app/installations/{installation_id}/access_tokens"
     headers = {
         "Accept": "application/vnd.github+json",
@@ -1317,7 +1372,86 @@ async def exchange_for_installation_token(
     }
     r = await http.post(url, headers=headers)
     r.raise_for_status()
-    return r.json()["token"]
+    data = r.json()
+    # GH returns expires_at as ISO8601; parse into unix seconds.
+    from datetime import datetime, timezone as tz
+
+    expires_at = int(datetime.fromisoformat(data["expires_at"].replace("Z", "+00:00")).timestamp())
+    return data["token"], expires_at
+
+
+@dataclass
+class _TokenCache:
+    token: str = ""
+    expires_at: int = 0
+
+
+class GHAppClient:
+    """Triggers workflow dispatches with an installation token that auto-refreshes."""
+
+    _REFRESH_MARGIN = 300  # refresh if within 5 minutes of expiry
+
+    def __init__(
+        self,
+        *,
+        http: httpx.AsyncClient,
+        app_id: int,
+        private_key_pem: str,
+        installation_id: int,
+        # Test-only: inject a fixed token to bypass the JWT exchange.
+        installation_token: str | None = None,
+    ) -> None:
+        self._http = http
+        self._app_id = app_id
+        self._pem = private_key_pem
+        self._installation_id = installation_id
+        self._cache = _TokenCache()
+        if installation_token is not None:
+            # Test path: far-future expiry so we never try to refresh.
+            self._cache = _TokenCache(token=installation_token, expires_at=2**31 - 1)
+
+    async def _current_token(self) -> str:
+        now = int(time.time())
+        if self._cache.token and now < self._cache.expires_at - self._REFRESH_MARGIN:
+            return self._cache.token
+        app_jwt = mint_app_jwt(app_id=self._app_id, private_key_pem=self._pem)
+        token, expires_at = await exchange_for_installation_token(
+            http=self._http, app_jwt=app_jwt, installation_id=self._installation_id
+        )
+        self._cache = _TokenCache(token=token, expires_at=expires_at)
+        return token
+
+    async def trigger_workflow_dispatch(
+        self,
+        *,
+        repo: str,
+        workflow_filename: str,
+        ref: str,
+        inputs: dict[str, Any],
+    ) -> None:
+        token = await self._current_token()
+        url = f"https://api.github.com/repos/{repo}/actions/workflows/{workflow_filename}/dispatches"
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        r = await self._http.post(url, json={"ref": ref, "inputs": inputs}, headers=headers)
+        r.raise_for_status()
+```
+
+- [ ] **Step 3a: Update the test to use the test-path constructor**
+
+The existing test injects `installation_token="ghs_xxx"` directly. That still works because the test-only kwarg fast-paths the cache. Ensure the test constructs `GHAppClient` as:
+
+```python
+client = GHAppClient(
+    http=http,
+    app_id=1,
+    private_key_pem="dummy",
+    installation_id=1,
+    installation_token="ghs_xxx",
+)
 ```
 
 - [ ] **Step 4: Add `pytest-asyncio` to the workspace dev deps (if not already)**
@@ -1375,10 +1509,13 @@ def _build_app(settings_mock, gh_app_mock, runs):
     return app
 
 
-def _event_payload(ticket_key: str, to_status: str) -> bytes:
+def _event_payload(ticket_key: str, to_status: str, description: str = "As a user, I want X.") -> bytes:
     return json.dumps({
         "webhookEvent": "jira:issue_updated",
-        "issue": {"key": ticket_key, "fields": {"status": {"name": to_status}}},
+        "issue": {
+            "key": ticket_key,
+            "fields": {"status": {"name": to_status}, "description": description},
+        },
         "changelog": {"items": [{"field": "status", "toString": to_status}]},
     }).encode()
 
@@ -1392,6 +1529,7 @@ def _settings():
     s.jira_webhook_secret.get_secret_value.return_value = "shh"
     s.hmac_signing_key.get_secret_value.return_value = "k" * 32
     s.project_by_key.return_value = ProjectConfig(jira_key="A2X", repo="acme/webapp")
+    s.self_url = "https://dispatcher.yose.tld"
     return s
 
 
@@ -1414,6 +1552,8 @@ async def test_ready_transition_triggers_workflow():
     call = gh.trigger_workflow_dispatch.await_args.kwargs
     assert call["repo"] == "acme/webapp"
     assert call["inputs"]["ticket_key"] == "A2X-42"
+    assert call["inputs"]["ticket_body"] == "As a user, I want X."
+    assert call["inputs"]["dispatcher_url"] == "https://dispatcher.yose.tld"
     assert "run_id" in call["inputs"]
     assert "run_hmac" in call["inputs"]
     # dispatcher registered the run
@@ -1493,7 +1633,21 @@ def build_router(*, settings: Settings, gh_app: GHAppClient, runs: RunsTable) ->
         payload: dict[str, Any] = await request.json()
         issue = payload.get("issue") or {}
         ticket_key = issue.get("key")
-        status_name = issue.get("fields", {}).get("status", {}).get("name")
+        fields = issue.get("fields", {}) or {}
+        status_name = fields.get("status", {}).get("name")
+        # Jira webhook payload carries the issue description in fields.description
+        # (may be an ADF object or a plain string depending on Jira config).
+        ticket_body_raw = fields.get("description") or ""
+        if isinstance(ticket_body_raw, dict):
+            # Minimal ADF → text fallback: concatenate content.*.text. Good enough for v1;
+            # full ADF rendering can land post-demo.
+            ticket_body = _flatten_adf(ticket_body_raw)
+        else:
+            ticket_body = str(ticket_body_raw)
+        # Workflow inputs have a soft ~65535 char cap; truncate conservatively.
+        if len(ticket_body) > 60_000:
+            ticket_body = ticket_body[:60_000] + "\n\n…(truncated)"
+
         if not ticket_key or not status_name:
             raise HTTPException(status_code=400, detail="missing issue.key or status.name")
 
@@ -1514,22 +1668,37 @@ def build_router(*, settings: Settings, gh_app: GHAppClient, runs: RunsTable) ->
 
         runs.register(run_id=run_id, ticket_key=ticket_key, repo=project.repo, project_key=project_key)
 
+        dispatcher_url = settings.self_url or str(request.base_url).rstrip("/")
+
         await gh_app.trigger_workflow_dispatch(
             repo=project.repo,
             workflow_filename="a2sdlc-split.yml",
             ref=project.default_base,
             inputs={
                 "ticket_key": ticket_key,
+                "ticket_body": ticket_body,
                 "run_id": run_id,
                 "run_hmac": run_hmac,
                 "base_branch": project.default_base,
-                "dispatcher_url": str(request.base_url).rstrip("/"),
-                # ticket_body passed separately via a follow-up fetch in v1; not strictly required for smoke.
+                "dispatcher_url": dispatcher_url,
             },
         )
 
         from fastapi.responses import Response
         return Response(status_code=202)
+
+
+def _flatten_adf(node: dict) -> str:
+    """Recursively collect ADF text nodes into a single string."""
+    out: list[str] = []
+    if isinstance(node, dict):
+        if node.get("type") == "text" and "text" in node:
+            out.append(str(node["text"]))
+        for child in node.get("content", []) or []:
+            out.append(_flatten_adf(child))
+        if node.get("type") in {"paragraph", "heading", "bulletList", "orderedList", "listItem"}:
+            out.append("\n")
+    return "".join(out)
 
     return router
 
@@ -1560,11 +1729,14 @@ def create_app() -> FastAPI:
     app = FastAPI(title="a2sdlc-dispatcher", version="0.1.0")
     settings = Settings()
     http = httpx.AsyncClient(timeout=30.0)
-    # In v1 we rely on a long-lived installation token injected via env for simplicity.
-    # Replace with a proper GH App JWT exchange loop in a post-demo hardening pass.
-    import os
-    installation_token = os.environ.get("GH_INSTALLATION_TOKEN", "")
-    gh_app = GHAppClient(http=http, installation_token=installation_token)
+    # GH App auth: JWT → installation token exchange, lazy refresh on each
+    # trigger call when the cached token is within 5 min of expiry.
+    gh_app = GHAppClient(
+        http=http,
+        app_id=settings.gh_app_id,
+        private_key_pem=settings.gh_app_private_key.get_secret_value(),
+        installation_id=settings.gh_app_installation_id,
+    )
     runs = RunsTable()
 
     app.include_router(build_jira_router(settings=settings, gh_app=gh_app, runs=runs))
@@ -2060,6 +2232,11 @@ Expected: FAIL.
 
 Reads ticket context from env vars that the dispatcher set via workflow_dispatch
 inputs. Does not call Jira. Engine remains ticket-system-agnostic.
+
+Writes (comments, transitions) are NOT performed here — those go over HTTP
+via DispatcherEventSubscriber. The write methods below are NO-OPS returning
+sentinel values, not NotImplementedError, because CommentManager invokes them
+in the engine's normal path and we must not crash Mode 1 runs.
 """
 from __future__ import annotations
 
@@ -2069,6 +2246,8 @@ from a2sdlc.domain.exceptions import SkipEvent
 from a2sdlc.domain.models import StageName
 from a2sdlc.domain.pipeline_event import PipelineEvent
 
+_SENTINEL_COMMENT_ID = "dispatcher-routed"
+
 
 class WorkflowInputReader:
     def parse_event(self) -> PipelineEvent:
@@ -2077,7 +2256,7 @@ class WorkflowInputReader:
         if not key:
             raise SkipEvent("TICKET_KEY not set — not in dispatcher-triggered run")
         try:
-            stage = StageName(stage_str)
+            stage = StageName(stage_str.lower())
         except ValueError:
             raise SkipEvent(f"unknown trigger stage {stage_str!r}") from None
         return PipelineEvent(key=key, trigger_stage=stage)
@@ -2085,21 +2264,35 @@ class WorkflowInputReader:
     def get_ticket_body(self, key: str) -> str:
         body = os.environ.get("TICKET_BODY")
         if body is None:
-            raise RuntimeError("TICKET_BODY env var not set")
+            raise RuntimeError("TICKET_BODY env var not set — dispatcher must populate it")
         return body
 
-    # NotImplementedError for methods not used in Mode 1 runs:
-    def create_stage_comment(self, *args, **kwargs):
-        raise NotImplementedError("WorkflowInputReader does not write to the tracker — use DispatcherEventSubscriber")
+    # Tracker write methods — deliberate no-ops. All writebacks in Mode 1 flow
+    # through DispatcherEventSubscriber over HTTP. CommentManager calls these
+    # as part of the normal engine lifecycle; returning sentinels prevents crashes.
+    def create_stage_comment(self, *args, **kwargs) -> str:
+        return _SENTINEL_COMMENT_ID
 
-    def update_stage_comment(self, *args, **kwargs):
-        raise NotImplementedError
+    def update_stage_comment(self, *args, **kwargs) -> None:
+        return None
 
-    def finalize_stage_comment(self, *args, **kwargs):
-        raise NotImplementedError
+    def finalize_stage_comment(self, *args, **kwargs) -> None:
+        return None
+
+    def advance_to_next_stage(self, *args, **kwargs) -> None:
+        # Stage advancement in Mode 1 is driven by the dispatcher, not by the
+        # engine writing labels back to the tracker. The dispatcher fires a
+        # fresh workflow for the next stage after a successful stage_completed.
+        return None
+
+    def mark_blocked(self, *args, **kwargs) -> None:
+        return None
+
+    def mark_done(self, *args, **kwargs) -> None:
+        return None
 ```
 
-Note: if the existing `WorkAdapter` protocol requires additional methods the engine actually exercises during a run (e.g. commenting), either (a) implement them as thin pass-throughs to a Subscriber hand-off, or (b) widen the engine's protocol split so the dispatcher-driven path uses `DispatcherEventSubscriber` for all writebacks. For v1, keep write methods as `NotImplementedError` and rely on the dispatcher-event subscriber for all tracker-bound side effects; if a test fails because the engine invokes a write method directly, fix by routing that write through the subscriber.
+Verification note: after implementing, run `uv run --package a2sdlc-engine pytest packages/engine/tests` to confirm nothing in the existing suite regresses. If the engine invokes a WorkAdapter method not listed above, add it as a no-op — do NOT raise — and file a post-demo task to route it through a subscriber.
 
 - [ ] **Step 5: Run — expect PASS**
 
@@ -2161,12 +2354,30 @@ async def test_stage_start_posts_stage_started():
         http=http,
     )
     await sub.handle(StageStart(stage=StageName.SPEC, session_id="s1", started_at=0.0))
+    # Exactly one POST — stage_started. No run_started emitted by the engine;
+    # the dispatcher itself flips "Ready → In Progress" on the first stage_started it sees.
     assert len(http.calls) == 1
     body = http.calls[0]["json"]
     assert body["kind"] == "stage_started"
     assert body["stage"] == "spec"
     assert http.calls[0]["headers"]["Authorization"] == "Bearer tok"
     assert http.calls[0]["url"] == "https://d.example/runs/r1/events"
+
+
+@pytest.mark.asyncio
+async def test_stage_start_never_emits_run_started():
+    http = FakeHttp()
+    sub = DispatcherEventSubscriber(
+        dispatcher_url="https://d.example",
+        run_id="r1",
+        run_hmac="tok",
+        http=http,
+    )
+    await sub.handle(StageStart(stage=StageName.SPEC, session_id="s1", started_at=0.0))
+    await sub.handle(StageStart(stage=StageName.IMPLEMENT, session_id="s1", started_at=1.0))
+    kinds = [c["json"]["kind"] for c in http.calls]
+    assert "run_started" not in kinds
+    assert kinds == ["stage_started", "stage_started"]
 
 
 @pytest.mark.asyncio
@@ -2255,7 +2466,6 @@ class DispatcherEventSubscriber:
         self._run_id = run_id
         self._hmac = run_hmac
         self._http = http
-        self._posted_run_started = False
 
     async def handle(self, event: ProgressEvent) -> None:
         payload = self._translate(event)
@@ -2274,12 +2484,11 @@ class DispatcherEventSubscriber:
             logger.warning("dispatcher POST failed (event=%s): %s", payload.get("kind"), e)
 
     def _translate(self, event: ProgressEvent) -> dict | None:
+        # CRITICAL: do NOT emit run_started from the engine. The engine runs
+        # once per stage in its own CI process — "first stage_started" per
+        # run_id is dedupe'd by the dispatcher, which flips Ready → In Progress
+        # exactly once. Emitting run_started here would double-transition.
         if isinstance(event, StageStart):
-            if not self._posted_run_started:
-                self._posted_run_started = True
-                # Emit run_started once per run (on first StageStart).
-                # The engine's subscriber bus delivers events in order; we're safe.
-                return {"kind": "run_started", "run_id": self._run_id}
             return {"kind": "stage_started", "stage": event.stage.value}
         if isinstance(event, StageEnd):
             return {
@@ -2294,7 +2503,7 @@ class DispatcherEventSubscriber:
         return None
 ```
 
-Note: in v1 we defer `pr_opened` / `pr_updated` / `run_completed` wiring because those aren't native `ProgressEvent` types. Post-demo, add a small extension event (or reuse `Milestone`) to signal PR transitions, and translate those to the richer dispatcher events.
+Note: in v1 we don't emit `pr_opened` / `pr_updated` / `run_completed` from here because those aren't native `ProgressEvent` types. The dispatcher drives the "In Review" transition off `stage_completed(stage="merge", ok=True)`. Post-demo, add a small extension event (or reuse `Milestone`) to signal richer PR transitions.
 
 - [ ] **Step 4: Run — expect PASS**
 
@@ -2316,14 +2525,31 @@ git commit -m "feat(engine): DispatcherEventSubscriber — progress → dispatch
 **Files:**
 - Modify: `packages/engine/src/a2sdlc/cli/dispatch.py`
 
-- [ ] **Step 1: Add env-detection branch at the top of `dispatch_command`**
+- [ ] **Step 1: Guard existing GitHubWorkAdapter construction behind dispatcher-mode check**
 
-Insert after the existing `work_adapter = GitHubWorkAdapter(repo)` assignment:
+Refactor the top of `dispatch_command` so that in dispatcher mode we never construct `GitHubWorkAdapter` (which requires a valid `GITHUB_REPOSITORY` + PyGithub auth) nor `GitHubReviewAdapter` (same reason). Replace the existing block:
 
 ```python
-# Mode 1 (dispatcher-driven): if DISPATCHER_URL is set, swap in WorkflowInputReader
-# + DispatcherEventSubscriber. Engine remains Jira-ignorant.
+from github import Github  # noqa: PLC0415
+from a2sdlc.adapters.review import GitHubReviewAdapter  # noqa: PLC0415
+from a2sdlc.adapters.work import GitHubWorkAdapter  # noqa: PLC0415
+
+token = os.environ.get("GITHUB_TOKEN", os.environ.get("GH_TOKEN", ""))
+repo_name = os.environ.get("GITHUB_REPOSITORY", "")
+repo = Github(token).get_repo(repo_name)
+work_adapter = GitHubWorkAdapter(repo)
+review_adapter = GitHubReviewAdapter(repo)
+```
+
+with:
+
+```python
+# Mode selection is ambient — DISPATCHER_URL tells us we're Jira-dispatcher driven,
+# GITHUB_ACTIONS tells us we're GH-native. Compose adapters accordingly. Local/eval
+# paths are unaffected because `dispatch_command` is not the local entry point.
 dispatcher_url = os.environ.get("DISPATCHER_URL")
+dispatcher_sub = None
+
 if dispatcher_url:
     from a2sdlc.adapters.work.workflow_input import WorkflowInputReader  # noqa: PLC0415
     from a2sdlc.adapters.subscriber.dispatcher_event import (  # noqa: PLC0415
@@ -2332,6 +2558,17 @@ if dispatcher_url:
     import httpx  # noqa: PLC0415
 
     work_adapter = WorkflowInputReader()  # type: ignore[assignment]
+    # In dispatcher mode the engine does not interact with the code host
+    # outside of git pushes + PR creation — those use the ambient GITHUB_TOKEN
+    # of the GH Actions job. We still need a review adapter; use the GitHub one
+    # since the PR lives on GitHub.
+    from github import Github  # noqa: PLC0415
+    from a2sdlc.adapters.review import GitHubReviewAdapter  # noqa: PLC0415
+
+    token = os.environ["GITHUB_TOKEN"]
+    repo_name = os.environ["GITHUB_REPOSITORY"]
+    review_adapter = GitHubReviewAdapter(Github(token).get_repo(repo_name))
+
     run_id = os.environ["RUN_ID"]
     run_hmac = os.environ["RUN_HMAC"]
     http = httpx.Client(timeout=30.0)
@@ -2341,17 +2578,48 @@ if dispatcher_url:
         run_hmac=run_hmac,
         http=http,
     )
-    # progress_state will subscribe dispatcher_sub below, after build_progress_state.
 else:
-    dispatcher_sub = None
+    # Mode 2 (or legacy CI) — GH-native composition, unchanged.
+    from github import Github  # noqa: PLC0415
+    from a2sdlc.adapters.review import GitHubReviewAdapter  # noqa: PLC0415
+    from a2sdlc.adapters.work import GitHubWorkAdapter  # noqa: PLC0415
+
+    token = os.environ.get("GITHUB_TOKEN", os.environ.get("GH_TOKEN", ""))
+    repo_name = os.environ.get("GITHUB_REPOSITORY", "")
+    repo = Github(token).get_repo(repo_name)
+    work_adapter = GitHubWorkAdapter(repo)
+    review_adapter = GitHubReviewAdapter(repo)
 ```
 
-Then after `progress_state = build_progress_state(...)`:
+- [ ] **Step 2: Subscribe the dispatcher subscriber after `progress_state` is built**
+
+Find the line `progress_state = build_progress_state(root, config.adapters.progress)` and add immediately after:
 
 ```python
 if dispatcher_sub is not None:
     progress_state.subscribe(dispatcher_sub)
 ```
+
+- [ ] **Step 3: Skip `GhCommentSubscriber` in dispatcher mode**
+
+The existing `DispatchContext` sets `make_comment_subscriber=lambda comment: GhCommentSubscriber(comment, progress_state)`. In dispatcher mode, that lambda would wire a Jira-unaware GH commenter onto a CommentManager that is writing through `WorkflowInputReader`'s no-op stubs — harmless but noisy. Replace the `make_comment_subscriber` assignment with:
+
+```python
+if dispatcher_url:
+    # Dispatcher mode: progress is already routed to Jira via DispatcherEventSubscriber.
+    # CommentManager still exists but its comment operations are no-ops.
+    def _noop_comment_subscriber(comment):
+        from a2sdlc.adapters.subscriber import ConsoleSubscriber  # noqa: PLC0415
+        return ConsoleSubscriber(progress_state)
+    make_comment_subscriber = _noop_comment_subscriber
+else:
+    def _gh_comment_subscriber(comment):
+        from a2sdlc.adapters.subscriber.gh_comment import GhCommentSubscriber  # noqa: PLC0415
+        return GhCommentSubscriber(comment, progress_state)
+    make_comment_subscriber = _gh_comment_subscriber
+```
+
+Then pass `make_comment_subscriber=make_comment_subscriber` to `DispatchContext(...)`.
 
 - [ ] **Step 2: Run engine tests**
 
@@ -2660,7 +2928,9 @@ docker run --rm -d --name dsp -p 8000:8000 \
   -e JIRA_TOKEN=x \
   -e GH_APP_ID=1 \
   -e GH_APP_PRIVATE_KEY=dummy \
+  -e GH_APP_INSTALLATION_ID=1 \
   -e HMAC_SIGNING_KEY=k$(printf 'k%.0s' {1..31}) \
+  -e SELF_URL=http://localhost:8000 \
   -e PROJECTS_JSON='[]' \
   a2sdlc-dispatcher:dev
 sleep 2
@@ -2695,17 +2965,18 @@ services:
     image: ghcr.io/yoselabs/a2sdlc-dispatcher:main
     restart: unless-stopped
     environment:
-      JIRA_BASE_URL:            ${JIRA_BASE_URL}
-      JIRA_USER:                ${JIRA_USER}
-      JIRA_TOKEN:               ${JIRA_TOKEN}
-      GH_APP_ID:                ${GH_APP_ID}
-      GH_APP_PRIVATE_KEY:       ${GH_APP_PRIVATE_KEY}
-      GH_INSTALLATION_TOKEN:    ${GH_INSTALLATION_TOKEN}
-      HMAC_SIGNING_KEY:         ${HMAC_SIGNING_KEY}
-      JIRA_WEBHOOK_SECRET:      ${JIRA_WEBHOOK_SECRET}
-      GH_WEBHOOK_SECRET:        ${GH_WEBHOOK_SECRET}
-      DOKPLOY_DEPLOY_TOKEN:     ${DOKPLOY_DEPLOY_TOKEN}
-      PROJECTS_JSON:            ${PROJECTS_JSON}
+      JIRA_BASE_URL:              ${JIRA_BASE_URL}
+      JIRA_USER:                  ${JIRA_USER}
+      JIRA_TOKEN:                 ${JIRA_TOKEN}
+      GH_APP_ID:                  ${GH_APP_ID}
+      GH_APP_PRIVATE_KEY:         ${GH_APP_PRIVATE_KEY}
+      GH_APP_INSTALLATION_ID:     ${GH_APP_INSTALLATION_ID}
+      HMAC_SIGNING_KEY:           ${HMAC_SIGNING_KEY}
+      JIRA_WEBHOOK_SECRET:        ${JIRA_WEBHOOK_SECRET}
+      GH_WEBHOOK_SECRET:          ${GH_WEBHOOK_SECRET}
+      DOKPLOY_DEPLOY_TOKEN:       ${DOKPLOY_DEPLOY_TOKEN}
+      PROJECTS_JSON:              ${PROJECTS_JSON}
+      SELF_URL:                   ${SELF_URL}
     networks:
       - traefik-public
     labels:
@@ -2744,10 +3015,11 @@ networks:
 | `JIRA_TOKEN` | API token |
 | `GH_APP_ID` | numeric App id |
 | `GH_APP_PRIVATE_KEY` | PEM contents, newlines preserved |
-| `GH_INSTALLATION_TOKEN` | v1: long-lived installation token (rotate manually). Post-demo: replace with JWT exchange. |
+| `GH_APP_INSTALLATION_ID` | numeric installation id (per target-repo-owning org). Dispatcher mints JWT + exchanges for installation tokens on demand; no long-lived token to rotate. |
 | `HMAC_SIGNING_KEY` | random 32 bytes, base64 or hex |
 | `JIRA_WEBHOOK_SECRET` | shared secret for webhook sig verification |
 | `GH_WEBHOOK_SECRET` | shared secret for GH webhook sig verification |
+| `SELF_URL` | public HTTPS URL of this dispatcher, e.g. `https://dispatcher.yose.tld`. Used as `dispatcher_url` workflow input. |
 | `PROJECTS_JSON` | JSON array, one entry per Jira project (see spec §"Config") |
 
 ## Deploy

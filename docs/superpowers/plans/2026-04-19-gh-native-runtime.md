@@ -351,9 +351,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
-      contents: write
-      issues: write
-      pull-requests: write
+      contents: write        # push branches
+      issues: write          # comment, label, close
+      pull-requests: write   # open, review, merge
+      statuses: write        # commit-status writes (if the engine posts any)
+      checks: write          # check-run annotations (if the engine posts any)
     steps:
       - uses: actions/checkout@v4
         with:
@@ -383,7 +385,7 @@ Rationale:
 - `workflow_call` makes it reusable from any consumer repo.
 - `permissions` scoped to what the engine needs (issues/PRs/contents).
 - MLflow secrets optional — MLflow subscriber activates only when `MLFLOW_TRACKING_URI` is set.
-- `uv tool install ... a2sdlc-engine` uses the package name we'll establish in Phase 0; if Phase 0 is skipped the command installs from the root `pyproject.toml` ("a2sdlc") — adjust the `--from` URL accordingly.
+- `uv tool install --from '<git-url>' a2sdlc-engine` — the trailing token is the **package name**, not a URL. If Phase 0 was done, the distribution is `a2sdlc-engine`. If Phase 0 was skipped, keep the root-level package name `a2sdlc` (i.e. `uv tool install --from '<git-url>' a2sdlc`). The `--from` URL is the same either way.
 
 - [ ] **Step 2: Manual-verify YAML parses**
 
@@ -407,9 +409,9 @@ git commit -m "ci: reusable workflow run-native.yml for Mode 2"
 
 ```yaml
 # .github/workflows/unblock-next.yml
-# Reusable workflow: when an issue closes, label any issues whose
-# "## Blocked by" tasklist is fully satisfied with `agent`, which kicks
-# off the pipeline for them via run-native.yml.
+# Reusable workflow: when an issue closes, use GH's native tasklist
+# relationships (`trackedInIssues`) to find dependents and label them
+# `agent` when ALL their tracked issues are closed.
 
 name: a2sdlc — unblock next
 
@@ -422,46 +424,46 @@ jobs:
     permissions:
       issues: write
     steps:
-      - uses: actions/checkout@v4
       - name: Apply agent label to newly-unblocked issues
         env:
           GH_TOKEN: ${{ github.token }}
           CLOSED_ISSUE: ${{ github.event.issue.number }}
-          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          NAME: ${{ github.event.repository.name }}
         run: |
           set -euo pipefail
 
-          # List all open issues with a ## Blocked by section referencing the closed issue.
-          mapfile -t CANDIDATES < <(
-            gh issue list --repo "$REPO" --state open --limit 200 \
-              --json number,body \
-              --jq ".[] | select(.body | test(\"## Blocked by\")) | select(.body | test(\"#${CLOSED_ISSUE}\\b\")) | .number"
-          )
+          # 1) Find issues that track the just-closed one (native tasklist backref).
+          TRACKED_IN=$(gh api graphql -f query='
+            query($owner:String!,$name:String!,$num:Int!) {
+              repository(owner:$owner, name:$name) {
+                issue(number:$num) {
+                  trackedInIssues(first:50) { nodes { number state } }
+                }
+              }
+            }' -F owner="$OWNER" -F name="$NAME" -F num="$CLOSED_ISSUE" \
+            --jq '.data.repository.issue.trackedInIssues.nodes[] | select(.state=="OPEN") | .number')
 
-          if [ "${#CANDIDATES[@]}" -eq 0 ]; then
-            echo "No candidates track #${CLOSED_ISSUE}."
+          if [ -z "$TRACKED_IN" ]; then
+            echo "No open issues track #${CLOSED_ISSUE}."
             exit 0
           fi
 
-          for N in "${CANDIDATES[@]}"; do
-            body=$(gh issue view "$N" --repo "$REPO" --json body --jq .body)
-            # Extract the Blocked by section, gather all "#<num>" refs within it.
-            blockers=$(printf '%s\n' "$body" | awk '
-              /^## Blocked by/ {inblk=1; next}
-              /^## / && inblk {inblk=0}
-              inblk { while (match($0, /#[0-9]+/)) { print substr($0, RSTART+1, RLENGTH-1); $0 = substr($0, RSTART+RLENGTH) } }
-            ')
-            all_closed=1
-            for B in $blockers; do
-              state=$(gh issue view "$B" --repo "$REPO" --json state --jq .state || echo "OPEN")
-              if [ "$state" != "CLOSED" ]; then
-                all_closed=0
-                break
-              fi
-            done
-            if [ "$all_closed" -eq 1 ]; then
+          # 2) For each dependent, check ALL its tracked issues are CLOSED.
+          for N in $TRACKED_IN; do
+            ALL_CLOSED=$(gh api graphql -f query='
+              query($owner:String!,$name:String!,$num:Int!) {
+                repository(owner:$owner, name:$name) {
+                  issue(number:$num) {
+                    trackedIssues(first:50) { nodes { state } }
+                  }
+                }
+              }' -F owner="$OWNER" -F name="$NAME" -F num="$N" \
+              --jq '[.data.repository.issue.trackedIssues.nodes[].state] | all(.=="CLOSED")')
+
+            if [ "$ALL_CLOSED" = "true" ]; then
               echo "#$N fully unblocked — labelling 'agent'"
-              gh issue edit "$N" --repo "$REPO" --add-label "agent"
+              gh issue edit "$N" --repo "$OWNER/$NAME" --add-label "agent"
             else
               echo "#$N still has open blockers, skipping"
             fi
@@ -469,9 +471,10 @@ jobs:
 ```
 
 Rationale:
-- Uses `gh` CLI (preinstalled on GH Actions runners) — no additional setup.
-- Parses the `## Blocked by` markdown section with awk (the native tasklist format).
-- Applies `agent` label (= the engine's SPEC trigger) only when every blocker is `CLOSED`.
+- Uses **GH's native tasklist API** (`trackedIssues` / `trackedInIssues` via GraphQL). These are the official relationships behind the `- [ ]` checklist UX on issues — robust against code fences, heading typos, renames.
+- Two tiny queries per closed issue; no body parsing anywhere.
+- Applies `agent` label (the engine's SPEC trigger) only when every dependency is `CLOSED`.
+- Fallback: if the target repo uses `## Blocked by` markdown references instead of GH tasklists, this workflow will find nothing. The shaping skill (Task 3.1) always emits tasklists, so the happy path works. Users adopting this manually must use GH's checklist-reference feature.
 
 - [ ] **Step 2: Commit**
 
@@ -587,9 +590,17 @@ description: Shape a feature milestone into a dependency graph of GitHub Issues.
 5. On approval:
    - Create the epic issue (`gh issue create`) with a summary + a tasklist
      pointing at the stories.
-   - Create each story issue. Record the assigned issue numbers.
-   - Second pass: edit each story body to replace `#?` placeholders with the
-     real numbers in its `## Blocked by` section.
+   - Run `scripts/create-issues.sh <pitches-dir> <owner/repo>` — creates each
+     story, writes `<pitches-dir>/pitches.json` mapping slug → issue_number.
+   - Back-patch `#?` placeholders in each created issue:
+     ```bash
+     # Example for one story body that had "- [ ] #?auth-slug":
+     NUM=$(jq -r '."auth-slug"' pitches.json)
+     gh issue edit <STORY_NUM> --repo <owner/repo> \
+       --body "$(gh issue view <STORY_NUM> --repo <owner/repo> --json body --jq .body \
+         | sed "s/#?auth-slug/#${NUM}/g")"
+     ```
+     (The skill iterates this for every `#?slug` placeholder in every story.)
    - Apply the `agent` label to the root issue(s) (those with no blockers).
 
 ## Scripts
