@@ -99,6 +99,7 @@ def dispatch_command(
     review_adapter = GitHubReviewAdapter(repo)
 
     from a2sdlc.adapters.git import LocalGitAdapter  # noqa: PLC0415
+    from a2sdlc.adapters.subscriber.gh_comment import GhCommentSubscriber  # noqa: PLC0415
     from a2sdlc.assembly.wire import build_progress_state  # noqa: PLC0415
     from a2sdlc.pipeline.runner import SdkStageRunner  # noqa: PLC0415
 
@@ -114,6 +115,9 @@ def dispatch_command(
         config=config,
         project_root=root,
         logger=logging.getLogger("a2sdlc.pipeline.dispatch"),
+        make_comment_subscriber=lambda comment: GhCommentSubscriber(
+            comment, progress_state
+        ),
     )
 
     try:

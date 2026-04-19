@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,7 +27,7 @@ from a2sdlc.domain.models import (
     strip_status_block,
 )
 from a2sdlc.lifecycle.pr import PRLifecycle
-from a2sdlc.domain.progress import ProgressState
+from a2sdlc.domain.progress import ProgressState, Subscriber
 from a2sdlc.domain.progress_format import (
     context_window_for_model,
     format_error,
@@ -41,7 +42,13 @@ from a2sdlc.lifecycle.state import StateManager
 
 @dataclass
 class DispatchContext:
-    """All external dependencies — injected, not constructed."""
+    """All external dependencies — injected, not constructed.
+
+    ``make_comment_subscriber`` is a factory the CLI supplies so dispatch
+    can register a comment-driven progress subscriber once the comment
+    handle exists. ``None`` means no progress-driven comment edits (direct
+    start/update/finalize calls still happen via ``CommentManager``).
+    """
 
     work: WorkAdapter
     git: GitAdapter
@@ -52,6 +59,7 @@ class DispatchContext:
     project_root: Path
     logger: logging.Logger
     run_id: str | None = None
+    make_comment_subscriber: Callable[[CommentManager], Subscriber] | None = None
 
 
 async def dispatch(ctx: DispatchContext) -> DispatchResult:
@@ -183,11 +191,9 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
     comment.start(target_stage.value)
 
     # Register the comment-driving subscriber now that we have a comment handle.
-    # This is the one place dispatch.py knows about a specific subscriber, because
-    # the comment lifecycle is intrinsically dispatch-scoped.
-    from a2sdlc.adapters.subscriber.gh_comment import GhCommentSubscriber  # noqa: PLC0415
-
-    ctx.progress_state.subscribe(GhCommentSubscriber(comment, ctx.progress_state))
+    # Dispatch doesn't know which subscriber class — the CLI supplies a factory.
+    if ctx.make_comment_subscriber is not None:
+        ctx.progress_state.subscribe(ctx.make_comment_subscriber(comment))
 
     # 7.5 Load stage config early so stage_start has model/max_turns even for MERGE.
     stage_config = load_stage_config(target_stage.value, ctx.config)

@@ -26,6 +26,7 @@ from a2sdlc.adapters.factory import (
     build_work_adapter,
 )
 from a2sdlc.adapters.review import LocalNoopReviewAdapter
+from a2sdlc.adapters.subscriber.gh_comment import GhCommentSubscriber
 from a2sdlc.assembly.wire import build_progress_state
 from a2sdlc.config import load_config_file
 from a2sdlc.domain.exceptions import BlockedError
@@ -170,6 +171,9 @@ def _run_stage_impl(
         config=cfg,
         project_root=project_root,
         logger=logging.getLogger("a2sdlc.pipeline.dispatch"),
+        make_comment_subscriber=lambda comment: GhCommentSubscriber(
+            comment, progress_state
+        ),
     )
 
     result: DispatchResult | None = None
