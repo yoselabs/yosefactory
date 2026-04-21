@@ -270,12 +270,15 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
                         )
 
                 ctx.git.sync_with_base(base)
-                # Strip per-ticket runtime (state.json, logs/, handover/)
-                # before merging — otherwise squash carries them to base and
-                # next ticket inherits stale pr_number / stage data.
-                if ctx.git.strip_runtime():
-                    ctx.git.push()
                 pr_lifecycle.merge(pr_number)
+                # Post-merge cleanup on base: squash carried runtime
+                # artifacts (state.json, logs/, handover/) onto base — drop
+                # them so the next ticket checked out from base doesn't
+                # inherit stale pr_number / stage data.
+                try:
+                    ctx.git.cleanup_base(base)
+                except Exception:  # noqa: BLE001
+                    ctx.logger.warning("dispatch.base_cleanup_failed", exc_info=True)
                 comment.finalize("\u2705 Merged")
                 ctx.work.set_done_label(event.key)
                 ctx.logger.info("dispatch.merged", extra={"pr": pr_number})

@@ -459,8 +459,8 @@ class TestProceedRouting:
         assert (await dispatch(ctx)).stage == StageName.MERGE
 
     @pytest.mark.asyncio
-    async def test_merge_strips_runtime_artifacts_before_merging(self) -> None:
-        """MERGE must strip per-ticket runtime so squash-merge doesn't pollute base."""
+    async def test_merge_cleans_base_after_merging(self) -> None:
+        """MERGE must clean up runtime artifacts on base AFTER squash-merge."""
         import json
 
         state = json.dumps(
@@ -493,4 +493,4 @@ class TestProceedRouting:
         )
         result = await dispatch(ctx)
         assert result.stage == StageName.MERGE
-        assert git.runtime_strips == 1
+        assert git.base_cleanups == 1

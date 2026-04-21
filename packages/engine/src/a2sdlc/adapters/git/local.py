@@ -94,25 +94,39 @@ class LocalGitAdapter:
         state_path.parent.mkdir(parents=True, exist_ok=True)
         state_path.write_text(data)
 
-    def strip_runtime(self) -> bool:
+    def cleanup_base(self, base: str) -> bool:
         # Runtime paths under .a2sdlc/ that are per-ticket/per-run and must
-        # not propagate to the base branch on merge.
+        # not accumulate on the base branch.
         runtime_paths = [
             ".a2sdlc/state.json",
             ".a2sdlc/logs",
             ".a2sdlc/handover",
         ]
-        any_existed = False
-        for rel in runtime_paths:
-            abs_path = self._root / rel
-            if abs_path.exists():
-                any_existed = True
-                # `-r --ignore-unmatch` handles both files and dirs; tolerate
-                # missing entries so the call is idempotent.
-                self._repo.git.rm("-rf", "--ignore-unmatch", rel)
-        if not any_existed or not self._repo.is_dirty():
-            return False
-        self._repo.git.commit(
-            "-m", "chore(a2sdlc): strip runtime artifacts before merge"
-        )
-        return True
+        # Checkout base, pull, look for runtime artifacts. Use a detached
+        # HEAD path so we don't disturb the caller's branch state beyond
+        # returning to it at the end.
+        caller_branch = self._repo.active_branch.name
+        try:
+            self._repo.git.fetch("origin", base)
+            self._repo.git.checkout(base)
+            self._repo.git.pull("origin", base, "--ff-only")
+
+            any_existed = False
+            for rel in runtime_paths:
+                abs_path = self._root / rel
+                if abs_path.exists():
+                    any_existed = True
+                    self._repo.git.rm("-rf", "--ignore-unmatch", rel)
+            if not any_existed or not self._repo.is_dirty():
+                return False
+            self._repo.git.commit(
+                "-m", "chore(a2sdlc): strip runtime artifacts from base"
+            )
+            self._repo.git.push("origin", base)
+            return True
+        finally:
+            # Best-effort: return to the caller's branch even on error.
+            try:
+                self._repo.git.checkout(caller_branch)
+            except GitCommandError:
+                pass

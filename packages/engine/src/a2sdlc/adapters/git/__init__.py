@@ -15,16 +15,20 @@ class GitAdapter(Protocol):
     def push(self) -> None: ...
     def read_state(self) -> str | None: ...
     def write_state(self, data: str) -> None: ...
-    def strip_runtime(self) -> bool:
-        """Remove transient per-ticket runtime files from the current branch.
+    def cleanup_base(self, base: str) -> bool:
+        """Remove per-ticket runtime files from the base branch and push.
 
-        Deletes `.a2sdlc/state.json`, `.a2sdlc/logs/`, `.a2sdlc/handover/` and
-        commits the deletion. Called before the final squash-merge so runtime
-        noise never reaches the base branch (and thus never leaks into the
-        next ticket checked out from base). `.a2sdlc/config.yaml` and
-        `.a2sdlc/prompts/` are project config and stay.
+        Deletes `.a2sdlc/state.json`, `.a2sdlc/logs/`, `.a2sdlc/handover/`
+        from the base branch's tip. Called AFTER a successful squash-merge
+        so leaked runtime artifacts never accumulate on base (and thus
+        never leak into the next ticket checked out from base).
+        `.a2sdlc/config.yaml` and `.a2sdlc/prompts/` are project config and
+        stay.
 
-        Returns True if a deletion commit was produced.
+        Running this post-merge (rather than pre-merge) keeps branch state
+        intact if `pr_lifecycle.merge` fails so the stage can be retried.
+
+        Returns True if a cleanup commit was pushed.
         """
         ...
 
