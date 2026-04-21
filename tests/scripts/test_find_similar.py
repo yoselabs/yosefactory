@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import textwrap
 from pathlib import Path
 
@@ -248,3 +249,61 @@ def test_group_sorted_by_size_desc_then_alpha() -> None:
     ]
     groups = fs.group_items(items)
     assert [g.normalized_name for g in groups] == ["zulu", "alpha"]
+
+
+def test_discover_python_files(tmp_path: Path) -> None:
+    # Simulate packages/*/src/... layout
+    _write(tmp_path, "packages/engine/src/a2sdlc/stage.py", "def run(): ...")
+    _write(tmp_path, "packages/engine/src/a2sdlc/__pycache__/x.py", "def x(): ...")
+    _write(tmp_path, "packages/engine/src/a2sdlc/gen.generated.py", "def g(): ...")
+    _write(tmp_path, "packages/dispatcher/src/a2sdlc_dispatcher/d.py", "def d(): ...")
+    _write(tmp_path, "tests/test_x.py", "def t(): ...")  # excluded
+    _write(tmp_path, "docs/x.py", "def x(): ...")  # excluded (not under packages/)
+
+    files = sorted(
+        p.relative_to(tmp_path).as_posix() for p in fs.discover_files(tmp_path)
+    )
+    assert files == [
+        "packages/dispatcher/src/a2sdlc_dispatcher/d.py",
+        "packages/engine/src/a2sdlc/stage.py",
+    ]
+
+
+def test_render_markdown_empty() -> None:
+    md = fs.render_markdown([])
+    assert "No similar-name clusters found" in md
+
+
+def test_render_markdown_with_groups() -> None:
+    g = fs.Group(
+        normalized_name="ticket",
+        similarity="normalized-match",
+        items=(
+            fs.Item("get_ticket", "a.py", 3, "function", "() -> Ticket"),
+            fs.Item("fetch_ticket_handler", "b.py", 9, "function", "() -> None"),
+        ),
+    )
+    md = fs.render_markdown([g])
+    assert "## Similar names found — 1 group, 2 items" in md
+    assert 'Group 1: "ticket"' in md
+    assert "a.py:3" in md
+    assert "b.py:9" in md
+    assert "[function]" in md
+
+
+def test_render_json_payload_shape() -> None:
+    g = fs.Group(
+        normalized_name="ticket",
+        similarity="normalized-match",
+        items=(
+            fs.Item("a", "x.py", 1, "function", "()"),
+            fs.Item("b", "y.py", 2, "function", "()"),
+        ),
+    )
+    payload = fs.render_json_payload([g])
+    assert payload["totalItems"] == 2
+    assert payload["groupCount"] == 1
+    assert payload["groups"][0]["normalized_name"] == "ticket"
+    assert {i["name"] for i in payload["groups"][0]["items"]} == {"a", "b"}
+    # Must be JSON-serializable
+    json.dumps(payload)

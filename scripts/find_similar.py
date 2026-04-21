@@ -9,9 +9,14 @@ Advisory only — always exits 0.
 
 from __future__ import annotations
 
+import argparse
 import ast
+import fnmatch
+import json
 import re
-from dataclasses import dataclass
+from collections.abc import Iterator
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -346,3 +351,106 @@ def group_items(items: list[Item]) -> list[Group]:
     ]
 
     return groups
+
+
+_EXCLUDE_GLOBS = (
+    "*/__pycache__/*",
+    "*/.venv/*",
+    "*/tests/*",
+    "*.generated.py",
+    "*/node_modules/*",
+)
+
+
+def _excluded(rel_path: str) -> bool:
+    return any(fnmatch.fnmatch(rel_path, pat) for pat in _EXCLUDE_GLOBS)
+
+
+def discover_files(root: Path) -> list[Path]:
+    out: list[Path] = []
+    for pkg_src in root.glob("packages/*/src"):
+        for f in pkg_src.rglob("*.py"):
+            rel = f.relative_to(root).as_posix()
+            if _excluded(rel):
+                continue
+            out.append(f)
+    return sorted(out)
+
+
+def render_markdown(groups: list[Group]) -> str:
+    total_items = sum(len(g.items) for g in groups)
+    lines: list[str] = []
+    s_groups = "" if len(groups) == 1 else "s"
+    s_items = "" if total_items == 1 else "s"
+    lines.append(
+        f"## Similar names found — {len(groups)} group{s_groups}, {total_items} item{s_items}"
+    )
+    lines.append("")
+    for idx, g in enumerate(groups, start=1):
+        lines.append(
+            f'### Group {idx}: "{g.normalized_name}" ({g.similarity}, {len(g.items)})'
+        )
+        for it in g.items:
+            lines.append(f"- **{it.name}** [{it.kind}] `{it.signature}`")
+            lines.append(f"  `{it.path}:{it.line}`")
+        lines.append("")
+    if not groups:
+        lines.append("_No similar-name clusters found._")
+        lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+def render_json_payload(groups: list[Group]) -> dict:
+    return {
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "totalItems": sum(len(g.items) for g in groups),
+        "groupCount": len(groups),
+        "groups": [
+            {
+                "normalized_name": g.normalized_name,
+                "similarity": g.similarity,
+                "items": [asdict(it) for it in g.items],
+            }
+            for g in groups
+        ],
+    }
+
+
+def _iter_items(root: Path) -> Iterator[Item]:
+    for f in discover_files(root):
+        yield from extract_from_file(f, root=root)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--json", action="store_true", help="suppress markdown output")
+    parser.add_argument("--markdown", action="store_true", help="suppress json output")
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=Path.cwd(),
+        help="project root (defaults to cwd)",
+    )
+    ns = parser.parse_args(argv)
+
+    want_json = not ns.markdown or ns.json
+    want_markdown = not ns.json or ns.markdown
+
+    items = list(_iter_items(ns.root))
+    groups = group_items(items)
+
+    if want_markdown:
+        print(render_markdown(groups), end="")  # noqa: T201
+
+    if want_json:
+        out = ns.root / ".similar-report.json"
+        payload = render_json_payload(groups)
+        out.write_text(json.dumps(payload, indent=2) + "\n")
+        if want_markdown:
+            print(f"\n[find-similar] Wrote {out.relative_to(ns.root)}")  # noqa: T201
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
