@@ -74,8 +74,14 @@ def test_mlflow_telemetry_reuses_existing_session(tmp_path: Path) -> None:
     assert len(parent_runs) == 1
 
 
-def test_mlflow_telemetry_verify_reachable_raises_on_bad_uri() -> None:
-    # localhost:1 fails immediately with ECONNREFUSED on macOS — no DNS round-trip.
+def test_mlflow_telemetry_verify_reachable_raises_on_bad_uri(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _boom(*_a: object, **_k: object) -> None:
+        raise RuntimeError("simulated mlflow backend failure")
+
+    monkeypatch.setattr(mlflow, "set_experiment", _boom)
+
     t = MlflowTelemetry(tracking_uri="http://localhost:1/", experiment_name="x")
     with pytest.raises(MlflowUnreachableError):
         t.verify_reachable()
@@ -110,6 +116,10 @@ def test_factory_returns_mlflow_when_env_set(
 def test_factory_raises_on_unreachable_backend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    def _boom(*_a: object, **_k: object) -> None:
+        raise RuntimeError("simulated mlflow backend failure")
+
+    monkeypatch.setattr(mlflow, "set_experiment", _boom)
     monkeypatch.setenv("MLFLOW_TRACKING_URI", "http://localhost:1/")
     from a2sdlc.evaluation.telemetry import MlflowUnreachableError, telemetry_from_env
 

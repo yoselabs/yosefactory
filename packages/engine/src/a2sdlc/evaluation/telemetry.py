@@ -13,7 +13,7 @@ import os
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Protocol, cast, runtime_checkable
 
 
 class MlflowUnreachableError(RuntimeError):
@@ -169,20 +169,22 @@ class MlflowTelemetry:
 # ── Factory (SSOT for MLFLOW_TRACKING_URI) ────────────────────────────
 
 
-def telemetry_from_env(experiment_name: str) -> NoopTelemetry | MlflowTelemetry:
+def telemetry_from_env(experiment_name: str) -> Telemetry:
     """Return an MLflow-backed telemetry if env is configured, else a null.
 
     This is the **only** place in a2sdlc that reads ``MLFLOW_TRACKING_URI``.
     """
     uri = os.environ.get("MLFLOW_TRACKING_URI")
     if not uri:
-        return NoopTelemetry()
-    t = MlflowTelemetry(tracking_uri=uri, experiment_name=experiment_name)
-    t.verify_reachable()
-    return t
+        # cast: ty doesn't infer structural Protocol conformance for concrete classes
+        return cast(Telemetry, NoopTelemetry())
+    m = MlflowTelemetry(tracking_uri=uri, experiment_name=experiment_name)
+    m.verify_reachable()
+    # cast: ty doesn't infer structural Protocol conformance for concrete classes
+    return cast(Telemetry, m)
 
 
-def local_fallback_telemetry(experiment_name: str) -> MlflowTelemetry:
+def local_fallback_telemetry(experiment_name: str) -> Telemetry:
     """For ``a2sdlc run-stage`` local dev UX: env URI if set, else ~/.a2sdlc/mlflow.
 
     Never returns ``NoopTelemetry`` — local dev expects *some* MLflow store by
@@ -192,6 +194,7 @@ def local_fallback_telemetry(experiment_name: str) -> MlflowTelemetry:
         os.environ.get("MLFLOW_TRACKING_URI")
         or f"file://{Path.home() / '.a2sdlc' / 'mlflow'}"
     )
-    t = MlflowTelemetry(tracking_uri=uri, experiment_name=experiment_name)
-    t.verify_reachable()
-    return t
+    m = MlflowTelemetry(tracking_uri=uri, experiment_name=experiment_name)
+    m.verify_reachable()
+    # cast: ty doesn't infer structural Protocol conformance for concrete classes
+    return cast(Telemetry, m)
