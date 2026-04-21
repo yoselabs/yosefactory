@@ -147,12 +147,11 @@ class MlflowTelemetry:
 
         mlflow.set_experiment(self._experiment)
         run_name = f"session:{session_id}"
-        # Parallel-run race: two callers with the same session_id can both hit
-        # search_runs before either has created a parent, and both then create
-        # duplicate parents named f"session:{session_id}". Mode 2 + the
-        # feedback_parallel_runs pattern (same ticket fanned out to multiple
-        # GHA jobs) can trigger this. Follow-up: isolate parallel runs by
-        # deriving the session_id from run_id, e.g. f"{ticket_key}:{run_id}".
+        # session_id is now scoped per-run by dispatch (f"{ticket_key}:{run_id}"
+        # in GHA, f"{ticket_key}:{uuid4}" locally), so parallel A/B runs no
+        # longer collide. The search_runs reuse still matters for multi-stage
+        # reconnection within a single run (SPEC stage opens session, MERGE
+        # stage reconnects to the same parent).
         existing = mlflow.search_runs(
             experiment_names=[self._experiment],
             filter_string=f"tags.mlflow.runName = '{run_name}'",

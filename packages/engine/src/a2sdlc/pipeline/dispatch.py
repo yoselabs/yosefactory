@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -13,7 +14,7 @@ from a2sdlc.adapters.review import ReviewAdapter
 from a2sdlc.adapters.runner import StageRunner
 from a2sdlc.adapters.work import WorkAdapter
 from a2sdlc.lifecycle.comment import CommentManager
-from a2sdlc.config import ProjectConfig, get_session_id, load_stage_config
+from a2sdlc.config import ProjectConfig, load_stage_config
 from a2sdlc.pipeline.context import assemble_context, pick_handover
 from a2sdlc.domain.directives import parse_directives
 from a2sdlc.domain.exceptions import BlockedError, SkipEvent
@@ -216,13 +217,11 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
 
     # 7.5 Load stage config early so stage_start has model/max_turns even for MERGE.
     stage_config = load_stage_config(target_stage.value, ctx.config)
-    session_id = ctx.run_id or get_session_id(event.key, target_stage.value)
+    # Scope MLflow parent per-run so A/B fan-outs on one ticket don't collide.
+    session_id = f"{event.key}:{ctx.run_id or uuid.uuid4()}"
     # Telemetry wraps only actually-attempted stages. Pre-execution early
-    # returns above (SkipEvent, feedback_already_addressed, duplicate_run_id,
-    # circuit_breaker, git_blocked) intentionally produce no MLflow runs —
-    # creating empty session/stage runs for "we didn't run anything" paths
-    # would pollute the experiment. Tags below fire for every path that
-    # reaches actual execution.
+    # returns (SkipEvent, feedback_already_addressed, duplicate_run_id,
+    # circuit_breaker, git_blocked) intentionally produce no MLflow runs.
     telemetry = ctx.telemetry or NoopTelemetry()
 
     with (
