@@ -45,10 +45,11 @@ docs/mode2/example-workflows/a2sdlc-unblock.yml → .github/workflows/a2sdlc-unb
 Commit, push. No other per-repo config is required unless you want to
 override gates (see §5).
 
-**Important: the issues trigger must include `closed`.** The engine
-treats a closed issue as the terminal done signal and runs cleanup. If
-`closed` is omitted, merged PRs won't strip `stage:*` labels. The shipped
-example already has it.
+**Important: the issues trigger must include `closed`.** When the
+engine's auto-merge (or a human) closes an issue, the engine handles
+that event by stripping `stage:*` and `agent` labels off the closed
+ticket. Without the `closed` subscription those labels linger on the
+board even though the work is done. The shipped example already has it.
 
 ## 4. Drive a ticket
 
@@ -141,6 +142,6 @@ now the done signal (matches Jira's native "Done" status).
 | Nothing runs after labelling `agent` | Required secrets unset, or App not installed on the repo. Check Actions tab for workflow startup errors. |
 | Engine self-cancels on merge APPROVE | Expected under AUTO mode — App can't APPROVE its own PR. Engine merges anyway via the stage comment's verdict. |
 | Unblock workflow doesn't trigger dependents | `## Blocked by` header mistyped or casing differs — it's matched exactly. |
-| Stage labels linger after merge | Workflow's `issues:` trigger missing `closed` — see §3. |
+| `stage:*` / `agent` labels linger on a closed issue | Workflow's `issues:` trigger missing `closed` — see §3. |
 | MLflow empty | Optional secrets unset; engine runs without MLflow. |
 | Engine re-runs same stage on every event | Idempotency relies on `ctx.run_id`; check that the workflow forwards `GITHUB_RUN_ID` (the shipped example does). |
