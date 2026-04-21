@@ -202,6 +202,12 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
     # 7.5 Load stage config early so stage_start has model/max_turns even for MERGE.
     stage_config = load_stage_config(target_stage.value, ctx.config)
     session_id = ctx.run_id or get_session_id(event.key, target_stage.value)
+    # Telemetry wraps only actually-attempted stages. Pre-execution early
+    # returns above (SkipEvent, feedback_already_addressed, duplicate_run_id,
+    # circuit_breaker, git_blocked) intentionally produce no MLflow runs —
+    # creating empty session/stage runs for "we didn't run anything" paths
+    # would pollute the experiment. Tags below fire for every path that
+    # reaches actual execution.
     telemetry = ctx.telemetry or NoopTelemetry()
 
     with (

@@ -76,8 +76,33 @@
 - [ ] Fix: update `setup_logging()` formatter to include extra fields in JSON output
 - [ ] All warnings and errors from adapters should be visible in CI logs for tracing
 
+## Idea: Agent Record block inside issue body
+
+Cross-platform ticket layout (GitHub/Jira/GitLab — all render markdown checklists) where the issue body has two zones:
+
+- **Human zone** (contract): pinned Gherkin scenario, artifact links (spec.md, plan.md, PR), scope/rabbit-holes metadata. Read-only for agents.
+- **Agent zone** (delimited by `<!-- agent-record:start -->` / `<!-- agent-record:end -->`): agent-owned, contains:
+  - **Stages** fixed list — `[ ] Spec / Plan / Implement / Review` — ticked as stages complete
+  - **Implementation tasks** append-as-discovered during plan + impl, checked when done — gives live visibility into progress without separate sub-issues
+
+Rules:
+- Agent reads body, mutates **only** between the markers, preserves everything else verbatim
+- Timestamps + narrative go in comments (append-only), not body — keeps body diff clean
+- Discovery itself is the "appearing" signal; skip a separate in-progress state (noisy, collision-prone)
+- Body footer carries the contract: `<!-- agent-contract: body outside agent-record is human-authored. Agents: do NOT edit. -->`
+
+Context: convergent industry practice (Copilot coding agent, Claude Code Action, Port, SpecKit) is "human owns body, agent comments + labels + checklist." This formalizes the agent-writable surface so sdlc agents can report stage + live task progress inside the same ticket without risking collisions with human edits. Cross-platform because markdown checklists work everywhere; Jira native sub-tasks are heavier and platform-locked — upgrade later if needed.
+
+Related: BMad's "Agent Record" section in story files, but real-time + tracker-native instead of file-based.
+
 ## Known Issues
 
 - [ ] `git add -u` equivalent needed — commit_artifacts takes explicit paths but we might miss files the agent created
 - [ ] Concurrency: if two label events fire simultaneously for the same issue, both jobs run
 - [ ] No `needs-input` label management in dispatch — agent sets it via prompt, engine doesn't verify
+
+## Telemetry follow-ups (post-Mode-2-smoke)
+
+- [ ] Mode 2 parallel-run race: `MlflowTelemetry.session` duplicates parent runs when two jobs share a `session_id`. Derive session id from `run_id` (ticket_key:run_id) to isolate parallel A/B runs. See `feedback_parallel_runs` memory + the comment in `packages/engine/src/a2sdlc/evaluation/telemetry.py`.
+- [ ] `cli/dispatch.py` Mode 2 branch doesn't set `run_id` on `DispatchContext` — check_idempotency is skipped. Pre-existing; surface was widened by telemetry wiring which now keys off session_id.
+- [ ] `MlflowUnreachableError` surfaces as a bare Python traceback through Typer. Wrap in `dispatch_command` and re-raise as `typer.BadParameter` for cleaner CLI UX on misconfigured env.
