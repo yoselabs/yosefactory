@@ -69,6 +69,6 @@ jobs:
       - uses: astral-sh/setup-uv@v4
       - name: Install engine
         run: |
-          uv tool install --from 'git+https://github.com/yoselabs/a2sdlc-engine@main' a2sdlc-engine
+          uv tool install --from 'git+https://github.com/yoselabs/a2sdlc@feat/mode2-smoke-telemetry#subdirectory=packages/engine' a2sdlc-engine
       - name: Dispatch
-        run: uv tool run a2sdlc dispatch
+        run: a2sdlc dispatch
