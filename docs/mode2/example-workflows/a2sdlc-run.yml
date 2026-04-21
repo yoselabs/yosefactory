@@ -6,7 +6,9 @@ name: a2sdlc
 
 on:
   issues:
-    types: [labeled]
+    # `closed` is required — the engine treats issue-closed as the
+    # terminal done signal and runs its cleanup path.
+    types: [labeled, closed]
   issue_comment:
     types: [created]
   pull_request:

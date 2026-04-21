@@ -299,22 +299,14 @@ run_id guard:
 
 ---
 
-### P1.4 · `gates: {merge: auto}` is undocumented for consumers
+### P1.4 · `gates: {merge: auto}` is undocumented for consumers ✅
 
-**Problem.** Default `GateConfig.merge = HUMAN`. Smoke repo needed
-manual `gates: {merge: auto}` in `.a2sdlc/config.yaml` for end-to-end
-automation. There's no docs page telling consumers this, nor the
-trade-off (AUTO skips branch-protection human approval checks — fine for
-trusted internal repos, scary for open source).
-
-**Fix.** Add a Mode 2 onboarding doc covering:
-- config.yaml required fields
-- gate mode trade-offs (HUMAN for production, AUTO for trusted-internal)
-- required secrets (A2SDLC_APP_ID, A2SDLC_APP_PRIVATE_KEY, CLAUDE_CODE_OAUTH_TOKEN, MLFLOW_*)
-- the App installation + permission list
-- a minimum-viable `a2sdlc-run.yml` consumer workflow
-
-**Size.** ~1 page of docs. Could be auto-generated from the config model.
+**Landed 2026-04-21.** `docs/mode2/README.md` rewritten as a consumer
+onboarding doc covering secrets (with the App-auto-resolves-installation
+note — no `A2SDLC_INSTALLATION_ID` needed), App permissions, gate mode
+tradeoffs (HUMAN vs AUTO, including the 422 self-review caveat), label
+state machine, and a troubleshooting table. Example workflow updated to
+include `closed` in `issues: types` so the engine's close-handler fires.
 
 ---
 
