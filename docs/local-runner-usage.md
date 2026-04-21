@@ -61,7 +61,7 @@ a2sdlc run-stage <stage> [--session <sid>] [--ticket <file>] [--no-track] <repo>
 | `<repo>`          | Path to the target repo (positional, required). |
 | `--session <sid>` | Session id. If omitted, inferred from the current branch (`a2sdlc/<sid>`), else a fresh ULID is generated. |
 | `--ticket <file>` | Path to a markdown ticket. Required on the first `spec` invocation; ignored afterwards (later stages read `.a2sdlc/ticket.md`). |
-| `--no-track`      | Skip MLflow logging. Useful for throwaway runs. Otherwise MLflow must be reachable at `~/.a2sdlc/mlflow` or the CLI exits before running. |
+| `--no-track`      | Skip MLflow logging entirely. Useful for throwaway runs. Without this flag, the store defaults to `~/.a2sdlc/mlflow` — override with `MLFLOW_TRACKING_URI` env var (pair with `MLFLOW_TRACKING_USERNAME` / `MLFLOW_TRACKING_PASSWORD` for authenticated remotes). |
 
 ## Session Model
 

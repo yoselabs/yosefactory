@@ -44,9 +44,12 @@ a2sdlc run-stage spec      --ticket ticket.md --session my-exp /path/to/repo
 a2sdlc run-stage implement --session my-exp /path/to/repo
 ```
 
-State lives on branch `a2sdlc/<session>`. Metrics stream to a local MLflow
-file store at `~/.a2sdlc/mlflow`. See
-[`docs/local-runner-usage.md`](docs/local-runner-usage.md) for full details.
+State lives on branch `a2sdlc/<session>`. Metrics stream to
+`$MLFLOW_TRACKING_URI` if set, otherwise a local file store at
+`~/.a2sdlc/mlflow`. CI workflows forward the standard `MLFLOW_*` secrets;
+the engine activates telemetry only when `MLFLOW_TRACKING_URI` is present.
+See [`docs/local-runner-usage.md`](docs/local-runner-usage.md) for full
+details.
 
 ## Docs
 
