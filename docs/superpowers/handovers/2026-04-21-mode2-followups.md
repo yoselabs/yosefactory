@@ -384,13 +384,15 @@ local runs get uuid4 so A/B locally also isolates. Claude SDK session
 resumption still uses `get_session_id(ticket, stage)` (runner.py) —
 deterministic-per-stage is correct for SDK resume.
 
-### P2.5 · Circuit breaker for runaway cost per ticket
+### P2.5 · Circuit breaker for runaway cost per ticket ✅
 
-No hard ceiling on accumulated spend per ticket. The existing review-cycle
-circuit breaker only catches loops in REVIEW stage. An implementation
-that keeps asking follow-up questions in SPEC could burn unbounded cost.
-Add `max_cost_usd_per_ticket` config (default $10? $25?); if
-`state.accumulated_cost_usd` exceeds, block stage with a clear comment.
+**Landed 2026-04-21.** `ProjectConfig.max_cost_usd_per_ticket` added
+(default $15.0 — roughly 5× a typical end-to-end ticket). Dispatch
+trips the breaker before stage execution: `mark_blocked` with
+`Cost ceiling: $X.XX >= $Y.YY per-ticket max` and returns. Implemented
+alongside the existing review-cycle breaker in new
+`pipeline/breakers.py` (small extraction, first slice of P1.6's dispatch
+decomposition). 8 unit tests cover both breakers.
 
 ---
 

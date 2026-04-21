@@ -41,6 +41,7 @@ from a2sdlc.stages import next_stage
 from a2sdlc.evaluation.telemetry import NoopTelemetry, Telemetry
 from a2sdlc.lifecycle.state import StateManager
 from a2sdlc.lifecycle.state_storage import GitFileStateStorage
+from a2sdlc.pipeline.breakers import check_cost_ceiling, check_review_cycles
 
 
 @dataclass
@@ -179,16 +180,14 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
         ctx.logger.info("dispatch.duplicate_run_id", extra={"run_id": ctx.run_id})
         return DispatchResult(stage=target_stage, error="duplicate_run_id")
 
-    # 5. Circuit breaker for review stage
-    if target_stage == StageName.REVIEW:
-        _cb_config = load_stage_config(target_stage.value, ctx.config)
-        cycles = state.review_cycles if state else 0
-        if cycles >= _cb_config.max_review_cycles:
-            reason = (
-                f"Circuit breaker: {cycles} review cycles "
-                f"exceeded max ({_cb_config.max_review_cycles})"
-            )
-            ctx.logger.error("dispatch.circuit_breaker", extra={"cycles": cycles})
+    # 5. Circuit breakers — review-cycle loop + per-ticket cost ceiling.
+    _stage_cfg = load_stage_config(target_stage.value, ctx.config)
+    for reason in (
+        check_review_cycles(target_stage, state, _stage_cfg),
+        check_cost_ceiling(state, ctx.config),
+    ):
+        if reason is not None:
+            ctx.logger.error("dispatch.circuit_breaker", extra={"reason": reason})
             ctx.work.mark_blocked(event.key, reason)
             return DispatchResult(stage=target_stage, blocked=True, error=reason)
 

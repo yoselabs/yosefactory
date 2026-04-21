@@ -90,6 +90,11 @@ class ProjectConfig(BaseModel):
     adapters: AdaptersConfig = Field(default_factory=AdaptersConfig)
     quality: QualityConfig = Field(default_factory=QualityConfig)
     gates: GateConfig = Field(default_factory=GateConfig)
+    # Hard ceiling on accumulated spend per ticket. The review-cycle
+    # breaker only catches REVIEW loops; a chatty SPEC could burn
+    # unbounded cost through QUESTIONS → proceed → QUESTIONS cycles.
+    # Default ~5× a typical end-to-end ticket cost (~$2-3).
+    max_cost_usd_per_ticket: float = 15.0
 
     @model_validator(mode="before")
     @classmethod
