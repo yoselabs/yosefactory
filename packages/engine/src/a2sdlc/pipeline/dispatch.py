@@ -157,15 +157,27 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
 
     self_answer = ctx.config.self_answer
 
-    # 3. Read state + idempotency check
+    # 3. Branch setup FIRST — state.json lives on the per-ticket branch, so
+    # the working tree must be on that branch before we try to read it.
     state_mgr = StateManager(ctx.git)
+    base = directives.base or ctx.config.default_base
+    branch = ctx.work.format_branch(event.key)
+    try:
+        ctx.git.setup_branch(branch, base)
+        ctx.logger.info("dispatch.branch_setup", extra={"branch": branch, "base": base})
+    except BlockedError as e:
+        ctx.logger.error("dispatch.git_blocked", extra={"reason": e.reason})
+        ctx.work.set_blocked(event.key, e.reason)
+        return DispatchResult(stage=target_stage, blocked=True, error=e.reason)
+
+    # 4. Read state + idempotency check (branch is now checked out)
     state = state_mgr.read_state()
 
     if ctx.run_id and state_mgr.check_idempotency(ctx.run_id):
         ctx.logger.info("dispatch.duplicate_run_id", extra={"run_id": ctx.run_id})
         return DispatchResult(stage=target_stage, error="duplicate_run_id")
 
-    # 4. Circuit breaker for review stage
+    # 5. Circuit breaker for review stage
     if target_stage == StageName.REVIEW:
         _cb_config = load_stage_config(target_stage.value, ctx.config)
         cycles = state.review_cycles if state else 0
@@ -177,17 +189,6 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
             ctx.logger.error("dispatch.circuit_breaker", extra={"cycles": cycles})
             ctx.work.set_blocked(event.key, reason)
             return DispatchResult(stage=target_stage, blocked=True, error=reason)
-
-    # 5. Branch setup
-    base = directives.base or (state.base_branch if state else ctx.config.default_base)
-    branch = ctx.work.format_branch(event.key)
-    try:
-        ctx.git.setup_branch(branch, base)
-        ctx.logger.info("dispatch.branch_setup", extra={"branch": branch, "base": base})
-    except BlockedError as e:
-        ctx.logger.error("dispatch.git_blocked", extra={"reason": e.reason})
-        ctx.work.set_blocked(event.key, e.reason)
-        return DispatchResult(stage=target_stage, blocked=True, error=e.reason)
 
     # 6. Draft PR creation (on spec stage if no PR exists yet)
     pr_lifecycle = PRLifecycle(ctx.review)
@@ -269,12 +270,9 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
                         )
 
                 ctx.git.sync_with_base(base)
-                # Strip per-ticket runtime artifacts (state.json, logs/,
-                # handover/) from the branch before merging. Otherwise a
-                # squash-merge lands them on base and subsequent tickets
-                # checked out from base inherit stale pr_number / stage data
-                # — observed during smoke when MERGE tried to merge a
-                # previous ticket's PR number instead of the current one.
+                # Strip per-ticket runtime (state.json, logs/, handover/)
+                # before merging — otherwise squash carries them to base and
+                # next ticket inherits stale pr_number / stage data.
                 if ctx.git.strip_runtime():
                     ctx.git.push()
                 pr_lifecycle.merge(pr_number)
