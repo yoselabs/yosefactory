@@ -20,7 +20,9 @@ jobs:
   dispatch:
     uses: yoselabs/a2sdlc/.github/workflows/run-native.yml@main
     secrets:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      A2SDLC_APP_ID: ${{ secrets.A2SDLC_APP_ID }}
+      A2SDLC_APP_PRIVATE_KEY: ${{ secrets.A2SDLC_APP_PRIVATE_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
       MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
       MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
