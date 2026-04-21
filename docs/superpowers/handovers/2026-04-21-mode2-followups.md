@@ -384,6 +384,29 @@ local runs get uuid4 so A/B locally also isolates. Claude SDK session
 resumption still uses `get_session_id(ticket, stage)` (runner.py) —
 deterministic-per-stage is correct for SDK resume.
 
+### P2.6 · Sound token probe in GitHubWorkAdapter
+
+**Why.** The original `ghs_`-prefix sniff in `cli/dispatch.py` was
+architecturally wrong (GitHub mechanics in the tracker-agnostic CLI
+layer) and logically wrong (App installation tokens share the `ghs_`
+prefix with the GHA default `secrets.GITHUB_TOKEN`, so the check false-
+positive'd on every correctly-configured workflow). Removed 2026-04-21.
+
+**Replacement design.**
+- Home: `GitHubWorkAdapter.__init__` (or `from_env` classmethod).
+- Probe: `GET /app` with the token → returns the authenticated App's
+  `id`. Compare against `A2SDLC_APP_ID` (requires piping that secret
+  into the engine env, currently only visible to the App-token-creation
+  step of the workflow).
+- Mismatch → raise a domain error that dispatch surfaces as a blocked
+  ticket, same as any other adapter-construction failure.
+- Skip when `A2SDLC_APP_ID` is unset (local runs, tests, future
+  non-App auth paths).
+
+**Size.** ~20 LOC in the adapter + workflow env additions + 2 tests.
+
+---
+
 ### P2.5 · Circuit breaker for runaway cost per ticket ✅
 
 **Landed 2026-04-21.** `ProjectConfig.max_cost_usd_per_ticket` added
