@@ -234,6 +234,7 @@ class TestMergePr:
         adapter = _make_adapter()
         mock_repo = MagicMock()
         mock_pr = MagicMock()
+        mock_pr.merged = False
         mock_repo.get_pull.return_value = mock_pr
         adapter._repo = mock_repo
 
@@ -246,12 +247,26 @@ class TestMergePr:
         adapter = _make_adapter()
         mock_repo = MagicMock()
         mock_pr = MagicMock()
+        mock_pr.merged = False
         mock_repo.get_pull.return_value = mock_pr
         adapter._repo = mock_repo
 
         adapter.merge_pr(42, method="merge")
 
         mock_pr.merge.assert_called_once_with(merge_method="merge")
+
+    def test_noop_when_pr_already_merged(self) -> None:
+        """Retry after successful merge must not crash on 405 — return cleanly."""
+        adapter = _make_adapter()
+        mock_repo = MagicMock()
+        mock_pr = MagicMock()
+        mock_pr.merged = True
+        mock_repo.get_pull.return_value = mock_pr
+        adapter._repo = mock_repo
+
+        adapter.merge_pr(42)
+
+        mock_pr.merge.assert_not_called()
 
 
 # ── Feedback: find_last_handover ────────────────────────────────────

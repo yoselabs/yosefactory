@@ -43,170 +43,229 @@ own PRs — GitHub returns 422 "Review Can not approve your own pull request".
 has 0 actual approvals, so branch-protection rules that require
 approvals would block auto-merge.
 
-**Current mitigation.** Smoke repo has no branch protection, so the
-engine-side `check_human_approval` is bypassed under `gates.merge=AUTO`.
-Works for smoke, would fail in any production repo with branch protection.
+**Current mitigation (partial).** Smoke repo has no branch protection so
+auto-merge succeeds; this session we also suppressed the APPROVE-422
+duplicate comment. The 422 is no longer fatal but the PR carries no GH
+approval artifact.
 
-**Options (ranked by ROI).**
-- **(c) Skip PR review API in Mode 2 entirely.** Engine verdict lives in
-  the stage comment on the issue; transition stage:review → stage:merge
-  directly based on it. Zero new secrets, works for Phase 2 (Jira has no
-  PR-review concept), loses the GitHub-native approval artifact (but you
-  get that from the PR being green + the engine's comment).
-- **(b) Dedicated service-account PAT.** Second secret in each consumer
-  repo, narrowly scoped to PR-review. Branch protection sees a real
-  approval. Heaviest setup.
-- **(a) Second reviewer App.** Cleanest auth model, but doubles the app
-  installation burden per consumer repo.
+**Direction shift (2026-04-21 review).** The engine is intended to be
+used as a drop-in stage in standalone projects where humans react to
+code reviews and see how the system works — so **keep the GH Review API
+integration**, don't skip it. The "human gate" flows through the Review
+API (human approve → engine proceeds). Therefore option (c) is rejected.
 
-**Recommendation.** Start with (c) as a config flag — it unblocks Phase 2
-immediately and can coexist with (b) later for repos with branch
-protection. Add `review.post_to_github: bool` to config (default True);
-skip the API call when False.
+**Remaining options.**
+- **(a) Second reviewer App.** Cleanest boundary — distinct identity
+  visible in the UI. Requires consumers to install two apps. Higher
+  onboarding friction; best UX long-term.
+- **(b) Dedicated service-account PAT.** Single extra secret per
+  consumer repo, narrowly scoped to pull-request:write.
+  Shows up as a real user review in the UI. Medium setup cost; easier
+  than (a) for early consumers.
 
-**Size.** ~30 LOC + test for the config switch.
+**Recommendation.** Ship (b) first as `secrets.A2SDLC_REVIEWER_TOKEN`.
+Engine uses the reviewer PAT exclusively for the `post_review` path; the
+App token continues to handle everything else. Consumers pick from
+(create a service account + PAT) vs (create a second App).
+Later: promote (a) for repos that want a bot identity that isn't a user.
 
----
+**Jira parity note.** Jira has no PR-review concept, so in Mode 1 the
+engine should still honor the verdict semantically (transition the
+ticket's Jira status) without calling post_review. `GitHubReviewAdapter`
+stays GH-specific; the tracker-agnostic interface just takes a verdict.
 
-### P0.3 · State storage: race conditions on concurrent MERGE
-
-**Problem.** Current design:
-- Per-ticket state.json lives on the ticket branch.
-- `cleanup_base` (post-merge) checks out base, removes the runtime file,
-  pushes.
-
-**Races that break this.**
-1. **Two tickets merging concurrently** → both call `cleanup_base`. One
-   pushes first; the second's push rejects with non-fast-forward. We catch
-   the exception and log a warning, but main ends up with the second
-   ticket's state.json until the next cleanup-capable merge.
-2. **Parallel A/B prompt runs on the same ticket** (documented use case per
-   `feedback_parallel_runs` memory) would share the same branch and fight
-   over state.json writes.
-
-**Cleaner designs (in order of effort).**
-- **Short-term, bounded:** detect rejection in `cleanup_base`, retry once
-  with `git pull --rebase`. One retry handles the typical race.
-- **Medium-term:** move state to a dedicated orphan branch
-  `a2sdlc/state/{ticket_key}`. Never merged, doesn't pollute main, survives
-  branch-delete. Git knows it; GitHub doesn't surface it on PR list.
-- **Long-term:** state in `refs/notes/a2sdlc`. Proper separation of code
-  history from pipeline bookkeeping. Requires explicit note fetch/push in
-  each stage. Clean but adds one new git concept to the engine.
-
-**Recommendation.** Short-term retry-with-rebase first (~10 LOC). Orphan
-branch when Phase 2 / Jira arrives — because Jira has no "base branch"
-concept at all, and the engine will need a tracker-agnostic state store
-anyway.
+**Size.** ~40 LOC + config + test. Plus consumer documentation.
 
 ---
 
-### P0.4 · Label ≡ state.json coherence problem
+### P0.3 · Concurrency & state storage
 
-**Problem.** Two sources of truth:
-- `stage:*` label on the issue (readable by humans, triggers workflows).
-- `state.json` on branch (read by engine, includes pr_number/cycles/cost).
+**Direction shift (2026-04-21).** The user raised a simpler question:
+why allow concurrent runs on the same ticket at all? Two runs both
+trying to produce the same spec would just overwrite each other. Prevent
+the concurrency and most of this problem disappears.
 
-They can disagree:
-- Engine writes state → pushes → sets label → failure between these leaves
-  state ahead of label or vice-versa.
-- Human cycles a label → engine re-runs stage → state may not advance if
-  early-return path is hit.
-- PR-#7-leak bug (ticket #8) was caused by the two disagreeing — label said
-  stage:merge, state said pr_number=7 from another ticket.
+**Concurrency semantics — three options.**
+- **(X) Single-flight per ticket, coalesce newer events.** GHA
+  `concurrency.cancel-in-progress: true` with a per-issue group. Newer
+  events cancel queued ones (not in-flight ones). Fix-retries work
+  because they arrive as new events after the old one was cancelled.
+- **(Y) Single-flight per ticket, queue newer events.** Current
+  behavior — `cancel-in-progress: false`. Safer (no cancelled work) but
+  lets stale events fire after resolution, which is the thrash path
+  from this smoke.
+- **(Z) Single-flight per ticket + engine-side event-coalescing.**
+  Engine checks "is there a newer event queued for this ticket?" at
+  entry and skips. Requires queue visibility GHA doesn't give us
+  directly.
 
-**Already listed as a TODO** ("State.json as authoritative") but deserves a
-sharper framing now:
+**Recommendation.** Flip to (X): `cancel-in-progress: true`, scoped per
+issue. Paired with P0.1 idempotency (which already landed — same
+event's trigger_id produces same run_id, so a cancelled-then-retried
+event is a true retry and gets deduped correctly). Fix-retries by the
+user (edit code, push, re-label) produce a new sha → new run_id →
+legitimate new run.
 
-**Three clean options.**
-- **(X) Label-as-source-of-truth, state as cache.** Engine reads label,
-  consults state only for accumulated stats. On mismatch, label wins.
-  Simplest. Loses pr_number/review_cycles durability on label-only pushes.
-- **(Y) State-as-source-of-truth, label as display.** Engine reads state,
-  writes label as a best-effort mirror. Label drift is cosmetic. Requires
-  reliable state storage (see P0.3).
-- **(Z) Single-source: stage + pr_number packed into the label.** e.g.
-  `stage:merge:pr-42`. Ugly but eliminates the split. Requires label
-  rewrites for pr_number updates — GH labels are slow.
+**State-storage design — Jira parity framing.**
 
-**Recommendation.** Pair with P0.3: if we move state off branches to orphan
-ref / notes, then state becomes durable and (Y) is clearly right. Deferring
-this decision until P0.3 lands.
+With the "no concurrent runs per ticket" assumption, the state-race
+shrinks. Two tickets finishing MERGE on the same base can still race on
+`cleanup_base` push — but that's a small, benign race (one warning log,
+next merge cleans up).
 
----
+The bigger issue is **tracker-agnostic state**. Today:
+- GitHub: state.json on per-ticket branch + labels on issue.
+- Jira: would need... what? Branches aren't a Jira concept. Labels
+  don't exist the same way (Jira has status + custom fields).
 
-### P0.5 · Error UX — tracebacks in CI instead of actionable comments
+**Clean abstraction.** Split what state.json holds today into:
+1. **Stage position** — which stage is "current". Tracker-native: GH
+   label, Jira status transition. Lives in the tracker.
+2. **Pipeline ledger** — pr_number, review_cycles, accumulated cost,
+   stage_run_id. Engine-internal bookkeeping, lives in engine-owned
+   storage.
 
-**Problem.** MERGE failure on ticket #10 produced:
-```
-Process completed with exit code 1.
-<full Python traceback, 80+ lines>
-Dispatch blocked: Pull Request is still a draft
-```
+For (2), the right home is a **separate store keyed by ticket id**,
+not branch-local. Options:
+- Git notes on the tracker-repo (GH) or a separate metadata repo.
+- A small KV in the dispatcher (Mode 1) — already has HTTP to Jira;
+  can extend it with state RPC.
+- For Mode 2: orphan branch `a2sdlc/state/{ticket_key}` — survives
+  branch delete, doesn't pollute base, pulls per-stage.
 
-The engine's own "Dispatch blocked: ..." message is correct but buried.
-The issue has no comment about the failure. Human must open the Actions
-tab to see what broke — slow feedback loop for consumers.
+Mode-1 runs through the dispatcher anyway — dispatcher-owned state is
+natural. Mode-2 needs its own answer. Orphan branch is least magical
+and works without a new service.
 
-**Fix sketch.** `cli/dispatch.py` should wrap `asyncio.run(dispatch(ctx))`
-in a try/except that:
-- Catches `GithubException` / `BlockedError` / `GitCommandError`.
-- Posts a structured `🚨 Stage failed: <short reason>` comment on the issue
-  (via the current work adapter).
-- Logs the full traceback at DEBUG (still in CI artifacts) but doesn't
-  include it in the issue comment.
-- Sets `stage:blocked` label so humans have an obvious signal.
+**Recommendation (architectural).** Plan a refactor where
+`StateManager` accepts a pluggable storage backend; GitHub impl uses
+orphan branch, Jira impl uses dispatcher KV. Current branch-local
+state.json becomes the GitHub default implementation.
 
-**Size.** ~40 LOC. Overlaps with existing `set_blocked` path — just extend it.
-
----
-
-## P1 — Correctness gaps
-
-### P1.1 · Engine-side token sniff
-
-**Problem.** If `GITHUB_TOKEN` starts with `ghs_` (the GHA default token),
-the engine can parse events but can't fire downstream `labeled` events —
-label writes don't trigger workflow re-entries. State machine stalls
-silently.
-
-**Fix.** In `cli/dispatch.py`, read env.GITHUB_TOKEN; if it starts with
-`ghs_`, raise `typer.Exit` with a one-line actionable message pointing
-consumers to the GitHub App setup. The workflow preflight already hard-
-fails on this, but engine-side defense-in-depth prevents local
-misconfiguration from silently breaking.
-
-**Size.** ~10 LOC.
+**Short-term mitigation for the cleanup_base race (tactical).** Detect
+push rejection in `cleanup_base`; retry once with `git pull --rebase`.
+~10 LOC.
 
 ---
 
-### P1.2 · `issues:closed` action doesn't trigger engine cleanup
+### P0.4 · Tracker-agnostic state contract (Jira parity)
 
-**Problem.** When a human closes the issue manually (or when it closes via
-a PR merge that bypassed the engine), stale `stage:*` labels linger.
-`is_ticket_active` catches new events → skip, but the label cruft on the
-board misleads humans.
+**Direction shift (2026-04-21).** The label/state-split question is
+really "how does the engine talk to any tracker" — needs to work for
+both GitHub labels and Jira status transitions. Solve once.
 
-**Fix.** Handle `issues:closed` in `_parse_issues_event`: return a special
-event type, and dispatch short-circuits to `set_done_label` → strip
-`stage:*`. No AI call, no branch work.
+**The right abstraction.** `WorkAdapter` exposes two orthogonal APIs:
 
-**Size.** ~20 LOC + parse-event test.
+1. **Stage position** (read + write, tracker-native):
+   - `get_current_stage(key) -> StageName | None` — reads the
+     tracker-native stage marker (GH label / Jira status).
+   - `set_current_stage(key, stage)` — writes it. Clears prior stage.
+   - `mark_done(key)` — terminal. GH: close the issue + clear labels.
+     Jira: transition to the done status.
+   - `mark_blocked(key, reason)` — terminal-ish. GH: label + comment.
+     Jira: custom status + comment.
+
+2. **Pipeline ledger** (engine-internal, never tracker-visible):
+   Lives in whatever P0.3 settles on (orphan branch for GH, dispatcher
+   KV for Jira). Holds pr_number, review_cycles, accumulated cost,
+   last stage_run_id.
+
+**Concrete consequence for GitHub adapter.** `set_stage_label` becomes
+`set_current_stage`; we already strip `agent` on transition. `stage:done`
+vs issue-closed tension resolves: `mark_done` both closes the issue
+(native "done" signal) AND strips stage:* labels. The `stage:done`
+label becomes redundant — cleaner to just rely on the issue state. (This
+also means Jira parity is easier: Jira's "Done" status is the analog of
+GH's "closed state".)
+
+**Open question for the user.** Do we keep `stage:done` label at all,
+or drop it now that `is_ticket_active` covers the downstream skip? In
+Jira there's no separate label for done — the status IS done. Recommend
+**drop it**: use GH issue state (closed) as the single done signal,
+strip stage:* on mark_done, don't add stage:done.
+
+**Recommendation.** Design the WorkAdapter protocol split now; ship it
+with the Phase 2 Jira adapter. The GH implementation is a small refactor
+(rename + drop stage:done label); the Jira impl is net-new.
 
 ---
 
-### P1.3 · Duplicate PR comment on APPROVE self-review
+### P0.5 · Error UX — issue comment pointer, traceback stays in CI ✅
 
-**Problem.** `post_review` catches the 422 and posts `create_issue_comment`
-on the PR with the full review body. The stage-completion comment on the
-ISSUE already has the same body. Two sources of the same text clutter the
-PR timeline.
+**Direction shift (2026-04-21).** User wants to keep full traceback in
+CI logs — useful for debugging. Just needs a short pointer on the issue.
 
-**Fix.** Related to P0.2 — when we move to option (c) (skip PR review API
-entirely), this goes away. Until then, just don't post the fallback
-comment; the engine's issue-side comment is enough.
+**Landed this session (commit 4ec223b).** `cli/dispatch.py` now wraps
+`asyncio.run(dispatch(ctx))` in a try/except that:
+- Logs the full traceback in CI (unchanged — ops can still dig in).
+- Calls `set_blocked` with `Stage failed: <exc> — see run: <gh-actions-url>`.
+- Preserves the Typer exit code so CI marks the run failed.
 
-**Size.** Trivial — delete 2 lines in the except block.
+`set_blocked` itself is now idempotent, so retries don't stack duplicate
+"Blocked:" comments on the issue.
+
+**Still open.** The blocked-comment points to the Actions run, not the
+specific failing step. A future polish could extract the stage name
+(already available as a label) and include it in the message.
+
+---
+
+## P1 — Correctness gaps (most fixed this session)
+
+### P1.1 · Engine-side token sniff ✅
+
+Landed in commit 4ec223b. `cli/dispatch.py` refuses to run with a
+`ghs_`-prefixed `GITHUB_TOKEN` and tells the user to configure the
+GitHub App instead.
+
+---
+
+### P1.2 · `issues:closed` triggers engine cleanup ✅
+
+Landed in commit 4ec223b. `_parse_issues_event` emits a marker event
+(`is_closed=True`). Dispatch short-circuits to `set_done_label` + clear
+stage:* without AI or branch work. Consumer workflows must list `closed`
+in `issues: types:` — document this in the onboarding guide (P1.4).
+
+**Open sub-question.** When the close was caused by the engine's own
+MERGE (via "Closes #N" link), dispatch will re-enter with the close event
+after the merge. Currently set_done_label runs twice (idempotent, fine)
+but the code path duplicates work. Could gate with "already stage:done?
+skip" at parse time.
+
+---
+
+### P1.3 · Duplicate PR comment on APPROVE self-review ✅
+
+Landed in commit 4ec223b. Self-approval 422 is detected explicitly and
+logged — no fallback comment. REQUEST_CHANGES self-reviews still post
+(GitHub allows). Non-422 unexpected failures still fall back, but the
+fallback is now deduplicated (scans existing PR comments first).
+
+---
+
+### P1.5 · Idempotency audit — further hardening landed
+
+Broader scan this session found additional gaps beyond the dispatch-level
+run_id guard:
+
+- **`merge_pr` now checks `pull.merged` first** (commit 8ec7cf6 — about
+  to land) — retries after a successful merge no longer crash with 405
+  "already merged". Fixes a scenario where MERGE cleanup_base succeeded
+  but a subsequent label/comment update failed and retried.
+- **`set_blocked` dedupes "Blocked:" comments** by scanning the last 10
+  comments — the "duplicate comments on issues" observation from the
+  review is addressed.
+- **`post_review` fallback is deduped** — on unexpected non-422 errors,
+  scans existing PR issue comments for the "**Review: <verdict>**"
+  marker before posting.
+
+**Remaining from the scan (LOW severity):**
+- `commit_empty` on SPEC retry could produce duplicate empty commits
+  if SPEC runs twice without idempotency (harmless; git content-dedupes,
+  but branch history noise).
+- Telemetry `MlflowTelemetry.session` parallel-run race (already
+  documented in TODO.md).
 
 ---
 

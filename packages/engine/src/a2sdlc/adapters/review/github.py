@@ -62,7 +62,17 @@ class GitHubReviewAdapter:
             logger.debug("marked PR #%d as ready", pr_number)
 
     def merge_pr(self, pr_number: int, method: str = "squash") -> None:
+        """Merge the PR; idempotent — treats already-merged as success.
+
+        Without this guard, a duplicate MERGE dispatch (e.g. after
+        cleanup_base succeeded but the comment/label updates failed and
+        the stage re-ran) would raise 405 "Pull Request is already merged"
+        and propagate as a hard failure.
+        """
         pull = self._repo.get_pull(pr_number)
+        if pull.merged:
+            logger.info("merge_pr: PR #%d already merged — no-op", pr_number)
+            return
         pull.merge(merge_method=method)
         logger.debug("merged PR #%d via %s", pr_number, method)
 
@@ -109,7 +119,19 @@ class GitHubReviewAdapter:
                 pr_number,
                 exc_info=True,
             )
-            pull.create_issue_comment(f"**Review: {verdict}**\n\n{body}")
+            # Dedupe the fallback comment — retries must not stack copies.
+            marker = f"**Review: {verdict}**"
+            try:
+                for c in pull.get_issue_comments():
+                    if (c.body or "").lstrip().startswith(marker):
+                        logger.debug(
+                            "post_review: fallback comment already present on PR #%d",
+                            pr_number,
+                        )
+                        return
+            except Exception:  # noqa: BLE001
+                pass
+            pull.create_issue_comment(f"{marker}\n\n{body}")
 
     def read_pr_diff(self, pr_number: int) -> str:
         pull = self._repo.get_pull(pr_number)
