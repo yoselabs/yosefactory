@@ -75,7 +75,8 @@ def test_mlflow_telemetry_reuses_existing_session(tmp_path: Path) -> None:
 
 
 def test_mlflow_telemetry_verify_reachable_raises_on_bad_uri() -> None:
-    t = MlflowTelemetry(tracking_uri="http://127.0.0.1:1/bad", experiment_name="x")
+    # localhost:1 fails immediately with ECONNREFUSED on macOS — no DNS round-trip.
+    t = MlflowTelemetry(tracking_uri="http://localhost:1/", experiment_name="x")
     with pytest.raises(MlflowUnreachableError):
         t.verify_reachable()
 

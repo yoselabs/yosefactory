@@ -93,7 +93,7 @@ class _MlflowRun:
     def log_tag(self, key: str, value: str) -> None:
         import mlflow  # noqa: PLC0415
 
-        mlflow.set_tag(key, value)
+        mlflow.MlflowClient().set_tag(self.run_id, key, value)
 
     def log_dict(self, data: dict[str, object], artifact_path: str) -> None:
         import mlflow  # noqa: PLC0415
