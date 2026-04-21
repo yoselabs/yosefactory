@@ -49,7 +49,9 @@ jobs:
       - name: Dispatch
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Subscription auth (Claude Code OAuth token). Do NOT also set
+          # ANTHROPIC_API_KEY — when both are present the CLI picks API key
+          # mode (pay-per-token), which fails when the value is an OAuth token.
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.ANTHROPIC_API_KEY }}
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
           MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
