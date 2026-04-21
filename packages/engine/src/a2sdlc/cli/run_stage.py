@@ -122,13 +122,17 @@ def _run_stage_impl(
     session_id = session or _infer_session_id(project_root) or str(ULID())
     cfg = load_config_file(project_root)
 
-    sink = None
-    if not no_track:
-        from a2sdlc.evaluation.mlflow_sink import MlflowSink  # noqa: PLC0415
+    from a2sdlc.evaluation.telemetry import (  # noqa: PLC0415
+        NoopTelemetry,
+        Telemetry,
+        local_fallback_telemetry,
+    )
 
-        mlflow_uri = f"file://{Path.home() / '.a2sdlc' / 'mlflow'}"
-        sink = MlflowSink(tracking_uri=mlflow_uri, experiment_name=project_root.name)
-        sink.verify_reachable()
+    telemetry: Telemetry = (
+        NoopTelemetry()
+        if no_track
+        else local_fallback_telemetry(experiment_name=project_root.name)
+    )
 
     if stage == StageName.SPEC and ticket is None:
         existing_ticket = project_root / ".a2sdlc" / "ticket.md"
@@ -151,7 +155,7 @@ def _run_stage_impl(
     git = build_git_adapter(cfg.adapters.git, project_root=project_root)
 
     progress_state = build_progress_state(
-        project_root, cfg.adapters.progress, with_mlflow_trace=sink is not None
+        project_root, cfg.adapters.progress, with_mlflow_trace=telemetry.traces_enabled
     )
     runner = _build_runner(runner_override, effort=cfg.effort)
 
@@ -180,9 +184,9 @@ def _run_stage_impl(
     quality = None
     ok = False
     try:
-        result, quality = run_tracked(  # ty: ignore[missing-argument]  # TODO Task 5: replace sink= with telemetry=
+        result, quality = run_tracked(
             dispatch_fn=lambda: dispatch(ctx),
-            sink=sink,  # ty: ignore[unknown-argument]
+            telemetry=telemetry,
             stage=stage,
             session_id=session_id,
             project_root=project_root,
