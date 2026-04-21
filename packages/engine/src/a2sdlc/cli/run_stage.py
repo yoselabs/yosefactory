@@ -122,11 +122,11 @@ def _run_stage_impl(
     )
 
     if stage == StageName.SPEC and ticket is None:
-        existing_ticket = project_root / ".a2sdlc" / "ticket.md"
+        existing_ticket = project_root / ".a2sdlc" / "state" / "ticket.md"
         if not existing_ticket.exists():
             print(  # noqa: T201
                 "error: --ticket is required on first SPEC invocation "
-                "(no existing .a2sdlc/ticket.md found)",
+                "(no existing .a2sdlc/state/ticket.md found)",
                 file=sys.stderr,
             )
             return 2

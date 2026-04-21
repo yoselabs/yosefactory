@@ -12,9 +12,9 @@ from a2sdlc.domain.exceptions import BlockedError
 class LocalBranchGitAdapter(LocalGitAdapter):
     """GitAdapter for fully-offline use.
 
-    Inherits state read/write (.a2sdlc/state.json), commit_artifacts from
-    LocalGitAdapter. Overrides setup_branch and sync_with_base to skip any
-    remote (`origin`) interaction. push() is a no-op.
+    Inherits state read/write (.a2sdlc/state/state.json), commit_artifacts
+    from LocalGitAdapter. Overrides setup_branch and sync_with_base to skip
+    any remote (`origin`) interaction. push() is a no-op.
     """
 
     def __init__(self, project_root: Path) -> None:

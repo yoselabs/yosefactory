@@ -493,4 +493,4 @@ class TestProceedRouting:
         )
         result = await dispatch(ctx)
         assert result.stage == StageName.MERGE
-        assert git.base_cleanups == 1
+        assert git.state_strips == 1

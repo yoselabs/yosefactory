@@ -3,8 +3,8 @@
 These tests drive the local runner CLI through two sequential stages using
 ``FakeStageRunner`` (injected via the ``runner=`` kwarg) to avoid calling out to
 the Anthropic SDK. They assert on the observable side effects the engine is
-responsible for: session branch creation, ``.a2sdlc/pr.json`` from the
-``local_noop`` review adapter, ``.a2sdlc/state.json`` from the git state manager,
+responsible for: session branch creation, ``.a2sdlc/state/pr.json`` from the
+``local_noop`` review adapter, ``.a2sdlc/state/state.json`` from the git state manager,
 the per-stage handover file written by ``local_file`` work adapter on
 ``finalize_comment``, and MLflow parent/child runs when tracking is enabled.
 
@@ -13,7 +13,7 @@ FakeStageRunner findings (see tests/fakes.py):
     successful.
   * Returns a ``RunResult`` whose ``output`` contains the formatted body, so
     ``finalize_comment`` fires on the work adapter, which (for ``local_file``)
-    persists ``.a2sdlc/handover/<stage>.md``.
+    persists ``.a2sdlc/state/handover/<stage>.md``.
 """
 
 from __future__ import annotations
@@ -73,21 +73,23 @@ def test_e2e_spec_then_implement_against_minimal_repo(tmp_path: Path) -> None:
     assert rc == 0
 
     # Post-SPEC invariants
-    assert (tmp_path / ".a2sdlc" / "ticket.md").read_text() == "Add hello world"
+    assert (
+        tmp_path / ".a2sdlc" / "state" / "ticket.md"
+    ).read_text() == "Add hello world"
 
-    pr_data = json.loads((tmp_path / ".a2sdlc" / "pr.json").read_text())
+    pr_data = json.loads((tmp_path / ".a2sdlc" / "state" / "pr.json").read_text())
     assert pr_data["pr_number"] == 1
     assert pr_data["status"] == "draft"
 
     # state.json exists and is valid JSON
-    state_path = tmp_path / ".a2sdlc" / "state.json"
+    state_path = tmp_path / ".a2sdlc" / "state" / "state.json"
     assert state_path.exists()
     state = json.loads(state_path.read_text())
     assert state["branch"] == "a2sdlc/e2e"
     assert state["stage"] == "spec"
 
     # FakeStageRunner's output goes through finalize_comment → handover/<stage>.md
-    assert (tmp_path / ".a2sdlc" / "handover" / "spec.md").exists()
+    assert (tmp_path / ".a2sdlc" / "state" / "handover" / "spec.md").exists()
 
     # Branch check after SPEC
     branch = subprocess.run(
@@ -107,7 +109,7 @@ def test_e2e_spec_then_implement_against_minimal_repo(tmp_path: Path) -> None:
     assert rc == 0
 
     # Post-IMPLEMENT invariants
-    assert (tmp_path / ".a2sdlc" / "handover" / "implement.md").exists()
+    assert (tmp_path / ".a2sdlc" / "state" / "handover" / "implement.md").exists()
     state_after = json.loads(state_path.read_text())
     assert state_after["stage"] == "implement"
 

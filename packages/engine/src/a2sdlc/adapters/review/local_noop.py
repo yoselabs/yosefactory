@@ -1,10 +1,11 @@
-"""Local file-backed ReviewAdapter — PR state lives in `.a2sdlc/pr.json`.
+"""Local file-backed ReviewAdapter — PR state under `.a2sdlc/state/`.
 
 Stand-in for GitHub PRs when running the engine fully offline. All PR state
-(title, body, status, reviews) is persisted to `.a2sdlc/pr.json`. Feedback
-written by `post_review(verdict='changes_requested')` lands in
-`.a2sdlc/feedback.json` with a `consumed=false` flag the runner flips after
-a successful IMPLEMENT dispatch.
+(title, body, status, reviews) is persisted to `.a2sdlc/state/pr.json`.
+Feedback written by `post_review(verdict='changes_requested')` lands in
+`.a2sdlc/state/feedback.json` with a `consumed=false` flag the runner flips
+after a successful IMPLEMENT dispatch. The whole `.a2sdlc/state/` folder
+is opaque runtime data and stripped pre-merge.
 """
 
 from __future__ import annotations
@@ -30,17 +31,18 @@ class LocalNoopReviewAdapter:
 
     def __init__(self, project_root: Path) -> None:
         self._root = project_root
-        self._a2sdlc_dir = project_root / ".a2sdlc"
+        self._state_dir = project_root / ".a2sdlc" / "state"
+        self._state_dir.mkdir(parents=True, exist_ok=True)
 
     # ── internal helpers ─────────────────────────────────────────────
 
     @property
     def _pr_path(self) -> Path:
-        return self._a2sdlc_dir / _PR_FILE
+        return self._state_dir / _PR_FILE
 
     @property
     def _feedback_path(self) -> Path:
-        return self._a2sdlc_dir / _FEEDBACK_FILE
+        return self._state_dir / _FEEDBACK_FILE
 
     def _read_pr(self) -> dict[str, Any]:
         return json.loads(self._pr_path.read_text())

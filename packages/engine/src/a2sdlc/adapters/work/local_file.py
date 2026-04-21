@@ -1,10 +1,11 @@
-"""Local file-backed WorkAdapter — ticket/handover state lives in `.a2sdlc/`.
+"""Local file-backed WorkAdapter — runtime state lives under `.a2sdlc/state/`.
 
 Stand-in for Jira/GitHub work-item operations when running the engine fully
-offline. Ticket body is copied to `.a2sdlc/ticket.md`. Handover content is
-written per-stage to `.a2sdlc/handover/<stage>.md`. Feedback signal is detected
-by the presence of an unconsumed `.a2sdlc/feedback.json` (written by the
-local review adapter).
+offline. Ticket body is copied to `.a2sdlc/state/ticket.md`. Handover content
+is written per-stage to `.a2sdlc/state/handover/<stage>.md`. Feedback signal
+is detected by the presence of an unconsumed `.a2sdlc/state/feedback.json`
+(written by the local review adapter). The entire `.a2sdlc/state/` folder is
+treated as opaque runtime data and stripped pre-merge.
 """
 
 from __future__ import annotations
@@ -43,11 +44,13 @@ class LocalFileWorkAdapter:
 
         self._a2sdlc_dir = project_root / ".a2sdlc"
         self._a2sdlc_dir.mkdir(exist_ok=True)
-        self._handover_dir = self._a2sdlc_dir / _HANDOVER_DIR
+        self._state_dir = self._a2sdlc_dir / "state"
+        self._state_dir.mkdir(exist_ok=True)
+        self._handover_dir = self._state_dir / _HANDOVER_DIR
         self._handover_dir.mkdir(exist_ok=True)
 
         if ticket_path is not None:
-            shutil.copyfile(ticket_path, self._a2sdlc_dir / _TICKET_FILE)
+            shutil.copyfile(ticket_path, self._state_dir / _TICKET_FILE)
 
         self._comment_counter = 0
         self._comment_stage: dict[str, StageName] = {}
@@ -56,15 +59,15 @@ class LocalFileWorkAdapter:
 
     @property
     def _ticket_path(self) -> Path:
-        return self._a2sdlc_dir / _TICKET_FILE
+        return self._state_dir / _TICKET_FILE
 
     @property
     def _pr_path(self) -> Path:
-        return self._a2sdlc_dir / _PR_FILE
+        return self._state_dir / _PR_FILE
 
     @property
     def _feedback_path(self) -> Path:
-        return self._a2sdlc_dir / _FEEDBACK_FILE
+        return self._state_dir / _FEEDBACK_FILE
 
     def _read_pr_number(self) -> int | None:
         if not self._pr_path.exists():

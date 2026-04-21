@@ -15,20 +15,20 @@ class GitAdapter(Protocol):
     def push(self) -> None: ...
     def read_state(self) -> str | None: ...
     def write_state(self, data: str) -> None: ...
-    def cleanup_base(self, base: str) -> bool:
-        """Remove per-ticket runtime files from the base branch and push.
+    def strip_runtime_state(self) -> bool:
+        """Remove `.a2sdlc/state/` on the current (feature) branch + push.
 
-        Deletes `.a2sdlc/state.json`, `.a2sdlc/logs/`, `.a2sdlc/handover/`
-        from the base branch's tip. Called AFTER a successful squash-merge
-        so leaked runtime artifacts never accumulate on base (and thus
-        never leak into the next ticket checked out from base).
-        `.a2sdlc/config.yaml` and `.a2sdlc/prompts/` are project config and
-        stay.
+        Called right before the MERGE stage merges the PR so the squash-
+        merge carries a clean tree into base. The entire `.a2sdlc/state/`
+        folder is treated as an opaque bag of runtime data (state.json,
+        logs, handover scratch, anything we add later) and removed in one
+        commit. `.a2sdlc/config.yaml` and `.a2sdlc/prompts/` are project
+        config and stay.
 
-        Running this post-merge (rather than pre-merge) keeps branch state
-        intact if `pr_lifecycle.merge` fails so the stage can be retried.
+        Writes only to the feature branch — works under branch protection,
+        which typically forbids direct pushes to base.
 
-        Returns True if a cleanup commit was pushed.
+        Returns True if a strip commit was pushed.
         """
         ...
 

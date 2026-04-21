@@ -204,19 +204,24 @@ and all tests. 542 tests pass.
 
 **StateStorage protocol landed 2026-04-21.** `StateManager` now takes a
 `StateStorage` + ticket key. `GitFileStateStorage` wraps the current
-file-on-branch behavior (the default). Paves the way for orphan-ref GH
-backend (Phase 2) and dispatcher KV backend (Jira) without further
-refactor to StateManager.
+file-on-branch behavior (the default). Paves the way for future
+backends without further refactor to StateManager.
 
-**Still to do:**
-- Implement `OrphanRefStateStorage` using `refs/a2sdlc/state/{key}`.
-  Needs smoke testing before landing — git plumbing for orphan refs
-  (`git update-ref` + blob creation) isn't covered by existing tests.
-- Move pipeline ledger (pr_number, review_cycles, cost) off the ticket
-  branch: orphan branch for GH mode (`a2sdlc/state/{key}`), dispatcher KV
-  for Jira mode. `StateManager` accepts a pluggable backend.
-- `GitHubWorkAdapter` already has the building blocks; new `JiraWorkAdapter`
-  arrives with Phase 2.
+**Runtime-state folder + pre-merge strip landed 2026-04-21.** All
+runtime artifacts consolidated under `.a2sdlc/state/`:
+`state.json`, `logs/`, `handover/`, `ticket.md`, `pr.json`,
+`feedback.json`. `cleanup_base(base)` removed — replaced with
+`strip_runtime_state()` that rm -rfs the whole `.a2sdlc/state/` folder
+on the feature branch pre-merge. The squash-merge then carries a clean
+tree into base. Works under branch protection (no direct push to base)
+— the old model silently assumed unprotected main.
+
+**#2B narrows scope.** With pre-merge strip working, the orphan-ref
+backend is no longer a GH Phase-2 blocker — state-on-branch with
+pre-merge strip is sufficient for GH mode, and the branch retains its
+pre-strip history for debugging. Orphan-ref (`refs/a2sdlc/state/{key}`)
+is now **Jira-only** future work: dispatcher-KV backend for tickets
+that have no git-branch concept.
 
 ---
 

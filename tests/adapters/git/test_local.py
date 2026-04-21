@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
-from git.exc import GitCommandError
 
 from a2sdlc.adapters.git import LocalGitAdapter
 from a2sdlc.domain.exceptions import BlockedError
@@ -82,10 +81,12 @@ class TestCommitArtifacts:
             mock_repo.is_dirty.return_value = True
 
             adapter = LocalGitAdapter(tmp_path)
-            result = adapter.commit_artifacts("chore: save", [".a2sdlc/state.json"])
+            result = adapter.commit_artifacts(
+                "chore: save", [".a2sdlc/state/state.json"]
+            )
 
         assert result is True
-        mock_repo.git.add.assert_called_once_with(".a2sdlc/state.json")
+        mock_repo.git.add.assert_called_once_with(".a2sdlc/state/state.json")
         mock_repo.git.commit.assert_called_once()
 
     def test_nothing_to_commit(self, tmp_path: Path) -> None:
@@ -95,37 +96,44 @@ class TestCommitArtifacts:
             mock_repo.is_dirty.return_value = False
 
             adapter = LocalGitAdapter(tmp_path)
-            result = adapter.commit_artifacts("chore: save", [".a2sdlc/state.json"])
+            result = adapter.commit_artifacts(
+                "chore: save", [".a2sdlc/state/state.json"]
+            )
 
         assert result is False
         mock_repo.git.commit.assert_not_called()
 
 
 @pytest.mark.unit
-class TestCleanupBase:
-    def test_retries_push_after_non_fast_forward(self, tmp_path: Path) -> None:
-        """Concurrent merge on base branch → rebase-and-retry once."""
-        runtime_file = tmp_path / ".a2sdlc" / "state.json"
-        runtime_file.parent.mkdir(parents=True)
-        runtime_file.write_text("{}")
+class TestStripRuntimeState:
+    def test_removes_state_dir_and_pushes(self, tmp_path: Path) -> None:
+        """Strip .a2sdlc/state/ on current branch + commit + push."""
+        state_dir = tmp_path / ".a2sdlc" / "state"
+        state_dir.mkdir(parents=True)
+        (state_dir / "state.json").write_text("{}")
 
         with patch("a2sdlc.adapters.git.local.Repo") as MockRepo:
             mock_repo = MockRepo.return_value
             mock_repo.git = MagicMock()
             mock_repo.is_dirty.return_value = True
             type(mock_repo.active_branch).name = PropertyMock(return_value="agent/15")
-            # First push rejected (concurrent merge), second push succeeds.
-            mock_repo.git.push.side_effect = [
-                GitCommandError("push", "non-fast-forward"),
-                None,
-            ]
 
             adapter = LocalGitAdapter(tmp_path)
-            assert adapter.cleanup_base("main") is True
+            assert adapter.strip_runtime_state() is True
 
-        # push called twice (original + retry), pull --rebase called once.
-        assert mock_repo.git.push.call_count == 2
-        mock_repo.git.pull.assert_any_call("origin", "main", "--rebase")
+        mock_repo.git.rm.assert_called_once_with(
+            "-rf", "--ignore-unmatch", ".a2sdlc/state"
+        )
+        mock_repo.git.commit.assert_called_once()
+        mock_repo.git.push.assert_called_once_with("origin", "agent/15")
+
+    def test_no_state_dir_is_noop(self, tmp_path: Path) -> None:
+        with patch("a2sdlc.adapters.git.local.Repo") as MockRepo:
+            mock_repo = MockRepo.return_value
+            mock_repo.git = MagicMock()
+            adapter = LocalGitAdapter(tmp_path)
+            assert adapter.strip_runtime_state() is False
+        mock_repo.git.rm.assert_not_called()
 
 
 @pytest.mark.unit
@@ -145,7 +153,7 @@ class TestPush:
 @pytest.mark.unit
 class TestReadWriteState:
     def test_read_state_exists(self, tmp_path: Path) -> None:
-        state_path = tmp_path / ".a2sdlc" / "state.json"
+        state_path = tmp_path / ".a2sdlc" / "state" / "state.json"
         state_path.parent.mkdir(parents=True)
         state_path.write_text('{"stage":"spec"}')
 
@@ -163,6 +171,6 @@ class TestReadWriteState:
             adapter = LocalGitAdapter(tmp_path)
             adapter.write_state('{"stage":"implement"}')
 
-        state_path = tmp_path / ".a2sdlc" / "state.json"
+        state_path = tmp_path / ".a2sdlc" / "state" / "state.json"
         assert state_path.exists()
         assert "implement" in state_path.read_text()

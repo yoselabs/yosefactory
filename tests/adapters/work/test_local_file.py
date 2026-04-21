@@ -11,7 +11,7 @@ from a2sdlc.domain.models import StageName
 
 
 def _mk_a2sdlc(root):
-    (root / ".a2sdlc").mkdir(exist_ok=True)
+    (root / ".a2sdlc" / "state").mkdir(parents=True, exist_ok=True)
 
 
 def test_parse_event_no_feedback_no_pr_returns_active_stage(tmp_path):
@@ -38,7 +38,9 @@ def test_parse_event_pr_json_present_sets_pr_number(tmp_path):
     WHEN parse_event is called
     THEN event.pr_number == 1."""
     _mk_a2sdlc(tmp_path)
-    (tmp_path / ".a2sdlc" / "pr.json").write_text(json.dumps({"pr_number": 1}))
+    (tmp_path / ".a2sdlc" / "state" / "pr.json").write_text(
+        json.dumps({"pr_number": 1})
+    )
 
     adapter = LocalFileWorkAdapter(
         project_root=tmp_path,
@@ -57,7 +59,7 @@ def test_parse_event_unconsumed_feedback_marks_is_feedback(tmp_path):
     WHEN parse_event is called
     THEN is_feedback=True and trigger_stage=None."""
     _mk_a2sdlc(tmp_path)
-    (tmp_path / ".a2sdlc" / "feedback.json").write_text(
+    (tmp_path / ".a2sdlc" / "state" / "feedback.json").write_text(
         json.dumps({"consumed": False, "body": "fix"})
     )
 
@@ -79,7 +81,7 @@ def test_parse_event_consumed_feedback_falls_back_to_active(tmp_path):
     WHEN parse_event is called
     THEN is_feedback=False and trigger_stage=<active>."""
     _mk_a2sdlc(tmp_path)
-    (tmp_path / ".a2sdlc" / "feedback.json").write_text(
+    (tmp_path / ".a2sdlc" / "state" / "feedback.json").write_text(
         json.dumps({"consumed": True, "body": "old"})
     )
 
@@ -99,7 +101,7 @@ def test_parse_event_consumed_feedback_falls_back_to_active(tmp_path):
 def test_get_ticket_returns_copied_content(tmp_path):
     """GIVEN ticket_path provided
     WHEN constructed
-    THEN .a2sdlc/ticket.md exists with that content and get_ticket returns it."""
+    THEN .a2sdlc/state/ticket.md exists with that content and get_ticket returns it."""
     src = tmp_path / "source-ticket.md"
     src.write_text("# Ticket body\n\ndo the thing")
 
@@ -112,7 +114,7 @@ def test_get_ticket_returns_copied_content(tmp_path):
 
     assert adapter.get_ticket("sid-1") == "# Ticket body\n\ndo the thing"
     assert (
-        tmp_path / ".a2sdlc" / "ticket.md"
+        tmp_path / ".a2sdlc" / "state" / "ticket.md"
     ).read_text() == "# Ticket body\n\ndo the thing"
 
 
@@ -143,7 +145,7 @@ def test_format_branch_returns_a2sdlc_prefixed_branch(tmp_path):
 def test_finalize_comment_writes_handover_file_for_active_stage(tmp_path):
     """GIVEN begin_comment then finalize_comment
     WHEN called with active stage SPEC
-    THEN .a2sdlc/handover/spec.md contains the body."""
+    THEN .a2sdlc/state/handover/spec.md contains the body."""
     adapter = LocalFileWorkAdapter(
         project_root=tmp_path,
         session_id="sid-1",
@@ -154,7 +156,7 @@ def test_finalize_comment_writes_handover_file_for_active_stage(tmp_path):
     cid = adapter.begin_comment("sid-1")
     adapter.finalize_comment(cid, "the spec output")
 
-    handover = tmp_path / ".a2sdlc" / "handover" / "spec.md"
+    handover = tmp_path / ".a2sdlc" / "state" / "handover" / "spec.md"
     assert handover.exists()
     assert handover.read_text() == "the spec output"
 
@@ -170,7 +172,7 @@ def test_find_last_handover_returns_newest(tmp_path):
         ticket_path=None,
     )
 
-    handover_dir = tmp_path / ".a2sdlc" / "handover"
+    handover_dir = tmp_path / ".a2sdlc" / "state" / "handover"
     (handover_dir / "spec.md").write_text("spec body")
     time.sleep(0.01)
     (handover_dir / "implement.md").write_text("implement body")
@@ -198,11 +200,11 @@ def test_find_last_handover_returns_none_when_dir_empty(tmp_path):
 
 
 def test_constructor_with_ticket_path_none_does_not_overwrite_existing(tmp_path):
-    """GIVEN existing .a2sdlc/ticket.md
+    """GIVEN existing .a2sdlc/state/ticket.md
     WHEN constructed with ticket_path=None
     THEN existing ticket.md is preserved."""
     _mk_a2sdlc(tmp_path)
-    (tmp_path / ".a2sdlc" / "ticket.md").write_text("preserved")
+    (tmp_path / ".a2sdlc" / "state" / "ticket.md").write_text("preserved")
 
     LocalFileWorkAdapter(
         project_root=tmp_path,
@@ -211,7 +213,7 @@ def test_constructor_with_ticket_path_none_does_not_overwrite_existing(tmp_path)
         ticket_path=None,
     )
 
-    assert (tmp_path / ".a2sdlc" / "ticket.md").read_text() == "preserved"
+    assert (tmp_path / ".a2sdlc" / "state" / "ticket.md").read_text() == "preserved"
 
 
 def test_collect_issue_feedback_returns_empty_list(tmp_path):
@@ -239,7 +241,7 @@ def test_parse_event_corrupt_pr_json_returns_none_pr_number(tmp_path):
     WHEN parse_event is called
     THEN pr_number is None (JSONDecodeError fallback)."""
     _mk_a2sdlc(tmp_path)
-    (tmp_path / ".a2sdlc" / "pr.json").write_text("{not valid json")
+    (tmp_path / ".a2sdlc" / "state" / "pr.json").write_text("{not valid json")
 
     adapter = LocalFileWorkAdapter(
         project_root=tmp_path,
@@ -258,7 +260,7 @@ def test_parse_event_pr_json_with_non_int_pr_number_returns_none(tmp_path):
     WHEN parse_event is called
     THEN pr_number is None."""
     _mk_a2sdlc(tmp_path)
-    (tmp_path / ".a2sdlc" / "pr.json").write_text(
+    (tmp_path / ".a2sdlc" / "state" / "pr.json").write_text(
         json.dumps({"pr_number": "not-an-int"})
     )
 
@@ -279,7 +281,7 @@ def test_parse_event_corrupt_feedback_json_treated_as_no_feedback(tmp_path):
     WHEN parse_event is called
     THEN is_feedback is False (JSONDecodeError fallback)."""
     _mk_a2sdlc(tmp_path)
-    (tmp_path / ".a2sdlc" / "feedback.json").write_text("not json at all")
+    (tmp_path / ".a2sdlc" / "state" / "feedback.json").write_text("not json at all")
 
     adapter = LocalFileWorkAdapter(
         project_root=tmp_path,
@@ -299,7 +301,9 @@ def test_parse_event_feedback_without_consumed_key_treated_as_unconsumed(tmp_pat
     WHEN parse_event is called
     THEN is_feedback is True (default consumed=False means unconsumed)."""
     _mk_a2sdlc(tmp_path)
-    (tmp_path / ".a2sdlc" / "feedback.json").write_text(json.dumps({"body": "x"}))
+    (tmp_path / ".a2sdlc" / "state" / "feedback.json").write_text(
+        json.dumps({"body": "x"})
+    )
 
     adapter = LocalFileWorkAdapter(
         project_root=tmp_path,
@@ -386,7 +390,7 @@ def test_find_last_handover_returns_none_when_dir_missing(tmp_path):
         ticket_path=None,
     )
 
-    shutil.rmtree(tmp_path / ".a2sdlc" / "handover")
+    shutil.rmtree(tmp_path / ".a2sdlc" / "state" / "handover")
 
     assert adapter.find_last_handover("sid-1") is None
 
@@ -402,7 +406,7 @@ def test_find_last_handover_returns_none_for_unknown_stage_name(tmp_path):
         ticket_path=None,
     )
 
-    handover_dir = tmp_path / ".a2sdlc" / "handover"
+    handover_dir = tmp_path / ".a2sdlc" / "state" / "handover"
     (handover_dir / "unknown.md").write_text("garbage stage")
 
     assert adapter.find_last_handover("sid-1") is None

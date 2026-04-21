@@ -84,57 +84,33 @@ class LocalGitAdapter:
         self._repo.git.push("origin", branch)
 
     def read_state(self) -> str | None:
-        state_path = self._root / ".a2sdlc" / "state.json"
+        state_path = self._root / ".a2sdlc" / "state" / "state.json"
         if state_path.exists():
             return state_path.read_text()
         return None
 
     def write_state(self, data: str) -> None:
-        state_path = self._root / ".a2sdlc" / "state.json"
+        state_path = self._root / ".a2sdlc" / "state" / "state.json"
         state_path.parent.mkdir(parents=True, exist_ok=True)
         state_path.write_text(data)
 
-    def cleanup_base(self, base: str) -> bool:
-        # Runtime paths under .a2sdlc/ that are per-ticket/per-run and must
-        # not accumulate on the base branch.
-        runtime_paths = [
-            ".a2sdlc/state.json",
-            ".a2sdlc/logs",
-            ".a2sdlc/handover",
-        ]
-        # Checkout base, pull, look for runtime artifacts. Use a detached
-        # HEAD path so we don't disturb the caller's branch state beyond
-        # returning to it at the end.
-        caller_branch = self._repo.active_branch.name
-        try:
-            self._repo.git.fetch("origin", base)
-            self._repo.git.checkout(base)
-            self._repo.git.pull("origin", base, "--ff-only")
+    def strip_runtime_state(self) -> bool:
+        """Remove `.a2sdlc/state/` on the current branch in one commit + push.
 
-            any_existed = False
-            for rel in runtime_paths:
-                abs_path = self._root / rel
-                if abs_path.exists():
-                    any_existed = True
-                    self._repo.git.rm("-rf", "--ignore-unmatch", rel)
-            if not any_existed or not self._repo.is_dirty():
-                return False
-            self._repo.git.commit(
-                "-m", "chore(a2sdlc): strip runtime artifacts from base"
-            )
-            try:
-                self._repo.git.push("origin", base)
-            except GitCommandError:
-                # Concurrent merge on the same base raced us — another
-                # ticket pushed while we were committing. Rebase on top
-                # of the remote and retry once. If this also fails, the
-                # caller's warning-and-move-on path handles it.
-                self._repo.git.pull("origin", base, "--rebase")
-                self._repo.git.push("origin", base)
-            return True
-        finally:
-            # Best-effort: return to the caller's branch even on error.
-            try:
-                self._repo.git.checkout(caller_branch)
-            except GitCommandError:
-                pass
+        Called right before MERGE merges the PR so the squash-merge carries
+        a clean tree into base. Writes only to the feature branch — works
+        under branch protection (no direct push to base).
+
+        Returns True if a strip commit was pushed.
+        """
+        state_dir = self._root / ".a2sdlc" / "state"
+        if not state_dir.exists():
+            return False
+        self._repo.git.rm("-rf", "--ignore-unmatch", ".a2sdlc/state")
+        if not self._repo.is_dirty():
+            return False
+        self._repo.git.commit("-m", "chore(a2sdlc): strip runtime state pre-merge")
+        # Use self.push() so local-only subclasses (LocalBranchGitAdapter)
+        # can no-op the remote push.
+        self.push()
+        return True

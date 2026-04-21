@@ -40,7 +40,7 @@ def test_run_stage_spec_creates_session_branch_and_persists_ticket(
 ) -> None:
     """GIVEN a minimal repo and a ticket file
     WHEN run-stage spec --ticket <file> --session testsid is invoked
-    THEN a2sdlc/testsid branch exists AND .a2sdlc/ticket.md matches the ticket.
+    THEN a2sdlc/testsid branch exists AND .a2sdlc/state/ticket.md matches the ticket.
     """
     from a2sdlc.cli.run_stage import run_stage_entry
 
@@ -67,7 +67,9 @@ def test_run_stage_spec_creates_session_branch_and_persists_ticket(
     )
     assert branch_check.returncode == 0
 
-    assert (tmp_path / ".a2sdlc" / "ticket.md").read_text() == "Build feature X"
+    assert (
+        tmp_path / ".a2sdlc" / "state" / "ticket.md"
+    ).read_text() == "Build feature X"
 
 
 def test_run_stage_spec_generates_ulid_when_session_not_given(tmp_path: Path) -> None:
@@ -94,7 +96,7 @@ def test_run_stage_spec_generates_ulid_when_session_not_given(tmp_path: Path) ->
 
 
 def test_run_stage_implement_infers_session_from_branch(tmp_path: Path) -> None:
-    """GIVEN we are on branch a2sdlc/fromBranch with existing .a2sdlc/ticket.md
+    """GIVEN we are on branch a2sdlc/fromBranch with existing .a2sdlc/state/ticket.md
     WHEN run-stage implement is invoked without --session
     THEN session_id 'fromBranch' is used (no new branch created).
     """
@@ -240,14 +242,14 @@ def test_run_stage_implement_quality_gate_fail_exits_nonzero(tmp_path: Path) -> 
 def test_run_stage_spec_requires_ticket_on_first_invocation(
     tmp_path: Path, capsys
 ) -> None:
-    """GIVEN no existing .a2sdlc/ticket.md
+    """GIVEN no existing .a2sdlc/state/ticket.md
     WHEN run-stage spec is invoked without --ticket
     THEN exit code is non-zero and a helpful error is shown.
     """
     from a2sdlc.cli.run_stage import run_stage_entry
 
     _init_minimal_repo(tmp_path)
-    (tmp_path / ".a2sdlc" / "ticket.md").unlink(missing_ok=True)
+    (tmp_path / ".a2sdlc" / "state" / "ticket.md").unlink(missing_ok=True)
 
     exit_code = run_stage_entry(
         argv=["spec", "--session", "x", "--no-track", str(tmp_path)],

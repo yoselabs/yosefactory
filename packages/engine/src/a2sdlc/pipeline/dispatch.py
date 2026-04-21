@@ -269,12 +269,13 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
                         )
 
                 ctx.git.sync_with_base(base)
-                pr_lifecycle.merge(pr_number)
+                # Strip state pre-merge on the feature branch — squash carries
+                # a clean tree into base. Works under branch protection.
                 try:
-                    # Drop runtime artifacts the squash carried to base.
-                    ctx.git.cleanup_base(base)
+                    ctx.git.strip_runtime_state()
                 except Exception:  # noqa: BLE001
-                    ctx.logger.warning("dispatch.base_cleanup_failed", exc_info=True)
+                    ctx.logger.warning("dispatch.state_strip_failed", exc_info=True)
+                pr_lifecycle.merge(pr_number)
                 # GH auto-links #N so humans jump to the diff in one click.
                 comment.finalize(f"\u2705 Merged #{pr_number}")
                 ctx.work.mark_done(event.key)
@@ -339,14 +340,14 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
 
             # Helper: commit and push
             def _commit_and_push() -> None:
-                # Scope the commit narrowly: persist cross-stage pipeline state
-                # (state.json) and real deliverables (docs/). Do NOT commit
-                # runtime noise like `.a2sdlc/logs/` — those stay on the
-                # runner's working tree and must never travel to base.
+                # Commit the state.json ledger + real deliverables (docs/).
+                # Other runtime under .a2sdlc/state/ (logs) stays on the
+                # runner's tree and is never committed. Pre-merge strip
+                # wipes the whole .a2sdlc/state/ folder before the squash.
                 try:
                     ctx.git.commit_artifacts(
                         "chore: stage artifacts",
-                        [".a2sdlc/state.json", "docs/"],
+                        [".a2sdlc/state/state.json", "docs/"],
                     )
                     ctx.git.push()
                 except Exception:  # noqa: BLE001
