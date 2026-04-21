@@ -76,19 +76,6 @@ def _infer_session_id(project_root: Path) -> str | None:
     return None
 
 
-def _build_runner(
-    runner_override: str | None, effort: str | None = None
-) -> StageRunner:
-    """Construct the StageRunner. ``runner_override='fake'`` is a test hook."""
-    if runner_override == "fake":
-        from tests.fakes import FakeStageRunner  # noqa: PLC0415  # ty: ignore[unresolved-import]
-
-        return FakeStageRunner()
-    from a2sdlc.pipeline.runner import SdkStageRunner  # noqa: PLC0415
-
-    return SdkStageRunner(effort=effort)
-
-
 def _print_post_run(
     stage: StageName,
     session_id: str,
@@ -116,7 +103,7 @@ def _run_stage_impl(
     session: str | None,
     ticket: Path | None,
     no_track: bool,
-    runner_override: str | None = None,
+    runner: StageRunner | None = None,
 ) -> int:
     """Run a single pipeline stage. Returns an exit code."""
     session_id = session or _infer_session_id(project_root) or str(ULID())
@@ -157,7 +144,10 @@ def _run_stage_impl(
     progress_state = build_progress_state(
         project_root, cfg.adapters.progress, with_mlflow_trace=telemetry.traces_enabled
     )
-    runner = _build_runner(runner_override, effort=cfg.effort)
+    if runner is None:
+        from a2sdlc.pipeline.runner import SdkStageRunner  # noqa: PLC0415
+
+        runner = SdkStageRunner(effort=cfg.effort)
 
     branch_name = f"a2sdlc/{session_id}"
     try:
@@ -238,10 +228,12 @@ def run_stage_command(
     raise typer.Exit(code=rc)
 
 
-def run_stage_entry(argv: list[str], runner_override: str | None = None) -> int:
+def run_stage_entry(argv: list[str], runner: StageRunner | None = None) -> int:
     """Programmatic entry — argparse-parses ``argv`` for test use.
 
-    Production uses ``run_stage_command`` via the typer app.
+    Production uses ``run_stage_command`` via the typer app. Tests may inject
+    a ``StageRunner`` (e.g. ``FakeStageRunner``) directly rather than through
+    a string override, keeping ``src/`` free of imports from ``tests/``.
     """
     import argparse  # noqa: PLC0415
 
@@ -259,5 +251,5 @@ def run_stage_entry(argv: list[str], runner_override: str | None = None) -> int:
         session=args.session,
         ticket=args.ticket,
         no_track=args.no_track,
-        runner_override=runner_override,
+        runner=runner,
     )

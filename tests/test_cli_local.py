@@ -5,6 +5,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from tests.fakes import FakeStageRunner
+
 
 def _init_minimal_repo(tmp_path: Path, ticket_body: str = "Build feature X") -> Path:
     """Initialize a minimal git repo with .a2sdlc/config.yaml and a ticket file.
@@ -54,7 +56,7 @@ def test_run_stage_spec_creates_session_branch_and_persists_ticket(
             "--no-track",
             str(tmp_path),
         ],
-        runner_override="fake",
+        runner=FakeStageRunner(),
     )
     assert exit_code == 0
 
@@ -78,7 +80,7 @@ def test_run_stage_spec_generates_ulid_when_session_not_given(tmp_path: Path) ->
     ticket = _init_minimal_repo(tmp_path)
     exit_code = run_stage_entry(
         argv=["spec", "--ticket", str(ticket), "--no-track", str(tmp_path)],
-        runner_override="fake",
+        runner=FakeStageRunner(),
     )
     assert exit_code == 0
 
@@ -110,12 +112,12 @@ def test_run_stage_implement_infers_session_from_branch(tmp_path: Path) -> None:
             "--no-track",
             str(tmp_path),
         ],
-        runner_override="fake",
+        runner=FakeStageRunner(),
     )
 
     exit_code = run_stage_entry(
         argv=["implement", "--no-track", str(tmp_path)],
-        runner_override="fake",
+        runner=FakeStageRunner(),
     )
     assert exit_code == 0
 
@@ -157,11 +159,11 @@ def test_run_stage_implement_with_tracking_logs_quality_gate(
             str(ticket),
             str(tmp_path),
         ],
-        runner_override="fake",
+        runner=FakeStageRunner(),
     )
     rc = run_stage_entry(
         argv=["implement", "--session", "trk", str(tmp_path)],
-        runner_override="fake",
+        runner=FakeStageRunner(),
     )
     assert rc == 0
 
@@ -195,11 +197,11 @@ def test_run_stage_implement_quality_gate_pass_exits_zero(tmp_path: Path) -> Non
             "--no-track",
             str(tmp_path),
         ],
-        runner_override="fake",
+        runner=FakeStageRunner(),
     )
     rc = run_stage_entry(
         argv=["implement", "--session", "q", "--no-track", str(tmp_path)],
-        runner_override="fake",
+        runner=FakeStageRunner(),
     )
     assert rc == 0
 
@@ -226,11 +228,11 @@ def test_run_stage_implement_quality_gate_fail_exits_nonzero(tmp_path: Path) -> 
             "--no-track",
             str(tmp_path),
         ],
-        runner_override="fake",
+        runner=FakeStageRunner(),
     )
     rc = run_stage_entry(
         argv=["implement", "--session", "f", "--no-track", str(tmp_path)],
-        runner_override="fake",
+        runner=FakeStageRunner(),
     )
     assert rc != 0
 
@@ -249,6 +251,6 @@ def test_run_stage_spec_requires_ticket_on_first_invocation(
 
     exit_code = run_stage_entry(
         argv=["spec", "--session", "x", "--no-track", str(tmp_path)],
-        runner_override="fake",
+        runner=FakeStageRunner(),
     )
     assert exit_code != 0

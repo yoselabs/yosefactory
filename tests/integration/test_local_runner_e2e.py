@@ -1,8 +1,8 @@
 """End-to-end smoke: run-stage spec then run-stage implement against a temp repo.
 
 These tests drive the local runner CLI through two sequential stages using
-``FakeStageRunner`` (via ``runner_override='fake'``) to avoid calling out to the
-Anthropic SDK. They assert on the observable side effects the engine is
+``FakeStageRunner`` (injected via the ``runner=`` kwarg) to avoid calling out to
+the Anthropic SDK. They assert on the observable side effects the engine is
 responsible for: session branch creation, ``.a2sdlc/pr.json`` from the
 ``local_noop`` review adapter, ``.a2sdlc/state.json`` from the git state manager,
 the per-stage handover file written by ``local_file`` work adapter on
@@ -23,6 +23,7 @@ import subprocess
 from pathlib import Path
 
 from a2sdlc.cli.run_stage import run_stage_entry
+from tests.fakes import FakeStageRunner
 
 
 def _init_minimal_repo(tmp_path: Path, ticket_body: str = "Add hello world") -> Path:
@@ -67,7 +68,7 @@ def test_e2e_spec_then_implement_against_minimal_repo(tmp_path: Path) -> None:
             "--no-track",
             str(tmp_path),
         ],
-        runner_override="fake",
+        runner=FakeStageRunner(),
     )
     assert rc == 0
 
@@ -101,7 +102,7 @@ def test_e2e_spec_then_implement_against_minimal_repo(tmp_path: Path) -> None:
     # Implement
     rc = run_stage_entry(
         argv=["implement", "--session", "e2e", "--no-track", str(tmp_path)],
-        runner_override="fake",
+        runner=FakeStageRunner(),
     )
     assert rc == 0
 
@@ -139,13 +140,13 @@ def test_e2e_with_mlflow_tracking_creates_runs(tmp_path: Path, monkeypatch) -> N
 
     rc = run_stage_entry(
         argv=["spec", "--session", "trk", "--ticket", str(ticket), str(tmp_path)],
-        runner_override="fake",
+        runner=FakeStageRunner(),
     )
     assert rc == 0
 
     rc = run_stage_entry(
         argv=["implement", "--session", "trk", str(tmp_path)],
-        runner_override="fake",
+        runner=FakeStageRunner(),
     )
     assert rc == 0
 
@@ -176,13 +177,13 @@ def test_e2e_tracking_writes_output_json_artifact_per_stage(
 
     rc = run_stage_entry(
         argv=["spec", "--session", "trk2", "--ticket", str(ticket), str(tmp_path)],
-        runner_override="fake",
+        runner=FakeStageRunner(),
     )
     assert rc == 0
 
     rc = run_stage_entry(
         argv=["implement", "--session", "trk2", str(tmp_path)],
-        runner_override="fake",
+        runner=FakeStageRunner(),
     )
     assert rc == 0
 
