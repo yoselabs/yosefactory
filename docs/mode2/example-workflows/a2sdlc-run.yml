@@ -18,7 +18,7 @@ on:
 
 jobs:
   dispatch:
-    uses: yoselabs/a2sdlc-engine/.github/workflows/run-native.yml@main
+    uses: yoselabs/a2sdlc/.github/workflows/run-native.yml@main
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}

@@ -37,8 +37,9 @@ jobs:
 
       - name: Install engine
         run: |
-          uv tool install --from 'git+https://github.com/yoselabs/a2sdlc-engine@main' a2sdlc-engine
-          # TEMP for pre-release: install from source until a tag is cut.
+          uv tool install --from 'git+https://github.com/yoselabs/a2sdlc@feat/mode2-smoke-telemetry#subdirectory=packages/engine' a2sdlc-engine
+          # TEMP for smoke: pin to feat branch and subdirectory.
+          # Reset to '@main' when feat/mode2-smoke-telemetry merges.
 
       - name: Dispatch
         env:
