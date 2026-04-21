@@ -244,11 +244,14 @@ class GitHubWorkAdapter:
     # ── labels ───────────────────────────────────────────────────────
 
     def set_stage_label(self, key: str, stage: StageName) -> None:
-        """Remove all existing stage:* labels and add the new one."""
+        """Remove all existing stage:* labels + the trigger label, add the new stage."""
         issue = self._repo.get_issue(int(key))
         stage_prefix = "stage:"
+        # Also clear the trigger label once a stage:* is active — the engine
+        # has picked the ticket up; keeping `agent` around is cosmetic noise
+        # that misleads humans scanning the board.
         for label in issue.labels:
-            if label.name.startswith(stage_prefix):
+            if label.name.startswith(stage_prefix) or label.name == TRIGGER_LABEL:
                 issue.remove_from_labels(label)
         new_label = STAGE_LABELS[stage]
         issue.add_to_labels(new_label)

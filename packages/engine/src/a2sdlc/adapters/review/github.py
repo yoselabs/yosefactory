@@ -26,6 +26,16 @@ class GitHubReviewAdapter:
     def create_draft_pr(
         self, branch: str, base: str, title: str, ticket_key: str
     ) -> int:
+        # Reuse an existing open PR for this branch if one exists — lets the
+        # SPEC stage be re-entered after a partial failure without 422ing on
+        # "A pull request already exists for <owner>:<branch>".
+        owner_branch = f"{self._repo.owner.login}:{branch}"
+        for existing in self._repo.get_pulls(state="open", head=owner_branch):
+            logger.debug(
+                "reusing existing open PR #%d for branch %s", existing.number, branch
+            )
+            return existing.number
+
         body = f"Closes #{ticket_key}"
         pr = self._repo.create_pull(
             title=title, body=body, head=branch, base=base, draft=True

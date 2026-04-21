@@ -40,6 +40,22 @@ class TestSetStageLabel:
         mock_issue.remove_from_labels.assert_called_once_with(old_label)
         mock_issue.add_to_labels.assert_called_once_with("stage:implement")
 
+    def test_also_removes_agent_trigger_label(self) -> None:
+        """`agent` trigger label should not linger once engine picks up the ticket."""
+        adapter = _make_work_adapter()
+        mock_repo = MagicMock()
+        mock_issue = MagicMock()
+        agent_label = MagicMock()
+        agent_label.name = "agent"
+        mock_issue.labels = [agent_label]
+        mock_repo.get_issue.return_value = mock_issue
+        adapter._repo = mock_repo
+
+        adapter.set_stage_label("15", StageName.SPEC)
+
+        mock_issue.remove_from_labels.assert_called_once_with(agent_label)
+        mock_issue.add_to_labels.assert_called_once_with("stage:spec")
+
     def test_no_old_stage_labels(self) -> None:
         adapter = _make_work_adapter()
         mock_repo = MagicMock()

@@ -20,6 +20,8 @@ class TestCreateDraftPr:
     def test_creates_pr_and_returns_number(self) -> None:
         adapter = _make_adapter()
         mock_repo = MagicMock()
+        mock_repo.owner.login = "yoselabs"
+        mock_repo.get_pulls.return_value = iter([])
         mock_pr = MagicMock()
         mock_pr.number = 7
         mock_repo.create_pull.return_value = mock_pr
@@ -28,6 +30,9 @@ class TestCreateDraftPr:
         result = adapter.create_draft_pr("agent/15", "main", "feat: X", "15")
 
         assert result == 7
+        mock_repo.get_pulls.assert_called_once_with(
+            state="open", head="yoselabs:agent/15"
+        )
         mock_repo.create_pull.assert_called_once_with(
             title="feat: X",
             body="Closes #15",
@@ -35,6 +40,21 @@ class TestCreateDraftPr:
             base="main",
             draft=True,
         )
+
+    def test_reuses_existing_open_pr_for_branch(self) -> None:
+        """If an open PR already exists for the branch, return its number instead of 422ing."""
+        adapter = _make_adapter()
+        mock_repo = MagicMock()
+        mock_repo.owner.login = "yoselabs"
+        existing = MagicMock()
+        existing.number = 42
+        mock_repo.get_pulls.return_value = iter([existing])
+        adapter._repo = mock_repo
+
+        result = adapter.create_draft_pr("agent/15", "main", "feat: X", "15")
+
+        assert result == 42
+        mock_repo.create_pull.assert_not_called()
 
 
 @pytest.mark.unit
