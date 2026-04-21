@@ -202,7 +202,16 @@ the status. This is the first piece of the stage-position abstraction.
 protocol, GH/LocalFile/WorkflowInput impls, FakeWorkAdapter, dispatch,
 and all tests. 542 tests pass.
 
+**StateStorage protocol landed 2026-04-21.** `StateManager` now takes a
+`StateStorage` + ticket key. `GitFileStateStorage` wraps the current
+file-on-branch behavior (the default). Paves the way for orphan-ref GH
+backend (Phase 2) and dispatcher KV backend (Jira) without further
+refactor to StateManager.
+
 **Still to do:**
+- Implement `OrphanRefStateStorage` using `refs/a2sdlc/state/{key}`.
+  Needs smoke testing before landing — git plumbing for orphan refs
+  (`git update-ref` + blob creation) isn't covered by existing tests.
 - Move pipeline ledger (pr_number, review_cycles, cost) off the ticket
   branch: orphan branch for GH mode (`a2sdlc/state/{key}`), dispatcher KV
   for Jira mode. `StateManager` accepts a pluggable backend.

@@ -39,6 +39,7 @@ from a2sdlc.pipeline.stage_executor import StageExecutor
 from a2sdlc.stages import next_stage
 from a2sdlc.evaluation.telemetry import NoopTelemetry, Telemetry
 from a2sdlc.lifecycle.state import StateManager
+from a2sdlc.lifecycle.state_storage import GitFileStateStorage
 
 
 @dataclass
@@ -159,7 +160,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
 
     # 3. Branch setup — state.json lives on the ticket branch so must
     # checkout before reading it.
-    state_mgr = StateManager(ctx.git)
+    state_mgr = StateManager(GitFileStateStorage(ctx.git), event.key)
     base = directives.base or ctx.config.default_base
     branch = ctx.work.format_branch(event.key)
     try:

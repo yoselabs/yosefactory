@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import pytest
 
 from a2sdlc.domain.models import StageName, TicketState
+from a2sdlc.lifecycle.state_storage import GitFileStateStorage
 from tests.fakes import FakeGitAdapter
 
 
@@ -28,7 +29,7 @@ class TestReadState:
         from a2sdlc.lifecycle.state import StateManager
 
         git = FakeGitAdapter(state_json=None)
-        sm = StateManager(git)
+        sm = StateManager(GitFileStateStorage(git), "PROJ-1")
         assert sm.read_state() is None
 
     def test_read_state_parses_stored_json(self) -> None:
@@ -37,7 +38,7 @@ class TestReadState:
         state = _make_state(stage=StageName.IMPLEMENT, stage_run_id="abc-123")
         json_str = state.model_dump_json()
         git = FakeGitAdapter(state_json=json_str)
-        sm = StateManager(git)
+        sm = StateManager(GitFileStateStorage(git), "PROJ-1")
 
         result = sm.read_state()
         assert result is not None
@@ -50,7 +51,7 @@ class TestReadState:
         from a2sdlc.lifecycle.state import StateManager
 
         git = FakeGitAdapter(state_json="not-valid-json{{{")
-        sm = StateManager(git)
+        sm = StateManager(GitFileStateStorage(git), "PROJ-1")
 
         import logging
 
@@ -70,7 +71,7 @@ class TestWriteState:
         from a2sdlc.lifecycle.state import StateManager
 
         git = FakeGitAdapter()
-        sm = StateManager(git)
+        sm = StateManager(GitFileStateStorage(git), "PROJ-1")
         state = _make_state(stage=StageName.REVIEW, stage_run_id="xyz")
 
         sm.write_state(state)
@@ -89,7 +90,7 @@ class TestCheckIdempotency:
 
         state = _make_state(stage_run_id="run-42")
         git = FakeGitAdapter(state_json=state.model_dump_json())
-        sm = StateManager(git)
+        sm = StateManager(GitFileStateStorage(git), "PROJ-1")
 
         assert sm.check_idempotency("run-42") is True
 
@@ -98,7 +99,7 @@ class TestCheckIdempotency:
 
         state = _make_state(stage_run_id="run-42")
         git = FakeGitAdapter(state_json=state.model_dump_json())
-        sm = StateManager(git)
+        sm = StateManager(GitFileStateStorage(git), "PROJ-1")
 
         assert sm.check_idempotency("run-99") is False
 
@@ -106,6 +107,6 @@ class TestCheckIdempotency:
         from a2sdlc.lifecycle.state import StateManager
 
         git = FakeGitAdapter(state_json=None)
-        sm = StateManager(git)
+        sm = StateManager(GitFileStateStorage(git), "PROJ-1")
 
         assert sm.check_idempotency("run-42") is False
