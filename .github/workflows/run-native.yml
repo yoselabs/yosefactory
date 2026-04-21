@@ -7,7 +7,11 @@ name: a2sdlc — run (native)
 on:
   workflow_call:
     secrets:
-      ANTHROPIC_API_KEY:
+      A2SDLC_APP_ID:
+        required: true
+      A2SDLC_APP_PRIVATE_KEY:
+        required: true
+      CLAUDE_CODE_OAUTH_TOKEN:
         required: true
       MLFLOW_TRACKING_URI:
         required: false
@@ -23,30 +27,28 @@ jobs:
     permissions:
       contents: write        # push branches
       issues: write          # comment, label, close
-      pull-requests: write   # open, review, merge
-      statuses: write        # commit-status writes (if the engine posts any)
+      pull-requests: write   # open/update PRs, review comments
       checks: write          # check-run annotations (if the engine posts any)
     steps:
-      - name: Preflight — require A2SDLC_BOT_TOKEN
-        env:
-          BOT_TOKEN_PRESENT: ${{ secrets.A2SDLC_BOT_TOKEN != '' }}
-        run: |
-          if [ "$BOT_TOKEN_PRESENT" != "true" ]; then
-            echo "::error::A2SDLC_BOT_TOKEN secret is required. github.token cannot trigger"
-            echo "::error::downstream workflow runs (anti-loop protection), so Mode 2 cannot"
-            echo "::error::advance stages. Create a PAT with 'repo' scope and set it as"
-            echo "::error::A2SDLC_BOT_TOKEN on this repo (or at org level)."
-            exit 1
-          fi
+      - name: Generate App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.A2SDLC_APP_ID }}
+          private-key: ${{ secrets.A2SDLC_APP_PRIVATE_KEY }}
 
       - uses: actions/checkout@v4
         with:
+          token: ${{ steps.app-token.outputs.token }}
           fetch-depth: 0
 
       - name: Configure git author
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          BOT_ID=$(gh api "/users/a2sdlc%5Bbot%5D" --jq .id 2>/dev/null || echo "0")
+          git config user.name "a2sdlc[bot]"
+          git config user.email "${BOT_ID}+a2sdlc[bot]@users.noreply.github.com"
 
       - uses: astral-sh/setup-uv@v4
         with:
@@ -60,17 +62,10 @@ jobs:
 
       - name: Dispatch
         env:
-          # A2SDLC_BOT_TOKEN is required — github.token is anti-loop
-          # protected and its events (label adds, comments, PR creates) do
-          # NOT fire subsequent workflow runs, which breaks the Mode 2
-          # stage chain. The preflight step above enforces this.
-          GITHUB_TOKEN: ${{ secrets.A2SDLC_BOT_TOKEN }}
-          # Subscription auth (Claude Code OAuth token). Do NOT also set
-          # ANTHROPIC_API_KEY — when both are present the CLI picks API key
-          # mode (pay-per-token), which fails when the value is an OAuth token.
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
           MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
           MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
-        run: |
-          a2sdlc dispatch
+        run: a2sdlc dispatch
