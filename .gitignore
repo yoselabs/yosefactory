@@ -294,3 +294,9 @@ __marimo__/
 
 # Local MLflow sqlite (dev runs)
 mlflow.db
+
+# Node (for jscpd)
+node_modules/
+
+# find_similar advisory output
+.similar-report.json
