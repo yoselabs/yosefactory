@@ -82,6 +82,15 @@ class GitHubWorkAdapter:
         if action != "labeled":
             raise SkipEvent(f"issues action {action!r} is not 'labeled'")
 
+        # Closed issues can still emit delayed `labeled` events (bot-triggered
+        # stage transitions that fire after a merge closed the issue). Running
+        # another stage on a closed ticket would consume a model call for no
+        # useful outcome — skip.
+        if event["issue"].get("state") == "closed":
+            raise SkipEvent(
+                f"issue {event['issue']['number']} is closed — ignoring stale label event"
+            )
+
         label_name = event["label"]["name"]
         issue_number = str(event["issue"]["number"])
 
