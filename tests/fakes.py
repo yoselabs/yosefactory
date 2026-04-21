@@ -202,6 +202,7 @@ class FakeGitAdapter:
         # Call records
         self.branch_setups: list[tuple[str, str]] = []  # (branch_name, base)
         self.commits: list[tuple[str, list[str]]] = []  # (message, paths)
+        self.empty_commits: list[str] = []  # messages from commit_empty
         self.pushes: list[None] = []
         self.written_state: list[str] = []
 
@@ -217,6 +218,9 @@ class FakeGitAdapter:
     def commit_artifacts(self, message: str, paths: list[str]) -> bool:
         self.commits.append((message, paths))
         return True
+
+    def commit_empty(self, message: str) -> None:
+        self.empty_commits.append(message)
 
     def push(self) -> None:
         self.pushes.append(None)

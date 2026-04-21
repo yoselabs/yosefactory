@@ -184,6 +184,10 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
     pr_lifecycle = PRLifecycle(ctx.review)
     pr_number = state.pr_number if state else None
     if target_stage == StageName.SPEC and pr_number is None:
+        # GitHub rejects PRs against unpushed branches and empty-diff PRs. Seed
+        # the branch with an empty commit, push it, then open the draft PR.
+        ctx.git.commit_empty(f"chore(a2sdlc): open session for {event.key}")
+        ctx.git.push()
         pr_number = pr_lifecycle.create_draft(branch, base, event.key)
         ctx.logger.info("dispatch.draft_pr_created", extra={"pr": pr_number})
 

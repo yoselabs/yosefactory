@@ -75,6 +75,10 @@ class LocalGitAdapter:
         self._repo.git.commit("-m", message)
         return True
 
+    def commit_empty(self, message: str) -> None:
+        """Create an empty commit (used to seed a branch so GitHub will accept a PR against it)."""
+        self._repo.git.commit("--allow-empty", "-m", message)
+
     def push(self) -> None:
         branch = self._repo.active_branch.name
         self._repo.git.push("origin", branch)
