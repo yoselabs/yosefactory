@@ -44,9 +44,9 @@ Creates the node-side lint infrastructure without wiring it into any Make target
 Run: `pnpm --version`
 Expected: prints a version like `9.x.x`. If not installed, run `brew install pnpm` first.
 
-- [ ] **Step 2: Create `package.json`**
+- [ ] **Step 2: Create `package.json` (without deps) and add jscpd via pnpm CLI**
 
-Create `/Users/iorlas/Workspaces/a2sdlc-engine/package.json`:
+Create `/Users/iorlas/Workspaces/a2sdlc-engine/package.json` with only metadata + scripts (no `devDependencies` block — pnpm will populate it):
 
 ```json
 {
@@ -58,12 +58,14 @@ Create `/Users/iorlas/Workspaces/a2sdlc-engine/package.json`:
   "scripts": {
     "lint:jscpd": "jscpd --config .config/jscpd.json",
     "lint:actions": "actionlint"
-  },
-  "devDependencies": {
-    "jscpd": "^4.0.9"
   }
 }
 ```
+
+Then add jscpd as a dev dependency via the pnpm CLI (do NOT hand-edit `package.json` to add it):
+
+Run: `pnpm add -D jscpd`
+Expected: `package.json` now contains a `devDependencies` block with `jscpd`, and `pnpm-lock.yaml` is created/updated.
 
 - [ ] **Step 3: Create `.config/jscpd.json`**
 
@@ -106,10 +108,10 @@ node_modules/
 .similar-report.json
 ```
 
-- [ ] **Step 5: Install deps and generate lockfile**
+- [ ] **Step 5: Verify install is clean**
 
 Run: `pnpm install`
-Expected: creates `pnpm-lock.yaml` and `node_modules/`. No errors.
+Expected: idempotent — already in sync after the `pnpm add -D` in Step 2. No errors.
 
 - [ ] **Step 6: Smoke-test jscpd**
 
