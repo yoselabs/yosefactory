@@ -93,3 +93,26 @@ class LocalGitAdapter:
         state_path = self._root / ".a2sdlc" / "state.json"
         state_path.parent.mkdir(parents=True, exist_ok=True)
         state_path.write_text(data)
+
+    def strip_runtime(self) -> bool:
+        # Runtime paths under .a2sdlc/ that are per-ticket/per-run and must
+        # not propagate to the base branch on merge.
+        runtime_paths = [
+            ".a2sdlc/state.json",
+            ".a2sdlc/logs",
+            ".a2sdlc/handover",
+        ]
+        any_existed = False
+        for rel in runtime_paths:
+            abs_path = self._root / rel
+            if abs_path.exists():
+                any_existed = True
+                # `-r --ignore-unmatch` handles both files and dirs; tolerate
+                # missing entries so the call is idempotent.
+                self._repo.git.rm("-rf", "--ignore-unmatch", rel)
+        if not any_existed or not self._repo.is_dirty():
+            return False
+        self._repo.git.commit(
+            "-m", "chore(a2sdlc): strip runtime artifacts before merge"
+        )
+        return True

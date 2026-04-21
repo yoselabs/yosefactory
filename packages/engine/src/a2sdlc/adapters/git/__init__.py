@@ -15,6 +15,18 @@ class GitAdapter(Protocol):
     def push(self) -> None: ...
     def read_state(self) -> str | None: ...
     def write_state(self, data: str) -> None: ...
+    def strip_runtime(self) -> bool:
+        """Remove transient per-ticket runtime files from the current branch.
+
+        Deletes `.a2sdlc/state.json`, `.a2sdlc/logs/`, `.a2sdlc/handover/` and
+        commits the deletion. Called before the final squash-merge so runtime
+        noise never reaches the base branch (and thus never leaks into the
+        next ticket checked out from base). `.a2sdlc/config.yaml` and
+        `.a2sdlc/prompts/` are project config and stay.
+
+        Returns True if a deletion commit was produced.
+        """
+        ...
 
 
 from a2sdlc.adapters.git.local import LocalGitAdapter  # noqa: E402

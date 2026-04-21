@@ -269,6 +269,14 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
                         )
 
                 ctx.git.sync_with_base(base)
+                # Strip per-ticket runtime artifacts (state.json, logs/,
+                # handover/) from the branch before merging. Otherwise a
+                # squash-merge lands them on base and subsequent tickets
+                # checked out from base inherit stale pr_number / stage data
+                # — observed during smoke when MERGE tried to merge a
+                # previous ticket's PR number instead of the current one.
+                if ctx.git.strip_runtime():
+                    ctx.git.push()
                 pr_lifecycle.merge(pr_number)
                 comment.finalize("\u2705 Merged")
                 ctx.work.set_done_label(event.key)
@@ -333,9 +341,14 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
 
             # Helper: commit and push
             def _commit_and_push() -> None:
+                # Scope the commit narrowly: persist cross-stage pipeline state
+                # (state.json) and real deliverables (docs/). Do NOT commit
+                # runtime noise like `.a2sdlc/logs/` — those stay on the
+                # runner's working tree and must never travel to base.
                 try:
                     ctx.git.commit_artifacts(
-                        "chore: stage artifacts", [".a2sdlc/", "docs/"]
+                        "chore: stage artifacts",
+                        [".a2sdlc/state.json", "docs/"],
                     )
                     ctx.git.push()
                 except Exception:  # noqa: BLE001

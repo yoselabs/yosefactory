@@ -210,6 +210,7 @@ class FakeGitAdapter:
         self.empty_commits: list[str] = []  # messages from commit_empty
         self.pushes: list[None] = []
         self.written_state: list[str] = []
+        self.runtime_strips: int = 0
 
     def setup_branch(self, branch_name: str, base: str) -> str:
         if self._conflict_on_setup:
@@ -236,6 +237,13 @@ class FakeGitAdapter:
     def write_state(self, data: str) -> None:
         self.written_state.append(data)
         self._state_json = data
+
+    def strip_runtime(self) -> bool:
+        if self._state_json is None:
+            return False
+        self._state_json = None
+        self.runtime_strips += 1
+        return True
 
 
 # ── FakeRunner ────────────────────────────────────────────────────────

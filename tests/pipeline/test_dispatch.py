@@ -457,3 +457,40 @@ class TestProceedRouting:
         )
         ctx, _ = _proceed_ctx(handover=_ho(StageName.REVIEW, _T1), state_json=state)
         assert (await dispatch(ctx)).stage == StageName.MERGE
+
+    @pytest.mark.asyncio
+    async def test_merge_strips_runtime_artifacts_before_merging(self) -> None:
+        """MERGE must strip per-ticket runtime so squash-merge doesn't pollute base."""
+        import json
+
+        state = json.dumps(
+            {
+                "stage": "review",
+                "status": "approved",
+                "base_branch": "main",
+                "branch": "agent/42",
+                "pr_number": 1,
+                "stage_run_id": "run-old",
+                "review_cycles": 0,
+                "accumulated_cost_usd": 0.0,
+                "accumulated_tokens_in": 0,
+                "accumulated_tokens_out": 0,
+                "accumulated_duration_ms": 0,
+                "last_updated": "2026-04-10T00:00:00Z",
+            }
+        )
+        # Need gates.merge=AUTO to reach the strip call (HUMAN gate short-circuits).
+        from a2sdlc.config import ProjectConfig
+        from a2sdlc.domain.models import GateConfig, GateMode
+
+        auto_config = ProjectConfig(gates=GateConfig(merge=GateMode.AUTO))
+        ctx, _, git, review, _ = make_dispatch_context(
+            event=PipelineEvent(key="42", trigger_stage=None, is_feedback=False),
+            last_handover=_ho(StageName.REVIEW, _T1),
+            state_json=state,
+            run_id="run-proceed",
+            config=auto_config,
+        )
+        result = await dispatch(ctx)
+        assert result.stage == StageName.MERGE
+        assert git.runtime_strips == 1
