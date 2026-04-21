@@ -1,7 +1,7 @@
 """MlflowTraceSubscriber — emits MLflow spans for each pipeline stage and tool call.
 
-Writes into the currently-active MLflow run opened by ``MlflowSink`` before
-dispatch runs. One root span per stage, one child span per tool invocation.
+Writes into the currently-active MLflow run opened by ``MlflowTelemetry``
+(see ``evaluation/telemetry.py``) before dispatch runs. One root span per stage, one child span per tool invocation.
 The stage span carries cumulative metrics as attributes (overwritten on every
 ``Metrics`` event) and final metrics on close.
 
