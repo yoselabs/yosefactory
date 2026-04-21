@@ -7,7 +7,8 @@ fix:
 	agent-harness fix
 
 test:
-	uv run pytest tests/ -v --cov=a2sdlc --cov-report=xml --cov-report=term-missing
+	uv run pytest tests/ -n auto -m "not serial" --cov=a2sdlc --cov-report=xml --cov-report=term-missing
+	uv run pytest tests/ -m "serial" --cov=a2sdlc --cov-report=xml --cov-report=term-missing --cov-append
 
 coverage-diff:
 	@uv run diff-cover coverage.xml --compare-branch=main --fail-under=95
