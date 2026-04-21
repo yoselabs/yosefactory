@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 
@@ -75,3 +76,89 @@ class NoopTelemetry:
     @property
     def traces_enabled(self) -> bool:
         return False
+
+
+# ── MLflow implementation ─────────────────────────────────────────────
+
+
+@dataclass
+class _MlflowRun:
+    run_id: str
+
+    def log_metric(self, key: str, value: float) -> None:
+        import mlflow  # noqa: PLC0415
+
+        mlflow.log_metric(key, value, run_id=self.run_id)
+
+    def log_tag(self, key: str, value: str) -> None:
+        import mlflow  # noqa: PLC0415
+
+        mlflow.set_tag(key, value)
+
+    def log_dict(self, data: dict[str, object], artifact_path: str) -> None:
+        import mlflow  # noqa: PLC0415
+
+        mlflow.log_dict(data, artifact_path)
+
+    def log_artifact(self, local_path: str) -> None:
+        import mlflow  # noqa: PLC0415
+
+        mlflow.log_artifact(local_path)
+
+
+@dataclass
+class _MlflowOpener:
+    session_id: str
+
+    @contextlib.contextmanager
+    def stage(self, name: str) -> Iterator[_MlflowRun]:
+        import mlflow  # noqa: PLC0415
+
+        with mlflow.start_run(nested=True, run_name=f"{self.session_id}:{name}") as r:
+            mlflow.set_tag("stage", name)
+            mlflow.set_tag("session_id", self.session_id)
+            yield _MlflowRun(run_id=r.info.run_id)
+
+
+class MlflowTelemetry:
+    """Real MLflow-backed telemetry. Parent run per session, nested child run per stage."""
+
+    def __init__(self, tracking_uri: str, experiment_name: str) -> None:
+        import mlflow  # noqa: PLC0415
+
+        self._uri = tracking_uri
+        self._experiment = experiment_name
+        mlflow.set_tracking_uri(tracking_uri)
+
+    def verify_reachable(self) -> None:
+        import mlflow  # noqa: PLC0415
+
+        try:
+            mlflow.set_experiment(self._experiment)
+        except Exception as e:  # noqa: BLE001
+            raise MlflowUnreachableError(str(e)) from e
+
+    @contextlib.contextmanager
+    def session(self, session_id: str) -> Iterator[_MlflowOpener]:
+        import mlflow  # noqa: PLC0415
+
+        mlflow.set_experiment(self._experiment)
+        run_name = f"session:{session_id}"
+        existing = mlflow.search_runs(
+            experiment_names=[self._experiment],
+            filter_string=f"tags.mlflow.runName = '{run_name}'",
+            output_format="list",
+            max_results=1,
+            order_by=["attributes.start_time DESC"],
+        )
+        existing_run_id: str | None = existing[0].info.run_id if existing else None
+        if existing_run_id is not None:
+            cm = mlflow.start_run(run_id=existing_run_id)
+        else:
+            cm = mlflow.start_run(run_name=run_name)
+        with cm:
+            yield _MlflowOpener(session_id=session_id)
+
+    @property
+    def traces_enabled(self) -> bool:
+        return True
