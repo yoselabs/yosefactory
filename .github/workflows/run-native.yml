@@ -27,6 +27,18 @@ jobs:
       statuses: write        # commit-status writes (if the engine posts any)
       checks: write          # check-run annotations (if the engine posts any)
     steps:
+      - name: Preflight — require A2SDLC_BOT_TOKEN
+        env:
+          BOT_TOKEN_PRESENT: ${{ secrets.A2SDLC_BOT_TOKEN != '' }}
+        run: |
+          if [ "$BOT_TOKEN_PRESENT" != "true" ]; then
+            echo "::error::A2SDLC_BOT_TOKEN secret is required. github.token cannot trigger"
+            echo "::error::downstream workflow runs (anti-loop protection), so Mode 2 cannot"
+            echo "::error::advance stages. Create a PAT with 'repo' scope and set it as"
+            echo "::error::A2SDLC_BOT_TOKEN on this repo (or at org level)."
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -48,11 +60,11 @@ jobs:
 
       - name: Dispatch
         env:
-          # Use A2SDLC_BOT_TOKEN if set (a PAT) so label/comment events the
-          # engine writes re-trigger the workflow. github.token is anti-loop
-          # protected — its events do NOT fire subsequent workflow runs.
-          # Fall back to github.token for local/no-chain use.
-          GITHUB_TOKEN: ${{ secrets.A2SDLC_BOT_TOKEN || github.token }}
+          # A2SDLC_BOT_TOKEN is required — github.token is anti-loop
+          # protected and its events (label adds, comments, PR creates) do
+          # NOT fire subsequent workflow runs, which breaks the Mode 2
+          # stage chain. The preflight step above enforces this.
+          GITHUB_TOKEN: ${{ secrets.A2SDLC_BOT_TOKEN }}
           # Subscription auth (Claude Code OAuth token). Do NOT also set
           # ANTHROPIC_API_KEY — when both are present the CLI picks API key
           # mode (pay-per-token), which fails when the value is an OAuth token.

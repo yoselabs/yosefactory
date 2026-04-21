@@ -107,6 +107,12 @@ Related: BMad's "Agent Record" section in story files, but real-time + tracker-n
 - [ ] `cli/dispatch.py` Mode 2 branch doesn't set `run_id` on `DispatchContext` — check_idempotency is skipped. Pre-existing; surface was widened by telemetry wiring which now keys off session_id.
 - [ ] `MlflowUnreachableError` surfaces as a bare Python traceback through Typer. Wrap in `dispatch_command` and re-raise as `typer.BadParameter` for cleaner CLI UX on misconfigured env.
 
+## Mode 2 auth/trigger follow-ups
+
+- [ ] Engine-side token sniff: `cli/dispatch.py` should detect a `ghs_`-prefixed `GITHUB_TOKEN` (the GitHub Actions default) and refuse to run with a clear error. Current behavior (silent non-triggering) breaks the state machine invisibly. Fail-early matches the workflow preflight we added.
+- [ ] `agent` label lingers on issue after `stage:implement` is set — engine should remove `agent` when it transitions to any `stage:*`. Observed during first successful run.
+- [ ] Existing-PR reuse in SPEC stage: `GitHubReviewAdapter.create_draft_pr` should look up an existing PR by `head=branch` and return its number instead of raising 422. Retry-safety after partial failures.
+
 ## Test infrastructure follow-ups
 
 - [ ] `make test` wall-clock is 18-34s under xdist; pytest itself is ~11s. The extra time is coverage finalization + the serial pass exit-5 dance. If the gap becomes painful, drop coverage from the default dev loop (keep it in `make check`) or skip the serial pass when no `@pytest.mark.serial` tests exist.
