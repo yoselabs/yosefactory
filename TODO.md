@@ -109,6 +109,7 @@ Related: BMad's "Agent Record" section in story files, but real-time + tracker-n
 
 ## Mode 2 auth/trigger follow-ups
 
+- [ ] Reviewer identity: engine uses the same App token for both authoring PRs and submitting reviews → GitHub rejects with "Review Can not approve your own pull request" (422). Options: (a) second App for review-only (b) dedicated service-account PAT (c) skip the PR review submission in Mode 2 and transition stage:merge directly based on engine verdict. For smoke, human approves manually.
 - [ ] Engine-side idempotency for Mode 2: `cli/dispatch.py` Mode 2 branch doesn't set `run_id`, so `check_idempotency` is skipped. When two events for the same issue reach `pipeline.dispatch()` simultaneously, both execute the stage. Workflow `concurrency:` group serializes at GHA level, but stage runs that re-trigger themselves (e.g. push after commit → issues event) can still re-enter. Derive `run_id` from `f"{ticket_key}:{stage}:{head_sha}"` or similar and enforce idempotency in-engine.
 - [ ] Engine-side token sniff: `cli/dispatch.py` should detect a `ghs_`-prefixed `GITHUB_TOKEN` (the GitHub Actions default) and refuse to run with a clear error. Current behavior (silent non-triggering) breaks the state machine invisibly. Fail-early matches the workflow preflight we added.
 - [ ] `agent` label lingers on issue after `stage:implement` is set — engine should remove `agent` when it transitions to any `stage:*`. Observed during first successful run.
