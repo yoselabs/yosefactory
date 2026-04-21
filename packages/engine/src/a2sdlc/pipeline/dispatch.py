@@ -43,13 +43,7 @@ from a2sdlc.lifecycle.state import StateManager
 
 @dataclass
 class DispatchContext:
-    """All external dependencies — injected, not constructed.
-
-    ``make_comment_subscriber`` is a factory the CLI supplies so dispatch
-    can register a comment-driven progress subscriber once the comment
-    handle exists. ``None`` means no progress-driven comment edits (direct
-    start/update/finalize calls still happen via ``CommentManager``).
-    """
+    """All external dependencies — injected, not constructed."""
 
     work: WorkAdapter
     git: GitAdapter
@@ -75,8 +69,14 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
         ctx.logger.info("dispatch.skip", extra={"reason": e.reason})
         return DispatchResult(stage=StageName.SPEC, error=e.reason)
 
-    # 1.5. Engine-level contract: never run a stage on a terminal ticket.
-    # Each adapter defines what "terminal" means for its tracker.
+    # 1.5. Ticket-closed: stamp done, strip transient labels, no AI call.
+    # Handled before is_ticket_active because the close IS the signal.
+    if event.is_closed:
+        ctx.logger.info("dispatch.ticket_closed", extra={"key": event.key})
+        ctx.work.set_done_label(event.key)
+        return DispatchResult(stage=StageName.MERGE, error="ticket_closed")
+
+    # 1.6. Skip stages on terminal tickets (stale delayed events, etc.).
     if not ctx.work.is_ticket_active(event.key):
         ctx.logger.info(
             "dispatch.skip",
@@ -157,8 +157,8 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
 
     self_answer = ctx.config.self_answer
 
-    # 3. Branch setup FIRST — state.json lives on the per-ticket branch, so
-    # the working tree must be on that branch before we try to read it.
+    # 3. Branch setup — state.json lives on the ticket branch so must
+    # checkout before reading it.
     state_mgr = StateManager(ctx.git)
     base = directives.base or ctx.config.default_base
     branch = ctx.work.format_branch(event.key)
@@ -271,10 +271,8 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
 
                 ctx.git.sync_with_base(base)
                 pr_lifecycle.merge(pr_number)
-                # Post-merge cleanup on base: squash carried runtime
-                # artifacts (state.json, logs/, handover/) onto base — drop
-                # them so the next ticket checked out from base doesn't
-                # inherit stale pr_number / stage data.
+                # Post-merge cleanup: drop runtime artifacts squash carried
+                # to base so next ticket doesn't inherit stale state.
                 try:
                     ctx.git.cleanup_base(base)
                 except Exception:  # noqa: BLE001

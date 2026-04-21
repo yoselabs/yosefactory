@@ -79,13 +79,33 @@ class GitHubReviewAdapter:
         return approvals
 
     def post_review(self, pr_number: int, body: str, verdict: str) -> None:
+        """Submit a PR review; skip cleanly on self-approval 422.
+
+        When the authoring App and the reviewing identity are the same,
+        GitHub rejects APPROVE with 422. We used to fall back to a plain
+        PR comment carrying the full review body, but the engine already
+        posts the same content as the stage-completion comment on the
+        issue — so the fallback was a noisy duplicate. Now we just log the
+        skip; the engine's stage label + issue comment are the durable
+        record.
+
+        REQUEST_CHANGES self-reviews are accepted by GitHub and still post.
+        """
         pull = self._repo.get_pull(pr_number)
         try:
             pull.create_review(body=body, event=verdict)
             logger.debug("posted review %s on PR #%d", verdict, pr_number)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            msg = str(exc)
+            if "Can not approve your own pull request" in msg:
+                logger.info(
+                    "post_review: skipped self-approval 422 on PR #%d "
+                    "(engine verdict recorded in stage comment)",
+                    pr_number,
+                )
+                return
             logger.warning(
-                "post_review failed for PR #%d, falling back to comment",
+                "post_review unexpected failure on PR #%d — falling back to comment",
                 pr_number,
                 exc_info=True,
             )

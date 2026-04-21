@@ -26,6 +26,10 @@ class PipelineEvent:
     trigger_stage: StageName | None = None
     is_feedback: bool = False
     pr_number: int | None = None
+    # Human (or tracker-native) ticket-closed signal. Engine handles this
+    # without running any AI stage: strip transient stage:* labels, stamp
+    # stage:done, no branch work.
+    is_closed: bool = False
 
 
 __all__ = ["PipelineEvent"]

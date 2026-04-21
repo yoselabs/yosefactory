@@ -79,6 +79,19 @@ class GitHubWorkAdapter:
 
     def _parse_issues_event(self, event: dict) -> PipelineEvent:
         action = event.get("action")
+        if action == "closed":
+            # A human closing the issue is a terminal signal. Return a
+            # marker event so dispatch can clean up (strip stage:* labels,
+            # set stage:done) without running any AI stage. Contract-level
+            # `is_ticket_active` will then short-circuit any later stale
+            # events for this ticket.
+            return PipelineEvent(
+                key=str(event["issue"]["number"]),
+                trigger_stage=None,
+                is_feedback=False,
+                pr_number=None,
+                is_closed=True,
+            )
         if action != "labeled":
             raise SkipEvent(f"issues action {action!r} is not 'labeled'")
 
@@ -276,10 +289,30 @@ class GitHubWorkAdapter:
         logger.debug("set done label on issue %s", key)
 
     def set_blocked(self, key: str, reason: str) -> None:
-        """Add blocked label and post a comment explaining why."""
+        """Add blocked label and post a comment explaining why.
+
+        Idempotent: checks for an existing recent "Blocked: <reason>"
+        comment by the bot and skips posting a duplicate. Label addition is
+        already idempotent on the GH side (adding an existing label is a
+        no-op).
+        """
         issue = self._repo.get_issue(int(key))
         issue.add_to_labels(BLOCKED_LABEL)
-        issue.create_comment(f"Blocked: {reason}")
+        marker = f"Blocked: {reason}"
+        # Scan the last handful of comments for an identical blocked notice.
+        # GH returns issue comments oldest-first; page backwards for speed.
+        try:
+            comments = list(issue.get_comments())
+            for c in reversed(comments[-10:]):
+                body = c.body or ""
+                if body.strip().startswith(marker):
+                    logger.debug("set_blocked: duplicate suppressed for issue %s", key)
+                    return
+        except Exception:  # noqa: BLE001
+            # If the listing fails, fall through and post — a duplicate is
+            # better than a missing signal.
+            logger.debug("set_blocked: dedup check failed", exc_info=True)
+        issue.create_comment(marker)
         logger.debug("set blocked on issue %s: %s", key, reason)
 
     def format_branch(self, ticket_key: str) -> str:
