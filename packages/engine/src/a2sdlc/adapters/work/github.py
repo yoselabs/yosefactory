@@ -267,8 +267,11 @@ class GitHubWorkAdapter:
         logger.debug("set stage label %s on issue %s", new_label, key)
 
     def set_done_label(self, key: str) -> None:
-        """Add the done label to an issue."""
+        """Replace stage:* / agent with the done label."""
         issue = self._repo.get_issue(int(key))
+        for label in issue.labels:
+            if label.name.startswith("stage:") or label.name == TRIGGER_LABEL:
+                issue.remove_from_labels(label)
         issue.add_to_labels(DONE_LABEL)
         logger.debug("set done label on issue %s", key)
 

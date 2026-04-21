@@ -86,6 +86,29 @@ class TestSetDoneLabel:
 
         mock_issue.add_to_labels.assert_called_once_with("stage:done")
 
+    def test_replaces_prior_stage_and_agent_labels(self) -> None:
+        """Done must clean up stage:* and the `agent` trigger label."""
+        adapter = _make_work_adapter()
+        mock_repo = MagicMock()
+        mock_issue = MagicMock()
+        old_stage = MagicMock()
+        old_stage.name = "stage:merge"
+        agent_label = MagicMock()
+        agent_label.name = "agent"
+        unrelated = MagicMock()
+        unrelated.name = "bug"
+        mock_issue.labels = [old_stage, agent_label, unrelated]
+        mock_repo.get_issue.return_value = mock_issue
+        adapter._repo = mock_repo
+
+        adapter.set_done_label("15")
+
+        removed = [c.args[0] for c in mock_issue.remove_from_labels.call_args_list]
+        assert old_stage in removed
+        assert agent_label in removed
+        assert unrelated not in removed
+        mock_issue.add_to_labels.assert_called_once_with("stage:done")
+
 
 @pytest.mark.unit
 class TestSetBlocked:
