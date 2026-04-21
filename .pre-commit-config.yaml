@@ -21,3 +21,10 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+
+      - id: actionlint
+        name: actionlint (GitHub Actions)
+        entry: pnpm lint:actions
+        language: system
+        pass_filenames: false
+        files: ^\.github/workflows/.*\.ya?ml$

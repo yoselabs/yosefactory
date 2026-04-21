@@ -24,6 +24,7 @@ jobs:
           set -euo pipefail
 
           # 1) Find issues that track the just-closed one (native tasklist backref).
+          # shellcheck disable=SC2016  # $owner/$name/$num are GraphQL vars, not shell vars
           TRACKED_IN=$(gh api graphql -f query='
             query($owner:String!,$name:String!,$num:Int!) {
               repository(owner:$owner, name:$name) {
@@ -41,6 +42,7 @@ jobs:
 
           # 2) For each dependent, check ALL its tracked issues are CLOSED.
           for N in $TRACKED_IN; do
+            # shellcheck disable=SC2016  # $owner/$name/$num are GraphQL vars, not shell vars
             ALL_CLOSED=$(gh api graphql -f query='
               query($owner:String!,$name:String!,$num:Int!) {
                 repository(owner:$owner, name:$name) {
