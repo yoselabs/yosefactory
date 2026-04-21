@@ -58,6 +58,39 @@ Promoted to a proper handover when the session ends.
 - **Concurrency group working**: all `issue_comment` trigger runs were cancelled cleanly while `issues` runs queued.
 - **Gate=AUTO end-to-end flowed through all 4 stages** (spec → implement → review → merge) once config was updated. So the state-machine transitions ARE correct; only the per-branch state hygiene was broken.
 
+## Observations — Ticket #10 (add `--version` flag)
+
+Smallest-possible scenario to verify state-hygiene fix end-to-end. Exposed
+three further bugs during MERGE retries:
+
+### Bug trail
+
+1. **"No PR found for branch agent/10"** despite branch having valid state.json.
+   Root cause: `state_mgr.read_state()` ran before `setup_branch` — read from
+   the runner's default checkout (base), which no longer had state.json. Fix:
+   reorder so branch checkout precedes state read. ✅
+
+2. **"Pull Request is still a draft" 405** from `pull.merge()` immediately
+   after `mark_pr_ready` returned success. Root cause: REST `PATCH /pulls/{n}`
+   with `draft:false` silently does nothing; only GraphQL
+   `markPullRequestReadyForReview` works. Fix: use PyGithub's
+   `pull.mark_ready_for_review()`. ✅
+
+3. **Lost state on retry** after the initial pre-merge strip_runtime deleted
+   state.json. Next retry couldn't read pr_number. Fix: flip the contract —
+   drop `strip_runtime` (branch-side, pre-merge), add `cleanup_base`
+   (base-side, post-merge). Branch state stays intact through merge attempts;
+   only a successful merge triggers cleanup. ✅
+
+### End-to-end verification
+
+After fixes 1–3 landed, the same ticket (#10 / PR #11) flowed through the
+pipeline without manual intervention:
+- Issue closed via `Closes #10` link at 10:37:03Z
+- PR #11 merged (squash) at 10:37:03Z
+- main's `.a2sdlc/` = just `config.yaml` (cleanup_base worked)
+- Final stage label = `stage:done` (after set_done_label replacement fix)
+
 ## Fixes landed this session
 
 | # | Fix | Commit |
@@ -68,7 +101,11 @@ Promoted to a proper handover when the session ends.
 | 4 | gitignore `mlflow.db` local dev artifact | d63a683 |
 | 5 | `_parse_issues_event` skip closed issues (superseded) | 0871786 |
 | 6 | Engine-level `WorkAdapter.is_ticket_active` contract | 026afd4 |
-| 7 | Strip `.a2sdlc/{state,logs,handover}` before merge; narrow commit paths | 24abaf8 |
+| 7 | Narrow commit paths; strip runtime on merge (superseded) | 24abaf8 |
+| 8 | Read state AFTER branch setup, not before | a78b404 |
+| 9 | `mark_pr_ready` uses GraphQL `markPullRequestReadyForReview` | 43f3832 |
+| 10 | Post-merge `cleanup_base` replaces pre-merge strip | de4fe90 |
+| 11 | `set_done_label` replaces prior stage labels | f93cc0e |
 
 ## Still-open follow-ups
 
