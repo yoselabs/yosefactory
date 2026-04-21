@@ -10,6 +10,7 @@ Advisory only — always exits 0.
 from __future__ import annotations
 
 import ast
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -129,3 +130,79 @@ def extract_from_file(file: Path, root: Path) -> list[Item]:
             )
 
     return items
+
+
+_PREFIXES: frozenset[str] = frozenset(
+    {
+        "get",
+        "set",
+        "create",
+        "make",
+        "build",
+        "fetch",
+        "load",
+        "update",
+        "delete",
+        "remove",
+        "handle",
+        "parse",
+        "format",
+        "ensure",
+        "is",
+        "has",
+        "to",
+        "from",
+        "run",
+        "do",
+    }
+)
+
+_SUFFIXES: frozenset[str] = frozenset(
+    {
+        "handler",
+        "service",
+        "factory",
+        "provider",
+        "context",
+        "config",
+        "schema",
+        "result",
+        "response",
+        "request",
+        "input",
+        "output",
+        "options",
+        "stage",
+        "adapter",
+    }
+)
+
+
+def _split_identifier(name: str) -> list[str]:
+    # snake_case / kebab-case → spaces
+    s = re.sub(r"[_-]+", " ", name)
+    # camelCase / PascalCase boundaries
+    s = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", s)
+    s = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", s)
+    return [w for w in s.lower().split() if w]
+
+
+def normalize_name(name: str) -> str:
+    words = _split_identifier(name)
+    if not words:
+        return ""
+    start = 0
+    end = len(words)
+    # Alternately strip leading prefixes and trailing suffixes until stable,
+    # but never reduce to zero words.
+    changed = True
+    while changed:
+        changed = False
+        if end - start > 1 and words[end - 1] in _SUFFIXES:
+            end -= 1
+            changed = True
+        if end - start > 1 and words[start] in _PREFIXES:
+            start += 1
+            changed = True
+    final = words[start:end]
+    return "".join(final if final else words)

@@ -5,6 +5,8 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
+import pytest
+
 
 import sys
 
@@ -143,3 +145,27 @@ def test_truncates_long_type_signatures(tmp_path: Path) -> None:
     items = fs.extract_from_file(f, root=tmp_path)
     assert len(items[0].signature) <= 80
     assert items[0].signature.endswith("...")
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("get_ticket", "ticket"),
+        ("getTicket", "ticket"),
+        ("fetch_ticket_handler", "ticket"),
+        ("create_stage_adapter", "stage"),
+        ("TicketAdapter", "ticket"),
+        ("RunResult", "run"),
+        ("parseJiraResponse", "jira"),
+        ("SomethingService", "something"),
+        ("is_ready", "ready"),
+        ("to_from_payload", "payload"),
+        # Fallback: stripping would empty the name — keep original words
+        ("get", "get"),
+        ("handler", "handler"),
+        # Multi-word kept
+        ("ticket_pipeline", "ticketpipeline"),
+    ],
+)
+def test_normalize_name(raw: str, expected: str) -> None:
+    assert fs.normalize_name(raw) == expected
