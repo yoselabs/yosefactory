@@ -71,10 +71,8 @@
 
 ## Logging
 
-- [ ] JSON log formatter doesn't include `extra` fields — structured log data (reason, stage, cost) is invisible in CI
-- [ ] All `logger.info("dispatch.*", extra={...})` calls produce logs without the extra context
-- [ ] Fix: update `setup_logging()` formatter to include extra fields in JSON output
 - [ ] All warnings and errors from adapters should be visible in CI logs for tracing
+- [x] JSON log formatter preserves `extra={...}` fields — fixed 2026-04-21 (56cf481)
 
 ## Idea: Agent Record block inside issue body
 
@@ -107,13 +105,32 @@ Related: BMad's "Agent Record" section in story files, but real-time + tracker-n
 - [ ] `cli/dispatch.py` Mode 2 branch doesn't set `run_id` on `DispatchContext` — check_idempotency is skipped. Pre-existing; surface was widened by telemetry wiring which now keys off session_id.
 - [ ] `MlflowUnreachableError` surfaces as a bare Python traceback through Typer. Wrap in `dispatch_command` and re-raise as `typer.BadParameter` for cleaner CLI UX on misconfigured env.
 
-## Mode 2 auth/trigger follow-ups
+## Mode 2 hardening follow-ups
 
-- [ ] Reviewer identity: engine uses the same App token for both authoring PRs and submitting reviews → GitHub rejects with "Review Can not approve your own pull request" (422). Options: (a) second App for review-only (b) dedicated service-account PAT (c) skip the PR review submission in Mode 2 and transition stage:merge directly based on engine verdict. For smoke, human approves manually.
-- [ ] Engine-side idempotency for Mode 2: `cli/dispatch.py` Mode 2 branch doesn't set `run_id`, so `check_idempotency` is skipped. When two events for the same issue reach `pipeline.dispatch()` simultaneously, both execute the stage. Workflow `concurrency:` group serializes at GHA level, but stage runs that re-trigger themselves (e.g. push after commit → issues event) can still re-enter. Derive `run_id` from `f"{ticket_key}:{stage}:{head_sha}"` or similar and enforce idempotency in-engine.
-- [ ] Engine-side token sniff: `cli/dispatch.py` should detect a `ghs_`-prefixed `GITHUB_TOKEN` (the GitHub Actions default) and refuse to run with a clear error. Current behavior (silent non-triggering) breaks the state machine invisibly. Fail-early matches the workflow preflight we added.
-- [ ] `agent` label lingers on issue after `stage:implement` is set — engine should remove `agent` when it transitions to any `stage:*`. Observed during first successful run.
-- [ ] Existing-PR reuse in SPEC stage: `GitHubReviewAdapter.create_draft_pr` should look up an existing PR by `head=branch` and return its number instead of raising 422. Retry-safety after partial failures.
+See `docs/superpowers/handovers/2026-04-21-mode2-followups.md` for the
+full prioritized list (P0 / P1 / P2) and Phase 2 ship criteria.
+
+Short version of what's still open:
+
+- **P0.1** Mode 2 engine-level idempotency (`ctx.run_id`)
+- **P0.2** Reviewer identity (recommend option (c): skip PR review API)
+- **P0.3** State storage race on concurrent merges (short-term retry, medium-term orphan branch)
+- **P0.4** Label ≡ state.json coherence
+- **P0.5** Error UX — tracebacks in CI instead of structured issue comment
+- **P1.1** Engine-side `ghs_`-prefixed token sniff
+- **P1.2** `issues:closed` → engine cleanup
+- **P1.3** Suppress duplicate PR fallback comment on APPROVE self-review
+- **P1.4** Document `gates.merge: auto` and required secrets for consumers
+
+Fixed this session (2026-04-21):
+
+- [x] `agent` label lingers alongside `stage:*` (3f046ca)
+- [x] Existing-PR reuse in SPEC stage (3f046ca)
+- [x] Engine-level closed-issue / ticket-not-active contract (026afd4)
+- [x] Per-ticket state leaking into base branch on squash-merge (24abaf8, de4fe90)
+- [x] Read state AFTER branch setup (a78b404)
+- [x] `mark_pr_ready` uses GraphQL, not REST PATCH (43f3832)
+- [x] `set_done_label` replaces prior stage labels (f93cc0e)
 
 ## Test infrastructure follow-ups
 
