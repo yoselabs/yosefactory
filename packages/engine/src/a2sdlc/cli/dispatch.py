@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -18,11 +19,64 @@ logger = logging.getLogger("a2sdlc.cli.dispatch")
 # ── Logging ──────────────────────────────────────────────────────────
 
 
+# LogRecord attributes that are not user-provided `extra={...}` fields.
+# Anything not in this set (and not starting with "_") is treated as an extra
+# and serialized into the JSON output.
+_STANDARD_LOGRECORD_ATTRS = frozenset(
+    {
+        "args",
+        "asctime",
+        "created",
+        "exc_info",
+        "exc_text",
+        "filename",
+        "funcName",
+        "levelname",
+        "levelno",
+        "lineno",
+        "message",
+        "module",
+        "msecs",
+        "msg",
+        "name",
+        "pathname",
+        "process",
+        "processName",
+        "relativeCreated",
+        "stack_info",
+        "thread",
+        "threadName",
+        "taskName",
+    }
+)
+
+
+class _JsonFormatter(logging.Formatter):
+    """JSON log formatter that preserves `extra={...}` kwargs."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload: dict[str, object] = {
+            "ts": self.formatTime(record),
+            "level": record.levelname,
+            "module": record.name,
+            "msg": record.getMessage(),
+        }
+        for key, value in record.__dict__.items():
+            if key in _STANDARD_LOGRECORD_ATTRS or key.startswith("_"):
+                continue
+            try:
+                json.dumps(value)
+                payload[key] = value
+            except (TypeError, ValueError):
+                payload[key] = repr(value)
+        if record.exc_info:
+            payload["exc"] = self.formatException(record.exc_info)
+        return json.dumps(payload, default=str)
+
+
 def setup_logging(ticket_key: str, stage: str, project_root: Path) -> None:
     """Configure structured JSON logging to stderr + file."""
-    formatter = logging.Formatter(
-        '{"ts":"%(asctime)s","level":"%(levelname)s","module":"%(name)s","msg":"%(message)s"}'
-    )
+    formatter = _JsonFormatter()
 
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)

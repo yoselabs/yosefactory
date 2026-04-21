@@ -145,6 +145,33 @@ class TestSetupLogging:
         log_files = list(log_dir.glob("PROJ-1-implement-*.log"))
         assert len(log_files) == 1
 
+    def test_setup_logging_preserves_extra_fields(self, tmp_path: Path) -> None:
+        """`extra={...}` kwargs on logger calls must appear in JSON output."""
+        import json
+        import logging
+
+        # Reset root handlers so assertions see only this test's output.
+        root = logging.getLogger()
+        for h in list(root.handlers):
+            root.removeHandler(h)
+
+        setup_logging("PROJ-1", "implement", tmp_path)
+        logging.getLogger("a2sdlc.test").info(
+            "dispatch.route",
+            extra={"target_stage": "implement", "is_feedback": True},
+        )
+        for h in root.handlers:
+            h.flush()
+
+        log_file = next((tmp_path / ".a2sdlc" / "logs").glob("PROJ-1-implement-*.log"))
+        lines = [
+            json.loads(ln) for ln in log_file.read_text().splitlines() if ln.strip()
+        ]
+        route = next(ln for ln in lines if ln["msg"] == "dispatch.route")
+        assert route["target_stage"] == "implement"
+        assert route["is_feedback"] is True
+        assert route["level"] == "INFO"
+
 
 # ── main ─────────────────────────────────────────────────────────────
 
