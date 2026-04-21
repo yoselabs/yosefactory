@@ -122,7 +122,15 @@ class LocalGitAdapter:
             self._repo.git.commit(
                 "-m", "chore(a2sdlc): strip runtime artifacts from base"
             )
-            self._repo.git.push("origin", base)
+            try:
+                self._repo.git.push("origin", base)
+            except GitCommandError:
+                # Concurrent merge on the same base raced us — another
+                # ticket pushed while we were committing. Rebase on top
+                # of the remote and retry once. If this also fails, the
+                # caller's warning-and-move-on path handles it.
+                self._repo.git.pull("origin", base, "--rebase")
+                self._repo.git.push("origin", base)
             return True
         finally:
             # Best-effort: return to the caller's branch even on error.

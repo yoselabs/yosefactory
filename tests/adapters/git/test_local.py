@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
+from git.exc import GitCommandError
 
 from a2sdlc.adapters.git import LocalGitAdapter
 from a2sdlc.domain.exceptions import BlockedError
@@ -98,6 +99,33 @@ class TestCommitArtifacts:
 
         assert result is False
         mock_repo.git.commit.assert_not_called()
+
+
+@pytest.mark.unit
+class TestCleanupBase:
+    def test_retries_push_after_non_fast_forward(self, tmp_path: Path) -> None:
+        """Concurrent merge on base branch → rebase-and-retry once."""
+        runtime_file = tmp_path / ".a2sdlc" / "state.json"
+        runtime_file.parent.mkdir(parents=True)
+        runtime_file.write_text("{}")
+
+        with patch("a2sdlc.adapters.git.local.Repo") as MockRepo:
+            mock_repo = MockRepo.return_value
+            mock_repo.git = MagicMock()
+            mock_repo.is_dirty.return_value = True
+            type(mock_repo.active_branch).name = PropertyMock(return_value="agent/15")
+            # First push rejected (concurrent merge), second push succeeds.
+            mock_repo.git.push.side_effect = [
+                GitCommandError("push", "non-fast-forward"),
+                None,
+            ]
+
+            adapter = LocalGitAdapter(tmp_path)
+            assert adapter.cleanup_base("main") is True
+
+        # push called twice (original + retry), pull --rebase called once.
+        assert mock_repo.git.push.call_count == 2
+        mock_repo.git.pull.assert_any_call("origin", "main", "--rebase")
 
 
 @pytest.mark.unit
