@@ -291,3 +291,6 @@ __marimo__/
 .streamlit/secrets.toml
 .a2sdlc/state.json
 .claude/worktrees/
+
+# Local MLflow sqlite (dev runs)
+mlflow.db
