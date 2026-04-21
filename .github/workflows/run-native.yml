@@ -48,7 +48,11 @@ jobs:
 
       - name: Dispatch
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          # Use A2SDLC_BOT_TOKEN if set (a PAT) so label/comment events the
+          # engine writes re-trigger the workflow. github.token is anti-loop
+          # protected — its events do NOT fire subsequent workflow runs.
+          # Fall back to github.token for local/no-chain use.
+          GITHUB_TOKEN: ${{ secrets.A2SDLC_BOT_TOKEN || github.token }}
           # Subscription auth (Claude Code OAuth token). Do NOT also set
           # ANTHROPIC_API_KEY — when both are present the CLI picks API key
           # mode (pay-per-token), which fails when the value is an OAuth token.
