@@ -19,6 +19,9 @@ markers = [
 env = ["A2SDLC_TEST=1"]
 asyncio_mode = "auto"
 
+[tool.ty]
+rules = { unresolved-import = "ignore" }
+
 [tool.importlinter]
 root_packages = ["a2sdlc"]
 
