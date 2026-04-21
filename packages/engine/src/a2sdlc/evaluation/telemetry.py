@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import os
 from collections.abc import Iterator
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast, runtime_checkable
@@ -30,12 +31,12 @@ class RunHandle(Protocol):
 
 @runtime_checkable
 class StageOpener(Protocol):
-    def stage(self, name: str) -> Iterator[RunHandle]: ...
+    def stage(self, name: str) -> AbstractContextManager[RunHandle]: ...
 
 
 @runtime_checkable
 class Telemetry(Protocol):
-    def session(self, session_id: str) -> Iterator[StageOpener]: ...
+    def session(self, session_id: str) -> AbstractContextManager[StageOpener]: ...
 
     @property
     def traces_enabled(self) -> bool: ...

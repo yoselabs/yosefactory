@@ -180,9 +180,9 @@ def _run_stage_impl(
     quality = None
     ok = False
     try:
-        result, quality = run_tracked(
+        result, quality = run_tracked(  # ty: ignore[missing-argument]  # TODO Task 5: replace sink= with telemetry=
             dispatch_fn=lambda: dispatch(ctx),
-            sink=sink,
+            sink=sink,  # ty: ignore[unknown-argument]
             stage=stage,
             session_id=session_id,
             project_root=project_root,

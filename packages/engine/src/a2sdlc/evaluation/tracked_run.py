@@ -1,4 +1,4 @@
-"""Orchestrate a dispatch run under an MLflow sink + quality-gate.
+"""Orchestrate a dispatch run under a Telemetry + quality-gate.
 
 Pulls the tracking orchestration out of the CLI. Takes a zero-arg async
 ``dispatch_fn`` (caller has already bound the ``DispatchContext``) so this
@@ -10,14 +10,12 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Coroutine
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from a2sdlc.domain.models import StageName
 from a2sdlc.domain.run_result import DispatchResult
 from a2sdlc.evaluation.quality_gate import QualityResult, run_quality_gate
-
-if TYPE_CHECKING:
-    from a2sdlc.evaluation.mlflow_sink import MlflowSink
+from a2sdlc.evaluation.telemetry import Telemetry
 
 
 DispatchFn = Callable[[], Coroutine[Any, Any, DispatchResult]]
@@ -26,7 +24,7 @@ DispatchFn = Callable[[], Coroutine[Any, Any, DispatchResult]]
 def run_tracked(
     *,
     dispatch_fn: DispatchFn,
-    sink: "MlflowSink | None",
+    telemetry: Telemetry,
     stage: StageName,
     session_id: str,
     project_root: Path,
@@ -34,48 +32,40 @@ def run_tracked(
     sha_before: str,
     dirty: bool,
 ) -> tuple[DispatchResult, QualityResult | None]:
-    """Run ``dispatch_fn``; log metrics/artifacts if ``sink`` is active.
+    """Run ``dispatch_fn`` under the given telemetry; log metrics + quality artifact.
 
-    On IMPLEMENT stages that succeed, also runs the quality gate and logs
-    its artifact to the active MLflow child run.
+    ``telemetry`` is never ``None`` — pass ``NoopTelemetry()`` to disable.
     """
-    if sink is None:
-        result = asyncio.run(dispatch_fn())
-        quality = _maybe_run_quality_gate(stage, result, project_root, quality_command)
-        return result, quality
-
-    import mlflow as _mlflow  # noqa: PLC0415
-
     with (
-        sink.session(session_id) as sess,
-        sess.stage_run(stage=stage.value) as child,
+        telemetry.session(session_id) as opener,
+        opener.stage(stage.value) as run,
     ):
-        child.log_tag("git_sha_before", sha_before)
-        child.log_tag("dirty_tree_before", "true" if dirty else "false")
-        child.log_tag("session_id", session_id)
+        run.log_tag("git_sha_before", sha_before)
+        run.log_tag("dirty_tree_before", "true" if dirty else "false")
+        run.log_tag("session_id", session_id)
 
         result = asyncio.run(dispatch_fn())
 
         stats = result.stats
         if stats is not None:
-            child.log_metric("tokens_in", stats.tokens_in)
-            child.log_metric("tokens_out", stats.tokens_out)
-            child.log_metric("cost_usd", stats.cost_usd)
-            child.log_metric("turns", stats.num_turns)
-            child.log_metric("duration_ms", stats.duration_ms)
+            run.log_metric("tokens_in", stats.tokens_in)
+            run.log_metric("tokens_out", stats.tokens_out)
+            run.log_metric("cost_usd", stats.cost_usd)
+            run.log_metric("turns", stats.num_turns)
+            run.log_metric("duration_ms", stats.duration_ms)
 
-        _mlflow.log_dict(
+        run.log_dict(
             _stage_output_artifact(stage, session_id, result),
             f"{stage.value}-output.json",
         )
 
         quality = _maybe_run_quality_gate(stage, result, project_root, quality_command)
         if quality is not None:
-            child.log_metric("quality_passed", 1 if quality.passed else 0)
+            run.log_metric("quality_passed", 1 if quality.passed else 0)
             artifact_path = project_root / ".a2sdlc" / "quality.log"
             artifact_path.parent.mkdir(parents=True, exist_ok=True)
             artifact_path.write_text(quality.output)
-            _mlflow.log_artifact(str(artifact_path))
+            run.log_artifact(str(artifact_path))
 
     return result, quality
 
