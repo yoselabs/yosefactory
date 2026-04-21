@@ -273,7 +273,7 @@ class GitHubWorkAdapter:
                 return _LABEL_TO_STAGE[label.name]
         return None
 
-    def set_stage_label(self, key: str, stage: StageName) -> None:
+    def set_current_stage(self, key: str, stage: StageName) -> None:
         """Remove all existing stage:* labels + the trigger label, add the new stage."""
         issue = self._repo.get_issue(int(key))
         stage_prefix = "stage:"
@@ -287,7 +287,7 @@ class GitHubWorkAdapter:
         issue.add_to_labels(new_label)
         logger.debug("set stage label %s on issue %s", new_label, key)
 
-    def set_done_label(self, key: str) -> None:
+    def mark_done(self, key: str) -> None:
         """Mark the ticket done: close the issue + strip transient labels.
 
         For tracker-agnostic parity (Jira's "Done" status is the native
@@ -306,7 +306,7 @@ class GitHubWorkAdapter:
             issue.edit(state="closed")
         logger.debug("marked issue %s done (closed + stripped labels)", key)
 
-    def set_blocked(self, key: str, reason: str) -> None:
+    def mark_blocked(self, key: str, reason: str) -> None:
         """Add blocked label and post a comment explaining why.
 
         Idempotent: checks for an existing recent "Blocked: <reason>"
@@ -324,12 +324,12 @@ class GitHubWorkAdapter:
             for c in reversed(comments[-10:]):
                 body = c.body or ""
                 if body.strip().startswith(marker):
-                    logger.debug("set_blocked: duplicate suppressed for issue %s", key)
+                    logger.debug("mark_blocked: duplicate suppressed for issue %s", key)
                     return
         except Exception:  # noqa: BLE001
             # If the listing fails, fall through and post — a duplicate is
             # better than a missing signal.
-            logger.debug("set_blocked: dedup check failed", exc_info=True)
+            logger.debug("mark_blocked: dedup check failed", exc_info=True)
         issue.create_comment(marker)
         logger.debug("set blocked on issue %s: %s", key, reason)
 

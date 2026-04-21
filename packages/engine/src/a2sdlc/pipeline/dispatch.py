@@ -73,7 +73,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
     # Handled before is_ticket_active because the close IS the signal.
     if event.is_closed:
         ctx.logger.info("dispatch.ticket_closed", extra={"key": event.key})
-        ctx.work.set_done_label(event.key)
+        ctx.work.mark_done(event.key)
         return DispatchResult(stage=StageName.MERGE, error="ticket_closed")
 
     # 1.6. Skip stages on terminal tickets (stale delayed events, etc.).
@@ -167,7 +167,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
         ctx.logger.info("dispatch.branch_setup", extra={"branch": branch, "base": base})
     except BlockedError as e:
         ctx.logger.error("dispatch.git_blocked", extra={"reason": e.reason})
-        ctx.work.set_blocked(event.key, e.reason)
+        ctx.work.mark_blocked(event.key, e.reason)
         return DispatchResult(stage=target_stage, blocked=True, error=e.reason)
 
     # 4. Read state + idempotency check (branch is now checked out)
@@ -187,7 +187,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
                 f"exceeded max ({_cb_config.max_review_cycles})"
             )
             ctx.logger.error("dispatch.circuit_breaker", extra={"cycles": cycles})
-            ctx.work.set_blocked(event.key, reason)
+            ctx.work.mark_blocked(event.key, reason)
             return DispatchResult(stage=target_stage, blocked=True, error=reason)
 
     # 6. Draft PR creation (on spec stage if no PR exists yet)
@@ -251,7 +251,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
                 if pr_number is None:
                     reason = f"No PR found for branch {branch}"
                     comment.finalize(f"\U0001f6a8 {reason}")
-                    ctx.work.set_blocked(event.key, reason)
+                    ctx.work.mark_blocked(event.key, reason)
                     _stage_error = reason
                     return DispatchResult(
                         stage=StageName.MERGE, blocked=True, error=reason
@@ -278,7 +278,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
                 except Exception:  # noqa: BLE001
                     ctx.logger.warning("dispatch.base_cleanup_failed", exc_info=True)
                 comment.finalize("\u2705 Merged")
-                ctx.work.set_done_label(event.key)
+                ctx.work.mark_done(event.key)
                 ctx.logger.info("dispatch.merged", extra={"pr": pr_number})
                 _stage_success = True
                 _stage_error = None
@@ -367,7 +367,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
                 )
                 comment.finalize(error_comment)
                 _commit_and_push()
-                ctx.work.set_blocked(event.key, exec_result.error or "unknown")
+                ctx.work.mark_blocked(event.key, exec_result.error or "unknown")
                 _stage_error = exec_result.error or "unknown"
                 return DispatchResult(
                     stage=target_stage,
@@ -395,7 +395,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
                 )
                 comment.finalize(error_msg)
                 _commit_and_push()
-                ctx.work.set_blocked(event.key, "no status block in output")
+                ctx.work.mark_blocked(event.key, "no status block in output")
                 _stage_error = "no_status_block"
                 return DispatchResult(
                     stage=target_stage,
@@ -467,7 +467,7 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
             )
 
             if next_st is not None:
-                ctx.work.set_stage_label(event.key, next_st)
+                ctx.work.set_current_stage(event.key, next_st)
 
             _stage_success = True
             _stage_error = None

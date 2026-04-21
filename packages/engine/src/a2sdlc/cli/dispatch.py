@@ -335,6 +335,6 @@ def _notify_stage_failure(ctx, reason: str, dispatcher_url: str | None) -> None:
         marker = f"Stage failed: {reason}" + (
             f" — see run: {run_url}" if run_url else ""
         )
-        ctx.work.set_blocked(key, marker)
+        ctx.work.mark_blocked(key, marker)
     except Exception:  # noqa: BLE001
         logger.warning("stage_failure_notify_failed", exc_info=True)

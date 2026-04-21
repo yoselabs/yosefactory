@@ -327,9 +327,9 @@ def test_update_progress_is_a_noop(tmp_path):
     assert adapter.update_progress(cid, "progress body") is None
 
 
-def test_set_stage_label_logs_and_does_not_crash(tmp_path, caplog):
+def test_set_current_stage_logs_and_does_not_crash(tmp_path, caplog):
     """GIVEN any adapter
-    WHEN set_stage_label is called
+    WHEN set_current_stage is called
     THEN an INFO log is emitted naming the stage and key."""
     adapter = LocalFileWorkAdapter(
         project_root=tmp_path,
@@ -338,14 +338,14 @@ def test_set_stage_label_logs_and_does_not_crash(tmp_path, caplog):
         ticket_path=None,
     )
     with caplog.at_level(logging.INFO, logger="a2sdlc.adapters.work.local_file"):
-        adapter.set_stage_label("sid-1", StageName.IMPLEMENT)
+        adapter.set_current_stage("sid-1", StageName.IMPLEMENT)
 
-    assert any("set_stage_label" in r.message for r in caplog.records)
+    assert any("set_current_stage" in r.message for r in caplog.records)
 
 
-def test_set_done_label_logs_and_does_not_crash(tmp_path, caplog):
+def test_mark_done_logs_and_does_not_crash(tmp_path, caplog):
     """GIVEN any adapter
-    WHEN set_done_label is called
+    WHEN mark_done is called
     THEN an INFO log is emitted naming the key."""
     adapter = LocalFileWorkAdapter(
         project_root=tmp_path,
@@ -354,14 +354,14 @@ def test_set_done_label_logs_and_does_not_crash(tmp_path, caplog):
         ticket_path=None,
     )
     with caplog.at_level(logging.INFO, logger="a2sdlc.adapters.work.local_file"):
-        adapter.set_done_label("sid-1")
+        adapter.mark_done("sid-1")
 
-    assert any("set_done_label" in r.message for r in caplog.records)
+    assert any("mark_done" in r.message for r in caplog.records)
 
 
-def test_set_blocked_logs_and_does_not_crash(tmp_path, caplog):
+def test_mark_blocked_logs_and_does_not_crash(tmp_path, caplog):
     """GIVEN any adapter
-    WHEN set_blocked is called with a reason
+    WHEN mark_blocked is called with a reason
     THEN an INFO log is emitted naming the reason."""
     adapter = LocalFileWorkAdapter(
         project_root=tmp_path,
@@ -370,7 +370,7 @@ def test_set_blocked_logs_and_does_not_crash(tmp_path, caplog):
         ticket_path=None,
     )
     with caplog.at_level(logging.INFO, logger="a2sdlc.adapters.work.local_file"):
-        adapter.set_blocked("sid-1", "no upstream")
+        adapter.mark_blocked("sid-1", "no upstream")
 
     assert any("no upstream" in r.message for r in caplog.records)
 

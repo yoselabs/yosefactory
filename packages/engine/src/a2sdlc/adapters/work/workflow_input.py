@@ -66,13 +66,13 @@ class WorkflowInputReader:
         # back from the tracker. Return None to force callers to state.json.
         return None
 
-    def set_stage_label(self, *args, **kwargs) -> None:
+    def set_current_stage(self, *args, **kwargs) -> None:
         return None
 
-    def set_done_label(self, *args, **kwargs) -> None:
+    def mark_done(self, *args, **kwargs) -> None:
         return None
 
-    def set_blocked(self, *args, **kwargs) -> None:
+    def mark_blocked(self, *args, **kwargs) -> None:
         return None
 
     def format_branch(self, ticket_key: str) -> str:

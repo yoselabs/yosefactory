@@ -197,11 +197,12 @@ when the broader rename PR lands).
 added to the protocol; GH reads the `stage:*` label, Jira (future) reads
 the status. This is the first piece of the stage-position abstraction.
 
-**Still to do (decision #4 greenlit — "if we need to do that, let's do
-it"):**
-- Rename `set_stage_label` → `set_current_stage`, `set_blocked` →
-  `mark_blocked`, `set_done_label` → `mark_done`. Mechanical but touches
-  many files; land in a dedicated PR.
+**Rename landed 2026-04-21.** `set_stage_label` → `set_current_stage`,
+`set_blocked` → `mark_blocked`, `set_done_label` → `mark_done` across
+protocol, GH/LocalFile/WorkflowInput impls, FakeWorkAdapter, dispatch,
+and all tests. 542 tests pass.
+
+**Still to do:**
 - Move pipeline ledger (pr_number, review_cycles, cost) off the ticket
   branch: orphan branch for GH mode (`a2sdlc/state/{key}`), dispatcher KV
   for Jira mode. `StateManager` accepts a pluggable backend.

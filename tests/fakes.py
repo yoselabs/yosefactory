@@ -108,13 +108,13 @@ class FakeWorkAdapter:
                     return None
         return None
 
-    def set_stage_label(self, key: str, stage: StageName) -> None:
+    def set_current_stage(self, key: str, stage: StageName) -> None:
         self.label_history.append((key, f"stage:{stage.value}"))
 
-    def set_done_label(self, key: str) -> None:
+    def mark_done(self, key: str) -> None:
         self.label_history.append((key, "stage:done"))
 
-    def set_blocked(self, key: str, reason: str) -> None:
+    def mark_blocked(self, key: str, reason: str) -> None:
         self.blocked.append((key, reason))
 
     def format_branch(self, ticket_key: str) -> str:

@@ -55,9 +55,9 @@ def test_no_op_write_methods_return_sentinels_or_none():
     # All other writes are no-ops.
     assert reader.update_progress("id", "body") is None
     assert reader.finalize_comment("id", "body") is None
-    assert reader.set_stage_label("A2X-42", StageName.IMPLEMENT) is None
-    assert reader.set_done_label("A2X-42") is None
-    assert reader.set_blocked("A2X-42", "reason") is None
+    assert reader.set_current_stage("A2X-42", StageName.IMPLEMENT) is None
+    assert reader.mark_done("A2X-42") is None
+    assert reader.mark_blocked("A2X-42", "reason") is None
     # Read-only no-ops.
     assert reader.get_labels("A2X-42") == []
     assert reader.find_last_handover("A2X-42") is None

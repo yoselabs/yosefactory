@@ -145,28 +145,28 @@ def test_format_branch_works_for_various_keys(adapter: FakeWorkAdapter) -> None:
 # ── label_history ──────────────────────────────────────────────────────
 
 
-def test_set_stage_label_records_key_and_label(adapter: FakeWorkAdapter) -> None:
-    adapter.set_stage_label("PROJ-1", StageName.IMPLEMENT)
+def test_set_current_stage_records_key_and_label(adapter: FakeWorkAdapter) -> None:
+    adapter.set_current_stage("PROJ-1", StageName.IMPLEMENT)
     assert ("PROJ-1", "stage:implement") in adapter.label_history
 
 
-def test_set_stage_label_records_multiple_calls(adapter: FakeWorkAdapter) -> None:
-    adapter.set_stage_label("PROJ-1", StageName.SPEC)
-    adapter.set_stage_label("PROJ-1", StageName.IMPLEMENT)
+def test_set_current_stage_records_multiple_calls(adapter: FakeWorkAdapter) -> None:
+    adapter.set_current_stage("PROJ-1", StageName.SPEC)
+    adapter.set_current_stage("PROJ-1", StageName.IMPLEMENT)
     assert len(adapter.label_history) == 2
 
 
 # ── blocked ───────────────────────────────────────────────────────────
 
 
-def test_set_blocked_records_key_and_reason(adapter: FakeWorkAdapter) -> None:
-    adapter.set_blocked("PROJ-1", "conflict on branch")
+def test_mark_blocked_records_key_and_reason(adapter: FakeWorkAdapter) -> None:
+    adapter.mark_blocked("PROJ-1", "conflict on branch")
     assert ("PROJ-1", "conflict on branch") in adapter.blocked
 
 
-def test_set_blocked_records_multiple(adapter: FakeWorkAdapter) -> None:
-    adapter.set_blocked("PROJ-1", "reason A")
-    adapter.set_blocked("PROJ-2", "reason B")
+def test_mark_blocked_records_multiple(adapter: FakeWorkAdapter) -> None:
+    adapter.mark_blocked("PROJ-1", "reason A")
+    adapter.mark_blocked("PROJ-2", "reason B")
     assert len(adapter.blocked) == 2
 
 

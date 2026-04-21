@@ -22,7 +22,7 @@ def _make_work_adapter(trigger_mention: str = "@a2sdlc") -> GitHubWorkAdapter:
 
 
 @pytest.mark.unit
-class TestSetStageLabel:
+class TestSetCurrentStage:
     def test_removes_old_sets_new(self) -> None:
         adapter = _make_work_adapter()
         mock_repo = MagicMock()
@@ -35,7 +35,7 @@ class TestSetStageLabel:
         mock_repo.get_issue.return_value = mock_issue
         adapter._repo = mock_repo
 
-        adapter.set_stage_label("15", StageName.IMPLEMENT)
+        adapter.set_current_stage("15", StageName.IMPLEMENT)
 
         mock_issue.remove_from_labels.assert_called_once_with(old_label)
         mock_issue.add_to_labels.assert_called_once_with("stage:implement")
@@ -51,7 +51,7 @@ class TestSetStageLabel:
         mock_repo.get_issue.return_value = mock_issue
         adapter._repo = mock_repo
 
-        adapter.set_stage_label("15", StageName.SPEC)
+        adapter.set_current_stage("15", StageName.SPEC)
 
         mock_issue.remove_from_labels.assert_called_once_with(agent_label)
         mock_issue.add_to_labels.assert_called_once_with("stage:spec")
@@ -66,14 +66,14 @@ class TestSetStageLabel:
         mock_repo.get_issue.return_value = mock_issue
         adapter._repo = mock_repo
 
-        adapter.set_stage_label("15", StageName.SPEC)
+        adapter.set_current_stage("15", StageName.SPEC)
 
         mock_issue.remove_from_labels.assert_not_called()
         mock_issue.add_to_labels.assert_called_once_with("stage:spec")
 
 
 @pytest.mark.unit
-class TestSetDoneLabel:
+class TestMarkDone:
     def test_closes_issue_and_strips_labels(self) -> None:
         adapter = _make_work_adapter()
         mock_repo = MagicMock()
@@ -83,7 +83,7 @@ class TestSetDoneLabel:
         mock_repo.get_issue.return_value = mock_issue
         adapter._repo = mock_repo
 
-        adapter.set_done_label("15")
+        adapter.mark_done("15")
 
         mock_issue.edit.assert_called_once_with(state="closed")
         mock_issue.add_to_labels.assert_not_called()
@@ -98,7 +98,7 @@ class TestSetDoneLabel:
         mock_repo.get_issue.return_value = mock_issue
         adapter._repo = mock_repo
 
-        adapter.set_done_label("15")
+        adapter.mark_done("15")
 
         mock_issue.edit.assert_not_called()
 
@@ -118,7 +118,7 @@ class TestSetDoneLabel:
         mock_repo.get_issue.return_value = mock_issue
         adapter._repo = mock_repo
 
-        adapter.set_done_label("15")
+        adapter.mark_done("15")
 
         removed = [c.args[0] for c in mock_issue.remove_from_labels.call_args_list]
         assert old_stage in removed
@@ -129,7 +129,7 @@ class TestSetDoneLabel:
 
 
 @pytest.mark.unit
-class TestSetBlocked:
+class TestMarkBlocked:
     def test_adds_label_and_comment(self) -> None:
         adapter = _make_work_adapter()
         mock_repo = MagicMock()
@@ -137,7 +137,7 @@ class TestSetBlocked:
         mock_repo.get_issue.return_value = mock_issue
         adapter._repo = mock_repo
 
-        adapter.set_blocked("15", "merge conflict")
+        adapter.mark_blocked("15", "merge conflict")
 
         mock_issue.add_to_labels.assert_called_once_with("stage:blocked")
         mock_issue.create_comment.assert_called_once()
