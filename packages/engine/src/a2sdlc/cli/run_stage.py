@@ -81,7 +81,7 @@ def _build_runner(
 ) -> StageRunner:
     """Construct the StageRunner. ``runner_override='fake'`` is a test hook."""
     if runner_override == "fake":
-        from tests.fakes import FakeStageRunner  # noqa: PLC0415
+        from tests.fakes import FakeStageRunner  # noqa: PLC0415  # ty: ignore[unresolved-import]
 
         return FakeStageRunner()
     from a2sdlc.pipeline.runner import SdkStageRunner  # noqa: PLC0415
