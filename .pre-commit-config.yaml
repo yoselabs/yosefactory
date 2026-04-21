@@ -14,3 +14,10 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+
+      - id: jscpd
+        name: jscpd (copy-paste detection)
+        entry: pnpm lint:jscpd
+        language: system
+        pass_filenames: false
+        always_run: true

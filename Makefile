@@ -1,7 +1,12 @@
-.PHONY: lint fix test check coverage-diff security-audit arch bootstrap
+.PHONY: lint lint-harness lint-jscpd lint-actions fix test check coverage-diff security-audit arch bootstrap similar
 
-lint:
+lint: lint-harness lint-jscpd
+
+lint-harness:
 	agent-harness lint
+
+lint-jscpd:
+	pnpm lint:jscpd
 
 fix:
 	agent-harness fix
