@@ -51,6 +51,14 @@ def extract_target(name: str, inp: dict, project_root: str) -> str:
         return f"`{cmd[:60]}`" if cmd else ""
     if name == "Skill":
         return inp.get("skill", "")
+    if name in ("Agent", "Task"):
+        # Subagent dispatch (Claude Code: Agent, Agent SDK: Task). The
+        # caller-supplied `description` is a short 3–5 word purpose;
+        # fall back to subagent_type when absent.
+        desc = inp.get("description", "")
+        if desc:
+            return desc[:60]
+        return inp.get("subagent_type", "")
     if name == "TodoWrite":
         todos = inp.get("todos", [])
         if isinstance(todos, list) and todos:

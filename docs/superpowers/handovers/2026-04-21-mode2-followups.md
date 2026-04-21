@@ -352,18 +352,18 @@ backend) to batch the smoke-requiring work.
 
 ## P2 — UX polish
 
-### P2.1 · "Agent" row in tool timeline has empty target column
+### P2.1 · "Agent" row in tool timeline has empty target column ✅
 
-Observed in ticket #2/#8/#10 live comments. Subagent dispatches appear as
-`| 3:18 | Agent |  |` — the target column is blank. Could show the
-subagent's declared purpose (first word of its prompt, e.g. "review",
-"research").
+**Landed 2026-04-21.** `extract_target` in `domain/progress_format.py`
+now handles `Agent` and `Task` tool names: prefers `description` (the
+caller-supplied 3–5 word purpose), falls back to `subagent_type`.
 
-### P2.2 · Stage comments don't link to the PR
+### P2.2 · Stage comments don't link to the PR ✅
 
-Issue comments say "✅ Merged" but don't link to the PR that merged.
-Humans must scroll up to find the PR number. Similarly, PR lacks a
-back-link to the originating issue beyond `Closes #N` in the body.
+**Landed 2026-04-21.** Merge finalize comment now reads
+`✅ Merged #{pr_number}` — GH auto-links `#N` to the PR in the same
+repo so humans can jump to the diff in one click. PR-side back-link to
+the issue beyond `Closes #N` was not part of this fix.
 
 ### P2.3 · `needs-input` / clarification label management
 

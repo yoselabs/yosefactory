@@ -76,6 +76,22 @@ class TestExtractTarget:
         result = extract_target("Skill", {"skill": "brainstorming"}, "/tmp/p")
         assert result == "brainstorming"
 
+    def test_agent_prefers_description(self) -> None:
+        result = extract_target(
+            "Agent",
+            {"description": "review auth module", "subagent_type": "code-reviewer"},
+            "/tmp/p",
+        )
+        assert result == "review auth module"
+
+    def test_agent_falls_back_to_subagent_type(self) -> None:
+        result = extract_target("Agent", {"subagent_type": "code-reviewer"}, "/tmp/p")
+        assert result == "code-reviewer"
+
+    def test_task_same_shape_as_agent(self) -> None:
+        result = extract_target("Task", {"description": "run smoke"}, "/tmp/p")
+        assert result == "run smoke"
+
     def test_unknown_tool(self) -> None:
         result = extract_target("CustomTool", {"arg": "val"}, "/tmp/p")
         assert result == ""

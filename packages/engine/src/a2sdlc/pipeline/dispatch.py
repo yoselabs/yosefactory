@@ -277,7 +277,9 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
                     ctx.git.cleanup_base(base)
                 except Exception:  # noqa: BLE001
                     ctx.logger.warning("dispatch.base_cleanup_failed", exc_info=True)
-                comment.finalize("\u2705 Merged")
+                # GH auto-links #N in the same repo so humans can jump
+                # to the diff without scrolling the issue timeline.
+                comment.finalize(f"\u2705 Merged #{pr_number}")
                 ctx.work.mark_done(event.key)
                 ctx.logger.info("dispatch.merged", extra={"pr": pr_number})
                 _stage_success = True
