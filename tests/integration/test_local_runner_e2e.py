@@ -128,8 +128,12 @@ def test_e2e_with_mlflow_tracking_creates_runs(tmp_path: Path, monkeypatch) -> N
     """
     import mlflow
 
-    # Redirect HOME so the MlflowSink's file store lives inside tmp_path.
-    monkeypatch.setenv("HOME", str(tmp_path))
+    # Pin MLFLOW_TRACKING_URI explicitly so local_fallback_telemetry writes to our
+    # tmp_path regardless of any MLFLOW_TRACKING_URI left in the env by a previous
+    # test (mlflow.set_tracking_uri also sets the env var, which can leak across
+    # tests that run sequentially in the same worker).
+    mlflow_uri = f"file://{tmp_path / '.a2sdlc' / 'mlflow'}"
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", mlflow_uri)
 
     ticket = _init_minimal_repo(tmp_path, "ticket for tracking")
 
@@ -145,7 +149,8 @@ def test_e2e_with_mlflow_tracking_creates_runs(tmp_path: Path, monkeypatch) -> N
     )
     assert rc == 0
 
-    mlflow.set_tracking_uri(f"file://{tmp_path / '.a2sdlc' / 'mlflow'}")
+    # mlflow_uri already set via monkeypatch above; just ensure the global matches.
+    mlflow.set_tracking_uri(mlflow_uri)
     exp = mlflow.get_experiment_by_name(tmp_path.name)
     assert exp is not None
     runs = mlflow.search_runs(experiment_ids=[exp.experiment_id], output_format="list")
@@ -164,7 +169,9 @@ def test_e2e_tracking_writes_output_json_artifact_per_stage(
          each child run has a linked MLflow trace from MlflowTraceSubscriber."""
     import mlflow
 
-    monkeypatch.setenv("HOME", str(tmp_path))
+    # Pin MLFLOW_TRACKING_URI explicitly (same reason as test_e2e_with_mlflow_tracking_creates_runs).
+    mlflow_uri = f"file://{tmp_path / '.a2sdlc' / 'mlflow'}"
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", mlflow_uri)
     ticket = _init_minimal_repo(tmp_path, "ticket for artifact test")
 
     rc = run_stage_entry(
@@ -179,7 +186,7 @@ def test_e2e_tracking_writes_output_json_artifact_per_stage(
     )
     assert rc == 0
 
-    mlflow.set_tracking_uri(f"file://{tmp_path / '.a2sdlc' / 'mlflow'}")
+    mlflow.set_tracking_uri(mlflow_uri)
     exp = mlflow.get_experiment_by_name(tmp_path.name)
     assert exp is not None
 

@@ -141,8 +141,12 @@ def test_run_stage_implement_with_tracking_logs_quality_gate(
     _init_minimal_repo(tmp_path)
     ticket = tmp_path / "ticket.md"
 
-    # Redirect MLflow home to tmp_path so the file store is isolated.
-    monkeypatch.setenv("HOME", str(tmp_path))
+    # Pin MLFLOW_TRACKING_URI explicitly so local_fallback_telemetry writes to our
+    # tmp_path regardless of any MLFLOW_TRACKING_URI left in the env by a previous
+    # test (mlflow.set_tracking_uri also sets the env var, which leaks across tests
+    # that run sequentially in the same worker under pytest-xdist).
+    mlflow_uri = f"file://{tmp_path / '.a2sdlc' / 'mlflow'}"
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", mlflow_uri)
 
     run_stage_entry(
         argv=[
@@ -163,7 +167,7 @@ def test_run_stage_implement_with_tracking_logs_quality_gate(
 
     import mlflow
 
-    mlflow.set_tracking_uri(f"file://{tmp_path / '.a2sdlc' / 'mlflow'}")
+    mlflow.set_tracking_uri(mlflow_uri)
     exp = mlflow.get_experiment_by_name(tmp_path.name)
     assert exp is not None
     runs = mlflow.search_runs(experiment_ids=[exp.experiment_id], output_format="list")
