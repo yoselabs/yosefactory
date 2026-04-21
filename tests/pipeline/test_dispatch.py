@@ -102,6 +102,23 @@ class TestErrors:
         assert result.error is not None
 
     @pytest.mark.asyncio
+    async def test_skip_when_ticket_not_active(self) -> None:
+        """Engine-level contract: a closed/terminal ticket short-circuits dispatch."""
+        from a2sdlc.domain.pipeline_event import PipelineEvent
+
+        ctx, *_ = _ctx(stage=StageName.SPEC)
+        ctx.work = FakeWorkAdapter(
+            event=PipelineEvent(key="15", trigger_stage=StageName.SPEC),
+            ticket_body="",
+            is_active=False,
+        )
+        result = await dispatch(ctx)
+        assert result.error == "ticket_not_active"
+        # No downstream side effects should have fired.
+        assert ctx.work.created_comments == []
+        assert ctx.work.label_history == []
+
+    @pytest.mark.asyncio
     async def test_circuit_breaker_blocks_after_max_review_cycles(self) -> None:
         """Review stage blocked when review_cycles exceed max."""
         import json

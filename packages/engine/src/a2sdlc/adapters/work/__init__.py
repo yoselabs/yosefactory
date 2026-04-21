@@ -14,6 +14,16 @@ class WorkAdapter(Protocol):
     """Platform-specific ticket/work-item operations."""
 
     def parse_event(self) -> PipelineEvent: ...
+    def is_ticket_active(self, key: str) -> bool:
+        """Return False if the ticket is in a terminal state (closed/done/merged).
+
+        Stale events can arrive after a ticket is resolved — a delayed
+        bot-triggered GitHub label event after a PR closed its linked issue,
+        or a replayed Jira webhook. Dispatch skips such events instead of
+        running a stage for no useful outcome.
+        """
+        ...
+
     def get_ticket(self, key: str) -> str: ...
     def get_labels(self, key: str) -> list[str]: ...
     def begin_comment(self, key: str) -> str: ...

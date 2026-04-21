@@ -105,6 +105,11 @@ class LocalFileWorkAdapter:
             pr_number=pr_number,
         )
 
+    def is_ticket_active(self, key: str) -> bool:
+        # Local file adapter has no concept of a closed ticket — the caller
+        # controls when the loop stops.
+        return True
+
     def get_ticket(self, key: str) -> str:
         if not self._ticket_path.exists():
             return ""

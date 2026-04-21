@@ -82,15 +82,6 @@ class GitHubWorkAdapter:
         if action != "labeled":
             raise SkipEvent(f"issues action {action!r} is not 'labeled'")
 
-        # Closed issues can still emit delayed `labeled` events (bot-triggered
-        # stage transitions that fire after a merge closed the issue). Running
-        # another stage on a closed ticket would consume a model call for no
-        # useful outcome — skip.
-        if event["issue"].get("state") == "closed":
-            raise SkipEvent(
-                f"issue {event['issue']['number']} is closed — ignoring stale label event"
-            )
-
         label_name = event["label"]["name"]
         issue_number = str(event["issue"]["number"])
 
@@ -218,6 +209,15 @@ class GitHubWorkAdapter:
         """Return issue body."""
         issue = self._repo.get_issue(int(key))
         return issue.body or ""
+
+    def is_ticket_active(self, key: str) -> bool:
+        """False if the issue (or PR) is closed/merged.
+
+        GitHub's Issues API resolves both issues and PRs by number — a merged
+        or closed PR surfaces as an Issue with state=="closed".
+        """
+        issue = self._repo.get_issue(int(key))
+        return issue.state != "closed"
 
     def get_labels(self, key: str) -> list[str]:
         """Return label names from issue."""

@@ -34,6 +34,11 @@ class WorkflowInputReader:
             raise SkipEvent(f"unknown trigger stage {stage_str!r}") from None
         return PipelineEvent(key=key, trigger_stage=stage)
 
+    def is_ticket_active(self, key: str) -> bool:
+        # In dispatcher (Mode 1) the dispatcher upstream-filters terminal
+        # tickets before triggering the engine. Trust that contract.
+        return True
+
     def get_ticket(self, key: str) -> str:
         body = os.environ.get("TICKET_BODY")
         if body is None:

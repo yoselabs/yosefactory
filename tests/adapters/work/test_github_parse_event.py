@@ -190,24 +190,6 @@ class TestParseEventLabels:
             with pytest.raises(SkipEvent, match="no PR found"):
                 adapter.parse_event()
 
-    def test_issues_closed_raises_skip(self, tmp_path: Path) -> None:
-        """Delayed bot-triggered label events on a closed issue should skip."""
-        path = self._write_event(
-            tmp_path,
-            {
-                "action": "labeled",
-                "label": {"name": "stage:review"},
-                "issue": {"number": 15, "state": "closed", "labels": []},
-                "sender": {"type": "Bot"},
-            },
-        )
-        adapter = _make_work_adapter()
-        with patch.dict(
-            os.environ, {"GITHUB_EVENT_PATH": path, "GITHUB_EVENT_NAME": "issues"}
-        ):
-            with pytest.raises(SkipEvent, match="closed"):
-                adapter.parse_event()
-
     def test_issues_unlabeled_raises_skip(self, tmp_path: Path) -> None:
         path = self._write_event(
             tmp_path,

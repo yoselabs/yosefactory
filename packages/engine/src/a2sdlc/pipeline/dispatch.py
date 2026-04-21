@@ -75,6 +75,15 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
         ctx.logger.info("dispatch.skip", extra={"reason": e.reason})
         return DispatchResult(stage=StageName.SPEC, error=e.reason)
 
+    # 1.5. Engine-level contract: never run a stage on a terminal ticket.
+    # Each adapter defines what "terminal" means for its tracker.
+    if not ctx.work.is_ticket_active(event.key):
+        ctx.logger.info(
+            "dispatch.skip",
+            extra={"reason": "ticket_not_active", "key": event.key},
+        )
+        return DispatchResult(stage=StageName.SPEC, error="ticket_not_active")
+
     # 2. Shared setup: ticket body + directives
     ticket_body = ctx.work.get_ticket(event.key)
     directives, clean_body = parse_directives(ticket_body)

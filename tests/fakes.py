@@ -53,12 +53,14 @@ class FakeWorkAdapter:
         labels: list[str] | None = None,
         issue_feedback: Sequence[FeedbackItem] = (),
         last_handover: HandoverComment | None = None,
+        is_active: bool = True,
     ) -> None:
         self._event = event
         self._ticket_body = ticket_body
         self._labels: list[str] = labels or []
         self._issue_feedback = issue_feedback
         self._last_handover = last_handover
+        self._is_active = is_active
 
         # Call records
         self.created_comments: list[str] = []  # comment IDs from begin_comment
@@ -73,6 +75,9 @@ class FakeWorkAdapter:
         if self._event is None:
             raise SkipEvent("no event configured")
         return self._event
+
+    def is_ticket_active(self, key: str) -> bool:
+        return self._is_active
 
     def get_ticket(self, key: str) -> str:
         return self._ticket_body

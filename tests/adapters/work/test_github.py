@@ -196,6 +196,29 @@ class TestGetTicket:
         assert result == "Issue description"
 
 
+@pytest.mark.unit
+class TestIsTicketActive:
+    def test_open_issue_is_active(self) -> None:
+        adapter = _make_work_adapter()
+        mock_repo = MagicMock()
+        mock_issue = MagicMock()
+        mock_issue.state = "open"
+        mock_repo.get_issue.return_value = mock_issue
+        adapter._repo = mock_repo
+
+        assert adapter.is_ticket_active("15") is True
+
+    def test_closed_issue_is_inactive(self) -> None:
+        adapter = _make_work_adapter()
+        mock_repo = MagicMock()
+        mock_issue = MagicMock()
+        mock_issue.state = "closed"
+        mock_repo.get_issue.return_value = mock_issue
+        adapter._repo = mock_repo
+
+        assert adapter.is_ticket_active("15") is False
+
+
 # ── WorkAdapter: format_branch ───────────────────────────────────────
 
 
