@@ -9,8 +9,10 @@ calls when tracking is disabled so call sites stay branch-free.
 from __future__ import annotations
 
 import contextlib
+import os
 from collections.abc import Iterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 
@@ -162,3 +164,34 @@ class MlflowTelemetry:
     @property
     def traces_enabled(self) -> bool:
         return True
+
+
+# ── Factory (SSOT for MLFLOW_TRACKING_URI) ────────────────────────────
+
+
+def telemetry_from_env(experiment_name: str) -> NoopTelemetry | MlflowTelemetry:
+    """Return an MLflow-backed telemetry if env is configured, else a null.
+
+    This is the **only** place in a2sdlc that reads ``MLFLOW_TRACKING_URI``.
+    """
+    uri = os.environ.get("MLFLOW_TRACKING_URI")
+    if not uri:
+        return NoopTelemetry()
+    t = MlflowTelemetry(tracking_uri=uri, experiment_name=experiment_name)
+    t.verify_reachable()
+    return t
+
+
+def local_fallback_telemetry(experiment_name: str) -> MlflowTelemetry:
+    """For ``a2sdlc run-stage`` local dev UX: env URI if set, else ~/.a2sdlc/mlflow.
+
+    Never returns ``NoopTelemetry`` — local dev expects *some* MLflow store by
+    default. Use ``NoopTelemetry()`` directly for ``--no-track``.
+    """
+    uri = (
+        os.environ.get("MLFLOW_TRACKING_URI")
+        or f"file://{Path.home() / '.a2sdlc' / 'mlflow'}"
+    )
+    t = MlflowTelemetry(tracking_uri=uri, experiment_name=experiment_name)
+    t.verify_reachable()
+    return t
