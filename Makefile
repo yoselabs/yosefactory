@@ -29,6 +29,9 @@ arch:
 
 check: lint arch test coverage-diff security-audit
 
+similar: ## Report similarly-named functions/classes (advisory)
+	@uv run python scripts/find_similar.py
+
 bootstrap: ## First-time setup after clone
 	uv sync
 	agent-harness init --apply
