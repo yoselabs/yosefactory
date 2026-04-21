@@ -318,6 +318,46 @@ trusted internal repos, scary for open source).
 
 ---
 
+### P1.6 · Decompose `pipeline/dispatch.py` into phase modules
+
+**Problem.** `dispatch.py` hit the 500-line file-length limit twice in
+the 2026-04-21 hardening session (rename commit, session_id commit).
+Each fix needed to compress an unrelated comment block to make room.
+The file mixes six phases that have natural seams:
+
+1. Event parsing + directive resolution (SkipEvent, is_closed, base/gate
+   overrides).
+2. Idempotency + circuit-breaker guards (duplicate run_id, is_ticket_active,
+   feedback_already_addressed).
+3. Branch setup + state bootstrap (git.setup_branch, state read, feedback
+   routing).
+4. Telemetry/progress/comment wiring (session_id, telemetry.session,
+   subscriber registration).
+5. Stage execution (assembly, stage_executor, error classification).
+6. Post-execution routing (next_stage, merge, cleanup_base,
+   set_current_stage, mark_done).
+
+**Fix sketch.** Split into `pipeline/preflight.py`, `pipeline/stage_run.py`,
+`pipeline/post_stage.py`. Keep `dispatch.py` as the thin composition
+root that wires them in order. Preserves the architecture rule that
+"only pipeline/dispatch.py may import from 5+ a2sdlc packages" — the
+new files can be phase-internal imports.
+
+**Why it matters.**
+- File-length pressure forces comment churn on every touch.
+- Jira mode will add more branching in phases 1 + 3. Harder in a 500-line
+  file.
+- Unit tests can target phases directly instead of mocking everything
+  needed for full `dispatch()`.
+
+**Size.** ~half-day refactor + regression smoke. Touches the main event
+loop, so needs a live smoke on a clean ticket before landing.
+
+**Blockers.** Should land alongside or after #2B (orphan-ref state
+backend) to batch the smoke-requiring work.
+
+---
+
 ## P2 — UX polish
 
 ### P2.1 · "Agent" row in tool timeline has empty target column
@@ -340,11 +380,13 @@ pipeline halts. But no label or comment tells humans what's expected.
 Should set a `needs-input` label + post the questions as a bulleted
 comment so humans know how to unblock.
 
-### P2.4 · MLflow session_id collision on parallel A/B runs
+### P2.4 · MLflow session_id collision on parallel A/B runs ✅
 
-Already in TODO.md / `feedback_parallel_runs` memory. Derive
-`session_id = f"{ticket_key}:{run_id}"` so parallel prompt A/B runs on the
-same ticket don't share MLflow parent runs.
+**Landed 2026-04-21 (387e54c).** `session_id = f"{event.key}:{ctx.run_id
+or uuid4()}"` in `pipeline/dispatch.py`. GHA runs scope by run_id;
+local runs get uuid4 so A/B locally also isolates. Claude SDK session
+resumption still uses `get_session_id(ticket, stage)` (runner.py) —
+deterministic-per-stage is correct for SDK resume.
 
 ### P2.5 · Circuit breaker for runaway cost per ticket
 
