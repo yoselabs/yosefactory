@@ -32,6 +32,9 @@ check: lint arch test coverage-diff security-audit
 bootstrap: ## First-time setup after clone
 	uv sync
 	agent-harness init --apply
+	@if command -v pnpm >/dev/null; then pnpm install; \
+	else echo "⚠  pnpm not found — install via 'brew install pnpm' to enable jscpd"; fi
+	@command -v actionlint >/dev/null || echo "⚠  actionlint not found — install via 'brew install actionlint' to enable GitHub Actions lint"
 	@if command -v prek >/dev/null; then prek install; \
 	elif command -v pre-commit >/dev/null; then pre-commit install; \
 	else echo "Install prek (brew install prek) or pre-commit for git hooks"; fi
