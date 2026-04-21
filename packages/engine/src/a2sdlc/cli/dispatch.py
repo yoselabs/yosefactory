@@ -242,21 +242,20 @@ def dispatch_command(
             return ConsoleSubscriber(progress_state)
     else:
         # ── Mode 2 / legacy CI (GH-native) ────────────────────────────
-        from github import Github  # noqa: PLC0415
         from a2sdlc.adapters.review import GitHubReviewAdapter  # noqa: PLC0415
         from a2sdlc.adapters.subscriber.gh_comment import GhCommentSubscriber  # noqa: PLC0415
         from a2sdlc.adapters.work import GitHubWorkAdapter  # noqa: PLC0415
 
         token = os.environ.get("GITHUB_TOKEN", os.environ.get("GH_TOKEN", ""))
-        # No prefix-based token sniff: GitHub App installation tokens and
-        # the GHA default secrets.GITHUB_TOKEN both use the `ghs_` prefix,
-        # so the prefix alone can't tell them apart. Consumer onboarding
-        # (docs/mode2/README.md) covers the App requirement; misconfiguration
-        # will surface as a permission error from the first write call.
         repo_name = os.environ.get("GITHUB_REPOSITORY", "")
-        repo = Github(token).get_repo(repo_name)
-        work_adapter = GitHubWorkAdapter(repo)
-        review_adapter = GitHubReviewAdapter(repo)
+        # Optional App-id verification lives in the adapter factory —
+        # distinguishes a correctly-configured App token from the GHA
+        # default, which share the `ghs_` prefix but different app_id.
+        expected_app_id = os.environ.get("A2SDLC_APP_ID") or None
+        work_adapter = GitHubWorkAdapter.from_token(
+            token, repo_name, expected_app_id=expected_app_id
+        )
+        review_adapter = GitHubReviewAdapter(work_adapter._repo)  # noqa: SLF001
 
         # Derive a deterministic run_id so duplicate event deliveries (GHA
         # re-runs, webhook redelivery) are caught by state-level idempotency

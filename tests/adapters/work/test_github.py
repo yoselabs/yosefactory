@@ -19,6 +19,7 @@ def _make_work_adapter(trigger_mention: str = "@a2sdlc") -> GitHubWorkAdapter:
 
 
 # ── WorkAdapter: labels ──────────────────────────────────────────────
+# `from_token` / App-id probe tests live in test_github_from_token.py
 
 
 @pytest.mark.unit

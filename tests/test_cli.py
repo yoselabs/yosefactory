@@ -200,8 +200,8 @@ class TestMainDispatch:
         dispatch_result = MagicMock(blocked=False, error=None)
 
         with (
-            patch("github.Github") as mock_github,
-            # NOTE: these three patch() calls target the package namespace where cli.py looks up the names (via `from a2sdlc.adapters.<kind> import X`), not the submodule where they're defined. patch()ing the submodule attribute would miss the binding cli.py uses and the tests would silently pass with mock_call_count == 0.
+            # Patch the adapter at the namespace where cli.py looks it up
+            # (via `from a2sdlc.adapters.work import GitHubWorkAdapter`).
             patch("a2sdlc.adapters.work.GitHubWorkAdapter") as mock_work,
             patch("a2sdlc.adapters.review.GitHubReviewAdapter") as mock_review,
             patch("a2sdlc.adapters.git.LocalGitAdapter") as mock_git,
@@ -213,8 +213,11 @@ class TestMainDispatch:
             ),
         ):
             mock_git.return_value = MagicMock(name="git")
-            mock_repo = MagicMock(name="repo")
-            mock_github.return_value.get_repo.return_value = mock_repo
+            # Factory returns a real-enough adapter stub; dispatch.py reaches
+            # into ._repo for the review adapter so set it on the stub.
+            fake_adapter = MagicMock(name="gh_work_adapter")
+            fake_adapter._repo = MagicMock(name="repo")
+            mock_work.from_token.return_value = fake_adapter
 
             async def _fake_dispatch(_ctx: object) -> object:
                 return dispatch_result
@@ -225,12 +228,9 @@ class TestMainDispatch:
                 main(["dispatch", "--project-root", str(tmp_path)])
             assert exc.value.code == 0
 
-        # Github(token).get_repo(repo_name) called with env-derived values;
-        # GitHubWorkAdapter called with just the repo (no trigger_mention override).
-        mock_github.assert_called_once_with("tkn")
-        mock_github.return_value.get_repo.assert_called_once_with("o/r")
-        assert mock_work.call_count == 1
-        assert "trigger_mention" not in mock_work.call_args.kwargs
+        # Factory called with env-derived token + repo; expected_app_id
+        # defaults to None when A2SDLC_APP_ID isn't set.
+        mock_work.from_token.assert_called_once_with("tkn", "o/r", expected_app_id=None)
         mock_review.assert_called_once()
 
     def test_main_dispatch_dispatcher_mode(self, tmp_path: Path) -> None:

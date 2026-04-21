@@ -75,6 +75,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          # Piped through for adapter-level App-id verification — if
+          # set, the engine probes GET /app and refuses to run when
+          # the token authenticates as a different App (typically the
+          # GHA default, which silently falls back on misconfiguration).
+          A2SDLC_APP_ID: ${{ secrets.A2SDLC_APP_ID }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
           MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}

@@ -8,6 +8,7 @@ import os
 import re
 from datetime import datetime
 
+from github import Github
 from github.Repository import Repository
 
 from a2sdlc.domain.pipeline_event import PipelineEvent
@@ -48,6 +49,50 @@ class GitHubWorkAdapter:
     def __init__(self, repo: Repository, trigger_mention: str = "@a2sdlc") -> None:
         self._repo = repo
         self._trigger_mention = trigger_mention
+
+    @classmethod
+    def from_token(
+        cls,
+        token: str,
+        repo_name: str,
+        expected_app_id: str | None = None,
+        trigger_mention: str = "@a2sdlc",
+    ) -> "GitHubWorkAdapter":
+        """Construct an adapter from raw credentials, verifying the token's App.
+
+        `expected_app_id` is optional — when supplied (typically from the
+        `A2SDLC_APP_ID` env var in GHA mode), the adapter calls `GET /app`
+        and compares the authenticated App's id. Mismatch raises — catches
+        the common misconfiguration where the workflow forgets to use
+        actions/create-github-app-token and the GHA default GITHUB_TOKEN
+        (which authenticates as the github-actions App) silently takes
+        over. Both tokens share the `ghs_` prefix so the check must go
+        through the API, not the token format.
+        """
+        gh = Github(token)
+        if expected_app_id:
+            cls._verify_app(gh, expected_app_id)
+        repo = gh.get_repo(repo_name)
+        return cls(repo, trigger_mention=trigger_mention)
+
+    @staticmethod
+    def _verify_app(gh, expected_app_id: str) -> None:  # noqa: ANN001
+        try:
+            actual = gh.get_app()
+        except Exception as e:  # noqa: BLE001
+            raise ValueError(
+                f"Token verification failed calling GET /app: {e}. "
+                "Check A2SDLC_APP_ID and A2SDLC_APP_PRIVATE_KEY."
+            ) from e
+        if str(actual.id) != str(expected_app_id):
+            raise ValueError(
+                f"Token authenticates as app_id={actual.id}, "
+                f"expected A2SDLC_APP_ID={expected_app_id}. "
+                "The workflow is likely using the GHA default GITHUB_TOKEN "
+                "instead of an App-derived token — configure "
+                "actions/create-github-app-token@v3 and pass its output as "
+                "GITHUB_TOKEN."
+            )
 
     # ── parse_event ──────────────────────────────────────────────────
 
