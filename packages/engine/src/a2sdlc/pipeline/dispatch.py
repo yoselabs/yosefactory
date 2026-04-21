@@ -271,14 +271,12 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
 
                 ctx.git.sync_with_base(base)
                 pr_lifecycle.merge(pr_number)
-                # Post-merge cleanup: drop runtime artifacts squash carried
-                # to base so next ticket doesn't inherit stale state.
                 try:
+                    # Drop runtime artifacts the squash carried to base.
                     ctx.git.cleanup_base(base)
                 except Exception:  # noqa: BLE001
                     ctx.logger.warning("dispatch.base_cleanup_failed", exc_info=True)
-                # GH auto-links #N in the same repo so humans can jump
-                # to the diff without scrolling the issue timeline.
+                # GH auto-links #N so humans jump to the diff in one click.
                 comment.finalize(f"\u2705 Merged #{pr_number}")
                 ctx.work.mark_done(event.key)
                 ctx.logger.info("dispatch.merged", extra={"pr": pr_number})
@@ -470,6 +468,8 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
 
             if next_st is not None:
                 ctx.work.set_current_stage(event.key, next_st)
+            elif stage_result.status == StageStatus.QUESTIONS:
+                ctx.work.mark_needs_input(event.key)  # pipeline paused on human reply
 
             _stage_success = True
             _stage_error = None

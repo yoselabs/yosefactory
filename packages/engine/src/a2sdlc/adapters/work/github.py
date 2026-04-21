@@ -273,19 +273,33 @@ class GitHubWorkAdapter:
                 return _LABEL_TO_STAGE[label.name]
         return None
 
-    def set_current_stage(self, key: str, stage: StageName) -> None:
-        """Remove all existing stage:* labels + the trigger label, add the new stage."""
-        issue = self._repo.get_issue(int(key))
-        stage_prefix = "stage:"
-        # Also clear the trigger label once a stage:* is active — the engine
-        # has picked the ticket up; keeping `agent` around is cosmetic noise
-        # that misleads humans scanning the board.
+    def _strip_transient_labels(self, issue) -> None:  # noqa: ANN001
+        # Drop stage:*, agent, proceed, needs-input. Called on every stage
+        # transition + on done so the board doesn't accumulate stale trigger
+        # or status signals.
+        transient = {TRIGGER_LABEL, PROCEED_LABEL, NEEDS_INPUT_LABEL}
         for label in issue.labels:
-            if label.name.startswith(stage_prefix) or label.name == TRIGGER_LABEL:
+            if label.name.startswith("stage:") or label.name in transient:
                 issue.remove_from_labels(label)
+
+    def set_current_stage(self, key: str, stage: StageName) -> None:
+        """Remove transient labels, add the new stage."""
+        issue = self._repo.get_issue(int(key))
+        self._strip_transient_labels(issue)
         new_label = STAGE_LABELS[stage]
         issue.add_to_labels(new_label)
         logger.debug("set stage label %s on issue %s", new_label, key)
+
+    def mark_needs_input(self, key: str) -> None:
+        """Flag the ticket as waiting for human input (typically a QUESTIONS
+        status from SPEC/IMPLEMENT). The questions themselves are already in
+        the stage's finalize comment; this adds the board-visible signal so
+        humans know the pipeline is paused on their reply. Cleared on the
+        next stage transition via `_strip_transient_labels`.
+        """
+        issue = self._repo.get_issue(int(key))
+        issue.add_to_labels(NEEDS_INPUT_LABEL)
+        logger.debug("marked issue %s needs-input", key)
 
     def mark_done(self, key: str) -> None:
         """Mark the ticket done: close the issue + strip transient labels.
@@ -296,9 +310,7 @@ class GitHubWorkAdapter:
         issue's closed state and had no Jira equivalent.
         """
         issue = self._repo.get_issue(int(key))
-        for label in issue.labels:
-            if label.name.startswith("stage:") or label.name == TRIGGER_LABEL:
-                issue.remove_from_labels(label)
+        self._strip_transient_labels(issue)
         # Close the issue if the engine completed on its own (e.g. AUTO
         # merge hadn't happened yet, or non-merge done paths). Idempotent —
         # closing an already-closed issue is a no-op.

@@ -73,6 +73,48 @@ class TestSetCurrentStage:
 
 
 @pytest.mark.unit
+class TestMarkNeedsInput:
+    def test_adds_needs_input_label(self) -> None:
+        adapter = _make_work_adapter()
+        mock_repo = MagicMock()
+        mock_issue = MagicMock()
+        mock_repo.get_issue.return_value = mock_issue
+        adapter._repo = mock_repo
+
+        adapter.mark_needs_input("15")
+
+        mock_issue.add_to_labels.assert_called_once_with("needs-input")
+
+
+@pytest.mark.unit
+class TestSetCurrentStageStripsTransients:
+    def test_strips_needs_input_and_proceed(self) -> None:
+        """Transitioning to a new stage clears transient labels from prior state."""
+        adapter = _make_work_adapter()
+        mock_repo = MagicMock()
+        mock_issue = MagicMock()
+        needs = MagicMock()
+        needs.name = "needs-input"
+        proceed = MagicMock()
+        proceed.name = "proceed"
+        old_stage = MagicMock()
+        old_stage.name = "stage:spec"
+        unrelated = MagicMock()
+        unrelated.name = "bug"
+        mock_issue.labels = [needs, proceed, old_stage, unrelated]
+        mock_repo.get_issue.return_value = mock_issue
+        adapter._repo = mock_repo
+
+        adapter.set_current_stage("15", StageName.IMPLEMENT)
+
+        removed = [c.args[0] for c in mock_issue.remove_from_labels.call_args_list]
+        assert needs in removed
+        assert proceed in removed
+        assert old_stage in removed
+        assert unrelated not in removed
+
+
+@pytest.mark.unit
 class TestMarkDone:
     def test_closes_issue_and_strips_labels(self) -> None:
         adapter = _make_work_adapter()

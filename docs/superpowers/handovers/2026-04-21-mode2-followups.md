@@ -365,12 +365,16 @@ caller-supplied 3–5 word purpose), falls back to `subagent_type`.
 repo so humans can jump to the diff in one click. PR-side back-link to
 the issue beyond `Closes #N` was not part of this fix.
 
-### P2.3 · `needs-input` / clarification label management
+### P2.3 · `needs-input` / clarification label management ✅
 
-When SPEC returns `QUESTIONS` status, `next_stage` returns None and the
-pipeline halts. But no label or comment tells humans what's expected.
-Should set a `needs-input` label + post the questions as a bulleted
-comment so humans know how to unblock.
+**Landed 2026-04-21.** `WorkAdapter.mark_needs_input(key)` added and
+called in dispatch when `next_st is None` and status is QUESTIONS. GH
+impl adds the `needs-input` label; the stage's finalize comment already
+carries the questions verbatim, so no second comment is posted. Transient
+labels (`agent`, `proceed`, `needs-input`, plus `stage:*`) are now all
+stripped together via `_strip_transient_labels` on stage transitions
+and on done — so `proceed` (the human's answer signal) doesn't linger
+after the pipeline resumes.
 
 ### P2.4 · MLflow session_id collision on parallel A/B runs ✅
 

@@ -68,6 +68,7 @@ class FakeWorkAdapter:
         self.finalized_comments: list[tuple[str, str]] = []  # (comment_id, body)
         self.label_history: list[tuple[str, str]] = []  # (key, label)
         self.blocked: list[tuple[str, str]] = []  # (key, reason)
+        self.needs_input: list[str] = []
 
         self._comment_counter = 0
 
@@ -116,6 +117,9 @@ class FakeWorkAdapter:
 
     def mark_blocked(self, key: str, reason: str) -> None:
         self.blocked.append((key, reason))
+
+    def mark_needs_input(self, key: str) -> None:
+        self.needs_input.append(key)
 
     def format_branch(self, ticket_key: str) -> str:
         return f"agent/{ticket_key}"

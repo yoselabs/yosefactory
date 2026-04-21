@@ -147,6 +147,9 @@ class LocalFileWorkAdapter:
     def mark_blocked(self, key: str, reason: str) -> None:
         logger.info("mark_blocked key=%s reason=%s", key, reason)
 
+    def mark_needs_input(self, key: str) -> None:
+        logger.info("mark_needs_input key=%s", key)
+
     def format_branch(self, ticket_key: str) -> str:
         return f"a2sdlc/{ticket_key}"
 

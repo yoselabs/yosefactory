@@ -75,6 +75,9 @@ class WorkflowInputReader:
     def mark_blocked(self, *args, **kwargs) -> None:
         return None
 
+    def mark_needs_input(self, *args, **kwargs) -> None:
+        return None
+
     def format_branch(self, ticket_key: str) -> str:
         return f"agent/{ticket_key}"
 
