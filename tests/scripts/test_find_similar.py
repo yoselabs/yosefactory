@@ -169,3 +169,30 @@ def test_truncates_long_type_signatures(tmp_path: Path) -> None:
 )
 def test_normalize_name(raw: str, expected: str) -> None:
     assert fs.normalize_name(raw) == expected
+
+
+def test_jaro_winkler_identical() -> None:
+    assert fs.jaro_winkler("abc", "abc") == 1.0
+
+
+def test_jaro_winkler_empty() -> None:
+    assert fs.jaro_winkler("", "abc") == 0.0
+    assert fs.jaro_winkler("abc", "") == 0.0
+
+
+def test_jaro_winkler_disjoint() -> None:
+    # No matching characters — score should be 0
+    assert fs.jaro_winkler("abc", "xyz") == 0.0
+
+
+def test_jaro_winkler_known_value() -> None:
+    # Classic reference: jaro_winkler("martha", "marhta") ≈ 0.961
+    score = fs.jaro_winkler("martha", "marhta")
+    assert 0.95 < score < 0.97
+
+
+def test_jaro_winkler_prefix_boost() -> None:
+    # Shared 4-char prefix triggers Winkler boost
+    a = fs.jaro_winkler("ticketparse", "ticketpayload")
+    b = fs.jaro_winkler("xyzparse", "xyzpayload")
+    assert a > b

@@ -206,3 +206,55 @@ def normalize_name(name: str) -> str:
             changed = True
     final = words[start:end]
     return "".join(final if final else words)
+
+
+def jaro_winkler(a: str, b: str) -> float:
+    if a == b:
+        return 1.0
+    if not a or not b:
+        return 0.0
+
+    match_distance = max(len(a), len(b)) // 2 - 1
+    a_matches = [False] * len(a)
+    b_matches = [False] * len(b)
+    matches = 0
+
+    for i, ca in enumerate(a):
+        start = max(0, i - match_distance)
+        end = min(i + match_distance + 1, len(b))
+        for j in range(start, end):
+            if b_matches[j] or b[j] != ca:
+                continue
+            a_matches[i] = True
+            b_matches[j] = True
+            matches += 1
+            break
+
+    if matches == 0:
+        return 0.0
+
+    # Transpositions
+    t = 0
+    k = 0
+    for i, _ in enumerate(a):
+        if not a_matches[i]:
+            continue
+        while not b_matches[k]:
+            k += 1
+        if a[i] != b[k]:
+            t += 1
+        k += 1
+    transpositions = t / 2
+
+    jaro = (
+        matches / len(a) + matches / len(b) + (matches - transpositions) / matches
+    ) / 3
+
+    # Winkler boost for up to 4-char common prefix
+    prefix = 0
+    for i in range(min(4, len(a), len(b))):
+        if a[i] == b[i]:
+            prefix += 1
+        else:
+            break
+    return jaro + prefix * 0.1 * (1 - jaro)
