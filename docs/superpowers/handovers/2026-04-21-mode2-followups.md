@@ -389,18 +389,34 @@ local runs get uuid4 so A/B locally also isolates. Claude SDK session
 resumption still uses `get_session_id(ticket, stage)` (runner.py) —
 deterministic-per-stage is correct for SDK resume.
 
-### P2.6 · Sound token probe in GitHubWorkAdapter ✅
+### P2.6 · Sound token probe in GitHubWorkAdapter — partial
 
-**Landed 2026-04-21.** `GitHubWorkAdapter.from_token(token, repo_name,
-expected_app_id=...)` factory classmethod calls `GET /app` and compares
-the authenticated App id to `expected_app_id`. Mismatch raises
-`ValueError` with a message pointing at `actions/create-github-app-token`.
-Probe is skipped when `expected_app_id` is None, so local runs and
-test fixtures aren't impacted. Workflow pipes `A2SDLC_APP_ID` through
-as an env var alongside the token. CLI uses the factory instead of
-constructing `Github(token).get_repo(...)` inline — keeps GitHub
-token mechanics in the GH adapter, not in `cli/dispatch.py`. 4 unit
-tests cover match/mismatch/skip/network-error paths.
+**Factory landed 2026-04-21.** `GitHubWorkAdapter.from_token(token,
+repo_name, expected_app_id=...)` now owns the `Github(token)` +
+`get_repo(...)` construction. CLI calls the factory instead of
+instantiating PyGithub inline — aligns with the tracker-agnostic CLI
+rule (GH token mechanics live in the GH adapter).
+
+**Probe does NOT work with installation tokens — see P2.6b.** First
+attempt used `Github(token).get_app()` which requires JWT `AppAuth`,
+not installation tokens. Engine runs with installation tokens in Mode 2,
+so the probe broke the first smoke after deploy. Reverted to pass-through
+(`expected_app_id` reserved in signature for the sound implementation).
+
+### P2.6b · App-id probe using installation-API endpoint
+
+**Needed.** Replace `gh.get_app()` with a raw call to an endpoint that
+works with installation tokens and returns the authenticating App's id.
+Candidates (need to verify each behaves distinctly for GHA default vs
+our App):
+
+- `GET /installation/repositories` — returns repos accessible to the
+  installation; response may include `app_id` in headers or body.
+- Raw `requests.get` with `Authorization: Bearer <token>` + compare
+  response shape between known-good and known-bad tokens.
+
+**Unblocks.** Catching the GHA-default-token misconfiguration loudly,
+which motivated P2.6 in the first place.
 
 ---
 
