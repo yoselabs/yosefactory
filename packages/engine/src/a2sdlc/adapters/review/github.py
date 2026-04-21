@@ -50,12 +50,16 @@ class GitHubReviewAdapter:
         logger.debug("updated PR #%d", pr_number)
 
     def mark_pr_ready(self, pr_number: int) -> None:
-        self._repo._requester.requestJsonAndCheck(  # noqa: SLF001
-            "PATCH",
-            f"{self._repo.url}/pulls/{pr_number}",
-            input={"draft": False},
-        )
-        logger.debug("marked PR #%d as ready", pr_number)
+        # PyGithub's `mark_ready_for_review` issues the GraphQL
+        # `markPullRequestReadyForReview` mutation — the correct path to
+        # flip a draft PR to ready-for-review. The REST `PATCH /pulls/{n}`
+        # endpoint silently ignores a `draft: false` body, so an immediate
+        # `pull.merge()` call afterwards 405s with "Pull Request is still a
+        # draft" (observed mid-smoke on ticket #10).
+        pull = self._repo.get_pull(pr_number)
+        if pull.draft:
+            pull.mark_ready_for_review()
+            logger.debug("marked PR #%d as ready", pr_number)
 
     def merge_pr(self, pr_number: int, method: str = "squash") -> None:
         pull = self._repo.get_pull(pr_number)

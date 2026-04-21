@@ -75,19 +75,31 @@ class TestUpdatePr:
 
 @pytest.mark.unit
 class TestMarkPrReady:
-    def test_patches_draft_false(self) -> None:
+    def test_marks_draft_pr_ready_for_review(self) -> None:
         adapter = _make_adapter()
         mock_repo = MagicMock()
-        mock_repo.url = "https://api.github.com/repos/owner/repo"
+        mock_pr = MagicMock()
+        mock_pr.draft = True
+        mock_repo.get_pull.return_value = mock_pr
         adapter._repo = mock_repo
 
         adapter.mark_pr_ready(7)
 
-        mock_repo._requester.requestJsonAndCheck.assert_called_once_with(
-            "PATCH",
-            "https://api.github.com/repos/owner/repo/pulls/7",
-            input={"draft": False},
-        )
+        mock_repo.get_pull.assert_called_once_with(7)
+        mock_pr.mark_ready_for_review.assert_called_once_with()
+
+    def test_noop_when_pr_already_ready(self) -> None:
+        """Don't re-mark a ready PR — avoids an unnecessary GraphQL call."""
+        adapter = _make_adapter()
+        mock_repo = MagicMock()
+        mock_pr = MagicMock()
+        mock_pr.draft = False
+        mock_repo.get_pull.return_value = mock_pr
+        adapter._repo = mock_repo
+
+        adapter.mark_pr_ready(7)
+
+        mock_pr.mark_ready_for_review.assert_not_called()
 
 
 @pytest.mark.unit
