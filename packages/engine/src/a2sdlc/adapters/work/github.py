@@ -265,6 +265,14 @@ class GitHubWorkAdapter:
 
     # ── labels ───────────────────────────────────────────────────────
 
+    def get_current_stage(self, key: str) -> StageName | None:
+        """Return the stage implied by the issue's `stage:*` label, or None."""
+        issue = self._repo.get_issue(int(key))
+        for label in issue.labels:
+            if label.name in _LABEL_TO_STAGE:
+                return _LABEL_TO_STAGE[label.name]
+        return None
+
     def set_stage_label(self, key: str, stage: StageName) -> None:
         """Remove all existing stage:* labels + the trigger label, add the new stage."""
         issue = self._repo.get_issue(int(key))
@@ -280,13 +288,23 @@ class GitHubWorkAdapter:
         logger.debug("set stage label %s on issue %s", new_label, key)
 
     def set_done_label(self, key: str) -> None:
-        """Replace stage:* / agent with the done label."""
+        """Mark the ticket done: close the issue + strip transient labels.
+
+        For tracker-agnostic parity (Jira's "Done" status is the native
+        analog), the done signal IS the closed-issue state. We no longer
+        add a separate `stage:done` label — it was redundant with the
+        issue's closed state and had no Jira equivalent.
+        """
         issue = self._repo.get_issue(int(key))
         for label in issue.labels:
             if label.name.startswith("stage:") or label.name == TRIGGER_LABEL:
                 issue.remove_from_labels(label)
-        issue.add_to_labels(DONE_LABEL)
-        logger.debug("set done label on issue %s", key)
+        # Close the issue if the engine completed on its own (e.g. AUTO
+        # merge hadn't happened yet, or non-merge done paths). Idempotent —
+        # closing an already-closed issue is a no-op.
+        if issue.state != "closed":
+            issue.edit(state="closed")
+        logger.debug("marked issue %s done (closed + stripped labels)", key)
 
     def set_blocked(self, key: str, reason: str) -> None:
         """Add blocked label and post a comment explaining why.

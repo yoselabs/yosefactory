@@ -74,23 +74,40 @@ class TestSetStageLabel:
 
 @pytest.mark.unit
 class TestSetDoneLabel:
-    def test_adds_done_label(self) -> None:
+    def test_closes_issue_and_strips_labels(self) -> None:
         adapter = _make_work_adapter()
         mock_repo = MagicMock()
         mock_issue = MagicMock()
+        mock_issue.state = "open"
         mock_issue.labels = []
         mock_repo.get_issue.return_value = mock_issue
         adapter._repo = mock_repo
 
         adapter.set_done_label("15")
 
-        mock_issue.add_to_labels.assert_called_once_with("stage:done")
+        mock_issue.edit.assert_called_once_with(state="closed")
+        mock_issue.add_to_labels.assert_not_called()
 
-    def test_replaces_prior_stage_and_agent_labels(self) -> None:
+    def test_idempotent_on_already_closed_issue(self) -> None:
+        """Calling mark_done on a closed issue must not re-close it."""
+        adapter = _make_work_adapter()
+        mock_repo = MagicMock()
+        mock_issue = MagicMock()
+        mock_issue.state = "closed"
+        mock_issue.labels = []
+        mock_repo.get_issue.return_value = mock_issue
+        adapter._repo = mock_repo
+
+        adapter.set_done_label("15")
+
+        mock_issue.edit.assert_not_called()
+
+    def test_strips_prior_stage_and_agent_labels(self) -> None:
         """Done must clean up stage:* and the `agent` trigger label."""
         adapter = _make_work_adapter()
         mock_repo = MagicMock()
         mock_issue = MagicMock()
+        mock_issue.state = "open"
         old_stage = MagicMock()
         old_stage.name = "stage:merge"
         agent_label = MagicMock()
@@ -107,7 +124,8 @@ class TestSetDoneLabel:
         assert old_stage in removed
         assert agent_label in removed
         assert unrelated not in removed
-        mock_issue.add_to_labels.assert_called_once_with("stage:done")
+        # No stage:done label is added — native closed state is the done signal.
+        mock_issue.add_to_labels.assert_not_called()
 
 
 @pytest.mark.unit

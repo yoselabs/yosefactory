@@ -48,33 +48,29 @@ auto-merge succeeds; this session we also suppressed the APPROVE-422
 duplicate comment. The 422 is no longer fatal but the PR carries no GH
 approval artifact.
 
-**Direction shift (2026-04-21 review).** The engine is intended to be
-used as a drop-in stage in standalone projects where humans react to
-code reviews and see how the system works — so **keep the GH Review API
-integration**, don't skip it. The "human gate" flows through the Review
-API (human approve → engine proceeds). Therefore option (c) is rejected.
+**Direction (settled 2026-04-21, decision #2).** PAT rejected — "no one
+will be providing their personal access token." The engine's APPROVE
+verdict via the Reviews API is actually **redundant**, and the current
+post-4ec223b behavior is correct:
 
-**Remaining options.**
-- **(a) Second reviewer App.** Cleanest boundary — distinct identity
-  visible in the UI. Requires consumers to install two apps. Higher
-  onboarding friction; best UX long-term.
-- **(b) Dedicated service-account PAT.** Single extra secret per
-  consumer repo, narrowly scoped to pull-request:write.
-  Shows up as a real user review in the UI. Medium setup cost; easier
-  than (a) for early consumers.
+- `check_human_approval` filters out bot approvals by design. An engine
+  APPROVE review would be ignored by the merge-gate check anyway, so
+  posting it is pure cosmetics.
+- REQUEST_CHANGES self-reviews **are allowed** by GitHub — the engine
+  continues to use the Reviews API for that path. Feedback routing reads
+  them and re-runs IMPLEMENT.
+- Humans still review via the native GH UI. Their approvals are non-bot
+  and count toward the merge gate.
 
-**Recommendation.** Ship (b) first as `secrets.A2SDLC_REVIEWER_TOKEN`.
-Engine uses the reviewer PAT exclusively for the `post_review` path; the
-App token continues to handle everything else. Consumers pick from
-(create a service account + PAT) vs (create a second App).
-Later: promote (a) for repos that want a bot identity that isn't a user.
+**Net result:** we already have what we wanted. The 422 on engine APPROVE
+is silently skipped (commit 4ec223b); the issue-side stage comment
+carries the engine's verdict for humans to see. No separate App, no PAT.
 
-**Jira parity note.** Jira has no PR-review concept, so in Mode 1 the
-engine should still honor the verdict semantically (transition the
-ticket's Jira status) without calling post_review. `GitHubReviewAdapter`
-stays GH-specific; the tracker-agnostic interface just takes a verdict.
+**Jira parity note.** In Mode 1 (dispatcher), no post_review API call is
+made at all — the engine's verdict transitions the Jira ticket via the
+dispatcher RPC. GitHubReviewAdapter stays GH-specific.
 
-**Size.** ~40 LOC + config + test. Plus consumer documentation.
+**Status:** CLOSED. No further work needed here.
 
 ---
 
@@ -99,12 +95,22 @@ the concurrency and most of this problem disappears.
   entry and skips. Requires queue visibility GHA doesn't give us
   directly.
 
-**Recommendation.** Flip to (X): `cancel-in-progress: true`, scoped per
-issue. Paired with P0.1 idempotency (which already landed — same
-event's trigger_id produces same run_id, so a cancelled-then-retried
-event is a true retry and gets deduped correctly). Fix-retries by the
-user (edit code, push, re-label) produce a new sha → new run_id →
-legitimate new run.
+**Direction (settled 2026-04-21, decision #3).** Keep queue, DON'T flip
+to cancel-in-progress. Rationale:
+
+- Idempotency (P0.1, landed) makes stale events cheap: ~10s of runner
+  infra per duplicate, no AI cost. The thrash path from the original
+  smoke is already neutralized.
+- Cancelling a mid-flight stage leaves an orphan "⏳ in progress"
+  comment on the issue. There's no clean "cancel with cleanup" hook in
+  GitHub Actions — we'd need an `always()` step that finalizes the
+  comment, which is extra moving parts for marginal benefit.
+- Fix-retries (human edits code, pushes new commit, re-labels) produce a
+  new sha anyway, so the new run has a new run_id and runs legitimately
+  even with the old one queued — no cancellation needed.
+
+**Status:** Keeping queue semantics. If we later want orphan-comment
+cleanup to enable safe cancellation, spec out the `always()` hook first.
 
 **State-storage design — Jira parity framing.**
 
@@ -178,15 +184,29 @@ label becomes redundant — cleaner to just rely on the issue state. (This
 also means Jira parity is easier: Jira's "Done" status is the analog of
 GH's "closed state".)
 
-**Open question for the user.** Do we keep `stage:done` label at all,
-or drop it now that `is_ticket_active` covers the downstream skip? In
-Jira there's no separate label for done — the status IS done. Recommend
-**drop it**: use GH issue state (closed) as the single done signal,
-strip stage:* on mark_done, don't add stage:done.
+**Landed 2026-04-21 (decision #2).** `set_done_label` no longer adds
+`stage:done`. Instead it:
+- Strips all `stage:*` and `agent` labels.
+- Closes the issue if not already closed.
 
-**Recommendation.** Design the WorkAdapter protocol split now; ship it
-with the Phase 2 Jira adapter. The GH implementation is a small refactor
-(rename + drop stage:done label); the Jira impl is net-new.
+The done signal is now the native closed-state, matching Jira's "Done"
+status semantics. DONE_LABEL constant is kept but unused (can remove
+when the broader rename PR lands).
+
+**Additive step landed 2026-04-21.** `WorkAdapter.get_current_stage(key)`
+added to the protocol; GH reads the `stage:*` label, Jira (future) reads
+the status. This is the first piece of the stage-position abstraction.
+
+**Still to do (decision #4 greenlit — "if we need to do that, let's do
+it"):**
+- Rename `set_stage_label` → `set_current_stage`, `set_blocked` →
+  `mark_blocked`, `set_done_label` → `mark_done`. Mechanical but touches
+  many files; land in a dedicated PR.
+- Move pipeline ledger (pr_number, review_cycles, cost) off the ticket
+  branch: orphan branch for GH mode (`a2sdlc/state/{key}`), dispatcher KV
+  for Jira mode. `StateManager` accepts a pluggable backend.
+- `GitHubWorkAdapter` already has the building blocks; new `JiraWorkAdapter`
+  arrives with Phase 2.
 
 ---
 

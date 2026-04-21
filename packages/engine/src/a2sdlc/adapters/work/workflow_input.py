@@ -61,6 +61,11 @@ class WorkflowInputReader:
     def finalize_comment(self, *args, **kwargs) -> None:
         return None
 
+    def get_current_stage(self, key: str) -> StageName | None:
+        # Dispatcher-routed mode: stage comes in as the trigger, not read
+        # back from the tracker. Return None to force callers to state.json.
+        return None
+
     def set_stage_label(self, *args, **kwargs) -> None:
         return None
 

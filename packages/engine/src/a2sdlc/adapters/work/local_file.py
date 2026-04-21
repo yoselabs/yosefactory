@@ -133,6 +133,11 @@ class LocalFileWorkAdapter:
         target = self._handover_dir / f"{stage.value}.md"
         target.write_text(body)
 
+    def get_current_stage(self, key: str) -> StageName | None:
+        # Local adapter has no persistent stage record outside state.json —
+        # callers use state.json directly for local runs.
+        return None
+
     def set_stage_label(self, key: str, stage: StageName) -> None:
         logger.info("set_stage_label key=%s stage=%s", key, stage.value)
 

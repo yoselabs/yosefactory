@@ -97,6 +97,17 @@ class FakeWorkAdapter:
     def finalize_comment(self, comment_id: str, body: str) -> None:
         self.finalized_comments.append((comment_id, body))
 
+    def get_current_stage(self, key: str) -> StageName | None:
+        # Return the last set stage from label_history if any.
+        for k, label in reversed(self.label_history):
+            if k == key and label.startswith("stage:"):
+                name = label.removeprefix("stage:")
+                try:
+                    return StageName(name)
+                except ValueError:
+                    return None
+        return None
+
     def set_stage_label(self, key: str, stage: StageName) -> None:
         self.label_history.append((key, f"stage:{stage.value}"))
 
