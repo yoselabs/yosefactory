@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from a2sdlc.evaluation.telemetry import NoopTelemetry
+from a2sdlc.evaluation.telemetry import NoopTelemetry, Telemetry
 
 
 def test_noop_session_stage_is_safe_noop() -> None:
@@ -14,3 +14,13 @@ def test_noop_session_stage_is_safe_noop() -> None:
         run.log_dict({"stage": "spec"}, "out.json")
         run.log_artifact("/tmp/quality.log")  # noqa: S108 — path is not read
     # No exception, no state written anywhere.
+
+
+def test_noop_satisfies_telemetry_protocol() -> None:
+    # Structural-subtype check — proves the null object conforms at runtime
+    # and guards against silent Protocol drift in later tasks.
+    assert isinstance(NoopTelemetry(), Telemetry)
+
+
+def test_noop_traces_enabled_is_false_sentinel() -> None:
+    assert NoopTelemetry().traces_enabled is False

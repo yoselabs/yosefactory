@@ -27,14 +27,12 @@ class RunHandle(Protocol):
 
 @runtime_checkable
 class StageOpener(Protocol):
-    def stage(self, name: str) -> contextlib.AbstractContextManager[RunHandle]: ...
+    def stage(self, name: str) -> Iterator[RunHandle]: ...
 
 
 @runtime_checkable
 class Telemetry(Protocol):
-    def session(
-        self, session_id: str
-    ) -> contextlib.AbstractContextManager[StageOpener]: ...
+    def session(self, session_id: str) -> Iterator[StageOpener]: ...
 
     @property
     def traces_enabled(self) -> bool: ...
