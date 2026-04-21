@@ -196,3 +196,55 @@ def test_jaro_winkler_prefix_boost() -> None:
     a = fs.jaro_winkler("ticketparse", "ticketpayload")
     b = fs.jaro_winkler("xyzparse", "xyzpayload")
     assert a > b
+
+
+def _mk(name: str, path: str = "x.py", line: int = 1) -> fs.Item:
+    return fs.Item(name=name, path=path, line=line, kind="function", signature="()")
+
+
+def test_group_normalized_match() -> None:
+    items = [
+        _mk("get_ticket", "a.py", 1),
+        _mk("fetch_ticket_handler", "b.py", 2),
+        _mk("unrelated_name_xyz", "c.py", 3),
+    ]
+    groups = fs.group_items(items)
+    # Both "get_ticket" and "fetch_ticket_handler" normalize to "ticket"
+    assert len(groups) == 1
+    g = groups[0]
+    assert g.similarity == "normalized-match"
+    assert g.normalized_name == "ticket"
+    assert {i.name for i in g.items} == {"get_ticket", "fetch_ticket_handler"}
+
+
+def test_group_jaro_winkler_cluster() -> None:
+    # Two singleton-normalized names with high JW similarity
+    items = [
+        _mk("ticketpipeline", "a.py", 1),
+        _mk("ticketpipelines", "b.py", 2),
+        _mk("zzz_totally_unrelated", "c.py", 3),
+    ]
+    groups = fs.group_items(items)
+    jw_groups = [g for g in groups if g.similarity == "jaro-winkler"]
+    assert len(jw_groups) == 1
+    assert {i.name for i in jw_groups[0].items} == {"ticketpipeline", "ticketpipelines"}
+
+
+def test_group_empty_and_short_names_skipped() -> None:
+    items = [_mk("a"), _mk("b"), _mk("c")]
+    # All too short (<4 chars normalized) for Jaro-Winkler pass; normalized-match
+    # requires ≥2 items with same normalized name — each is unique.
+    groups = fs.group_items(items)
+    assert groups == []
+
+
+def test_group_sorted_by_size_desc_then_alpha() -> None:
+    items = [
+        _mk("get_alpha", "a.py"),
+        _mk("fetch_alpha", "b.py"),
+        _mk("get_zulu", "c.py"),
+        _mk("fetch_zulu", "d.py"),
+        _mk("get_zulu_handler", "e.py"),  # third "zulu" member
+    ]
+    groups = fs.group_items(items)
+    assert [g.normalized_name for g in groups] == ["zulu", "alpha"]

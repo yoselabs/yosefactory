@@ -258,3 +258,91 @@ def jaro_winkler(a: str, b: str) -> float:
         else:
             break
     return jaro + prefix * 0.1 * (1 - jaro)
+
+
+JW_THRESHOLD = 0.9
+JW_MIN_LEN = 4
+
+
+@dataclass(frozen=True)
+class Group:
+    normalized_name: str
+    similarity: Literal["normalized-match", "jaro-winkler"]
+    items: tuple[Item, ...]
+
+
+def _item_key(i: Item) -> str:
+    return f"{i.path}:{i.line}:{i.name}"
+
+
+def group_items(items: list[Item]) -> list[Group]:
+    by_norm: dict[str, list[Item]] = {}
+    for it in items:
+        norm = normalize_name(it.name)
+        if not norm:
+            continue
+        by_norm.setdefault(norm, []).append(it)
+
+    groups: list[Group] = []
+    claimed: set[str] = set()
+
+    # Pass 1: exact-normalized collisions
+    for norm, bucket in by_norm.items():
+        if len(bucket) < 2:
+            continue
+        groups.append(
+            Group(
+                normalized_name=norm,
+                similarity="normalized-match",
+                items=tuple(bucket),
+            )
+        )
+        for it in bucket:
+            claimed.add(_item_key(it))
+
+    # Pass 2: Jaro-Winkler over remaining singletons
+    remaining = [
+        (norm, bucket[0])
+        for norm, bucket in by_norm.items()
+        if len(bucket) == 1 and _item_key(bucket[0]) not in claimed
+    ]
+
+    for i, (norm_a, item_a) in enumerate(remaining):
+        if _item_key(item_a) in claimed:
+            continue
+        if len(norm_a) < JW_MIN_LEN:
+            continue
+        cluster: list[Item] = [item_a]
+        for j in range(i + 1, len(remaining)):
+            norm_b, item_b = remaining[j]
+            if _item_key(item_b) in claimed:
+                continue
+            if len(norm_b) < JW_MIN_LEN:
+                continue
+            if jaro_winkler(norm_a, norm_b) >= JW_THRESHOLD:
+                cluster.append(item_b)
+                claimed.add(_item_key(item_b))
+        if len(cluster) >= 2:
+            claimed.add(_item_key(item_a))
+            groups.append(
+                Group(
+                    normalized_name=norm_a,
+                    similarity="jaro-winkler",
+                    items=tuple(cluster),
+                )
+            )
+
+    # Sort: largest group first, then alphabetical
+    groups.sort(key=lambda g: (-len(g.items), g.normalized_name))
+
+    # Sort items within each group by (path, line)
+    groups = [
+        Group(
+            normalized_name=g.normalized_name,
+            similarity=g.similarity,
+            items=tuple(sorted(g.items, key=lambda i: (i.path, i.line))),
+        )
+        for g in groups
+    ]
+
+    return groups
