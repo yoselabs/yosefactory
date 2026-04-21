@@ -89,10 +89,16 @@ def dispatch_command(
 
     from a2sdlc.adapters.git import LocalGitAdapter  # noqa: PLC0415
     from a2sdlc.assembly.wire import build_progress_state  # noqa: PLC0415
+    from a2sdlc.evaluation.telemetry import telemetry_from_env  # noqa: PLC0415
     from a2sdlc.pipeline.runner import SdkStageRunner  # noqa: PLC0415
 
     git = LocalGitAdapter(root)
-    progress_state = build_progress_state(root, config.adapters.progress)
+    telemetry = telemetry_from_env(experiment_name=root.name)
+    progress_state = build_progress_state(
+        root,
+        config.adapters.progress,
+        with_mlflow_trace=telemetry.traces_enabled,
+    )
 
     # Mode selection is ambient — DISPATCHER_URL signals Jira-dispatcher mode,
     # otherwise we use the existing GH-native composition.
@@ -158,6 +164,7 @@ def dispatch_command(
         project_root=root,
         logger=logging.getLogger("a2sdlc.pipeline.dispatch"),
         make_comment_subscriber=make_comment_subscriber,
+        telemetry=telemetry,
     )
 
     try:
