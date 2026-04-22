@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from a2sdlc.domain.models import (
+    ChildOutcome,
     GateConfig,
     GateMode,
     StageName,
@@ -231,6 +232,109 @@ class TestTicketState:
     def test_base_branch_override(self) -> None:
         ts = self._make(base_branch="develop")
         assert ts.base_branch == "develop"
+
+
+@pytest.mark.unit
+class TestChildOutcomeStub:
+    """ChildOutcome is a reserved placeholder for N5 (ADR-0005)."""
+
+    def test_empty_construction(self) -> None:
+        # No required fields — N5 will add them.
+        outcome = ChildOutcome()
+        assert outcome.model_dump() == {}
+
+    def test_round_trip_preserves_unknown_fields(self) -> None:
+        # extra='allow' so a future schema addition survives round-trip
+        # when an older reader touches a newer document.
+        raw = '{"findings": "edge case X missed", "severity": 2}'
+        outcome = ChildOutcome.model_validate_json(raw)
+        restored = ChildOutcome.model_validate_json(outcome.model_dump_json())
+        assert restored.model_dump() == {
+            "findings": "edge case X missed",
+            "severity": 2,
+        }
+
+
+@pytest.mark.unit
+class TestTicketStateV2Schema:
+    """ADR-0005 — TicketState v2 schema, storage invariants."""
+
+    def _make(self, **kwargs: Any) -> TicketState:
+        defaults: dict[str, Any] = {
+            "stage": StageName.SPEC,
+            "branch": "a2sdlc/TEST-1",
+            "stage_run_id": "run-abc",
+            "last_updated": "2026-04-24T10:00:00Z",
+        }
+        defaults.update(kwargs)
+        return TicketState(**defaults)
+
+    def test_schema_version_defaults_to_2(self) -> None:
+        ts = self._make()
+        assert ts.schema_version == 2
+
+    def test_n2_fields_default_empty(self) -> None:
+        ts = self._make()
+        assert ts.parent_key is None
+        assert ts.children == []
+
+    def test_n5_placeholder_fields_default_empty(self) -> None:
+        ts = self._make()
+        assert ts.child_outcomes == {}
+        assert ts.revisions == 0
+
+    def test_observability_fields_default(self) -> None:
+        ts = self._make()
+        assert ts.engine_version == ""
+        assert ts.workflow_name == "default"
+
+    def test_rate_limited_until_defaults_none(self) -> None:
+        ts = self._make()
+        assert ts.rate_limited_until is None
+
+    def test_v2_round_trip_with_all_fields(self) -> None:
+        ts = self._make(
+            parent_key="EPIC-1",
+            children=["TICK-1", "TICK-2"],
+            child_outcomes={"TICK-1": ChildOutcome()},
+            revisions=1,
+            engine_version="0.1.0+abc123",
+            workflow_name="review-only",
+            rate_limited_until="2026-04-24T11:00:00Z",
+        )
+        restored = TicketState.model_validate_json(ts.model_dump_json())
+        assert restored.schema_version == 2
+        assert restored.parent_key == "EPIC-1"
+        assert restored.children == ["TICK-1", "TICK-2"]
+        assert "TICK-1" in restored.child_outcomes
+        assert restored.revisions == 1
+        assert restored.engine_version == "0.1.0+abc123"
+        assert restored.workflow_name == "review-only"
+        assert restored.rate_limited_until == "2026-04-24T11:00:00Z"
+
+    def test_unknown_fields_preserved_on_round_trip(self) -> None:
+        # Forward-compat: a v3 field in the JSON must survive round-trip
+        # through a v2 reader. Protects against the surprise that broke
+        # ``base_branch`` before ADR-0005.
+        raw = (
+            '{"stage":"spec","branch":"a2sdlc/X","stage_run_id":"r",'
+            '"last_updated":"2026-04-24T00:00:00Z",'
+            '"future_v3_field":"preserve-me"}'
+        )
+        ts = TicketState.model_validate_json(raw)
+        dumped = ts.model_dump()
+        assert dumped.get("future_v3_field") == "preserve-me"
+
+    def test_v1_input_without_schema_version_accepted(self) -> None:
+        # The Pydantic model has a default. Migration routing lives in
+        # ``session/state_migrations.py``; at the model level, a v1-shape
+        # document (no schema_version) simply defaults to v2.
+        raw = (
+            '{"stage":"spec","branch":"a2sdlc/X","stage_run_id":"r",'
+            '"last_updated":"2026-04-24T00:00:00Z"}'
+        )
+        ts = TicketState.model_validate_json(raw)
+        assert ts.schema_version == 2
 
 
 @pytest.mark.unit
