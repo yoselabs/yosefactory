@@ -10,7 +10,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from a2sdlc.domain.models import GateConfig
+from a2sdlc.domain.models import GateConfig, StageName
 
 logger = logging.getLogger("a2sdlc.config")
 
@@ -158,6 +158,56 @@ def load_config_file(project_root: Path) -> ProjectConfig:
 
     logger.info("Loaded config from %s", config_path)
     return config
+
+
+# ── ResolvedConfig — the 5-layer collapse, materialized once ─────────
+#
+# Architecture vision §2.7 + §7. Today the five layers (defaults →
+# ``project.stage_overrides`` → directive overrides → label overrides →
+# env) resolve **inline** in dispatch. Target shape resolves once and
+# hands this to every downstream component.
+#
+# P1 ships only the type — no resolver. P6 (unified composition) wires
+# the resolver in ``config/loader.py`` under the target layout. Lives
+# in ``config.py`` (not ``domain/``) because it composes StageConfig +
+# AdaptersConfig + QualityConfig, which live here; putting it in
+# ``domain/`` would reverse the existing import direction.
+
+
+class ResolvedConfig(BaseModel):
+    """The 5-layer config collapse, materialized once per run.
+
+    Contains everything dispatch needs for one run: workflow identifier,
+    base branch, per-stage ``StageConfig`` map, gates, quality gate,
+    adapters, and top-level options.
+
+    ``frozen=True`` — once resolved, the result is immutable.
+    Per-stage config is keyed by ``StageName`` so adding a stage does
+    not change this shape.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # Identity / provenance
+    workflow_name: str = "default"
+
+    # Branching
+    base_branch: str = "main"
+
+    # Per-stage configuration — fully resolved StageConfig per stage.
+    # Missing entries fall back to the stage handler's own default.
+    stages: dict[StageName, StageConfig] = Field(default_factory=dict)
+
+    # Cross-stage blocks
+    gates: GateConfig = Field(default_factory=GateConfig)
+    quality: QualityConfig = Field(default_factory=QualityConfig)
+    adapters: AdaptersConfig = Field(default_factory=AdaptersConfig)
+
+    # Top-level options
+    self_answer: bool = False
+    model: str = "claude-sonnet-4-6"
+    effort: EffortLevel | None = None
+    max_cost_usd_per_ticket: float = 15.0
 
 
 def _format_pydantic_error(exc: ValidationError) -> str:

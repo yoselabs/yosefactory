@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ── Enums ──────────────────────────────────────────────────────────
@@ -52,9 +52,29 @@ class StageResult(BaseModel):
     output: str = ""
 
 
-class TicketState(BaseModel):
-    """v2 state model for tracking ticket progress through the pipeline."""
+class ChildOutcome(BaseModel):
+    """Placeholder for N5 backpropagation — architecture vision §2.21.
 
+    Reserved slot so the parent ``TicketState.child_outcomes`` field has a
+    concrete type before N5 lands. Fields TBD by the N5 RFC; ``extra='allow'``
+    preserves round-trip of any fields a future schema adds.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+
+class TicketState(BaseModel):
+    """v2 state model for tracking ticket progress through the pipeline.
+
+    Schema-versioned per ADR-0005. ``extra='allow'`` preserves unknown
+    fields on round-trip (forward-compat safety).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    schema_version: int = 2
+
+    # v1 fields — unchanged semantics
     stage: StageName
     status: StageStatus | None = None
     base_branch: str = "main"
@@ -67,6 +87,22 @@ class TicketState(BaseModel):
     accumulated_tokens_out: int = 0
     accumulated_duration_ms: int = 0
     last_updated: str
+
+    # v2 additions — N2 (subtask execution, architecture vision §2.18)
+    parent_key: str | None = None
+    children: list[str] = Field(default_factory=list)
+    # v2 placeholders reserved for N5 (architecture vision §2.21);
+    # stay empty until the N5 RFC finalizes ``ChildOutcome`` fields.
+    child_outcomes: dict[str, ChildOutcome] = Field(default_factory=dict)
+    revisions: int = 0
+
+    # Observability / reproducibility (ADR-0005)
+    engine_version: str = ""
+    workflow_name: str = "default"
+
+    # Rate-limit self-heal slot (architecture vision §2.23);
+    # scheduled sweep re-dispatches after this ISO timestamp clears.
+    rate_limited_until: str | None = None
 
 
 def extract_result(output: str) -> StageResult | None:
