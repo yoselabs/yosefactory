@@ -2,10 +2,10 @@
 title: "TicketState schema, versioning, and storage invariants"
 type: adr
 number: 0005
-status: Proposed
+status: Accepted
 owner: "@iorlas"
 created: 2026-04-22
-updated: 2026-04-22
+updated: 2026-04-24
 rfc: null
 supersedes: null
 superseded_by: null
@@ -13,8 +13,8 @@ superseded_by: null
 
 # ADR-0005 — TicketState schema, versioning, and storage invariants
 
-- ![img](./static/media/icon.06a6aa23.png)**Status:** Proposed
-- **Date:** 2026-04-22
+- ![img](./static/media/icon.06a6aa23.png)**Status:** Accepted
+- **Date:** 2026-04-22 (proposed); 2026-04-24 (accepted — P1 landed)
 
 ## Context
 
