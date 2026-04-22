@@ -136,6 +136,15 @@ _TASK_ICONS: dict[str, str] = {
 }
 
 
+# Raw.githubusercontent URL for the committed animated spinner. Pinned
+# at `main` so the engine tracks whatever asset ships with the current
+# release. GitHub's Camo image proxy preserves GIF animation for raw
+# URLs on this host, so the spinner actually moves in issue comments.
+_SPINNER_URL = (
+    "https://raw.githubusercontent.com/yoselabs/a2sdlc/main/assets/spinner.gif"
+)
+
+
 def _format_tasks(tasks: dict[str, str]) -> str:
     """Render task list with status icons."""
     if not tasks:
@@ -168,7 +177,10 @@ def format_progress(
     if elapsed is None:
         elapsed = time.monotonic() - progress.start_time
 
-    parts = [f"\u23f3 **a2sdlc:{stage}** in progress...\n"]
+    parts = [
+        f'<img src="{_SPINNER_URL}" width="14" align="absmiddle" alt="\u23f3"> '
+        f"**a2sdlc:{stage}** in progress...\n"
+    ]
 
     parts.append(
         _format_status_bar(
