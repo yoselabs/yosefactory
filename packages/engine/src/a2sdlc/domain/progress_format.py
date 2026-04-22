@@ -178,7 +178,7 @@ def format_progress(
         elapsed = time.monotonic() - progress.start_time
 
     parts = [
-        f'<img src="{_SPINNER_URL}" width="14" align="absmiddle" alt="\u23f3"> '
+        f'<img src="{_SPINNER_URL}" width="18" align="absmiddle" alt="\u23f3"> '
         f"**a2sdlc:{stage}** in progress...\n"
     ]
 
