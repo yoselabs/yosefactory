@@ -1,14 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" role="img" aria-label="in progress">
-  <g fill="#5078c8">
-    <circle cx="12" cy="3" r="2" opacity="1"/>
-    <circle cx="18.364" cy="5.636" r="2" opacity="0.85"/>
-    <circle cx="21" cy="12" r="2" opacity="0.7"/>
-    <circle cx="18.364" cy="18.364" r="2" opacity="0.55"/>
-    <circle cx="12" cy="21" r="2" opacity="0.4"/>
-    <circle cx="5.636" cy="18.364" r="2" opacity="0.3"/>
-    <circle cx="3" cy="12" r="2" opacity="0.2"/>
-    <circle cx="5.636" cy="5.636" r="2" opacity="0.15"/>
-  </g>
-  <animateTransform attributeName="transform" attributeType="XML" type="rotate"
-                   from="0 12 12" to="360 12 12" dur="0.9s" repeatCount="indefinite"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="38" height="38" viewBox="0 0 38 38" fill="none" stroke="#6e7781">
+  <circle cx="19" cy="19" r="17" stroke-opacity=".18" stroke-width="2"/>
+  <circle cx="19" cy="19" r="17" stroke-linecap="round" stroke-width="2" stroke-dasharray="75 107">
+    <animateTransform attributeName="transform" type="rotate" from="0 19 19" to="360 19 19" dur="1.2s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="19" cy="19" r="10" stroke-opacity=".14" stroke-width="1.5"/>
+  <circle cx="19" cy="19" r="10" stroke-linecap="round" stroke-width="1.5" stroke-dasharray="35 70">
+    <animateTransform attributeName="transform" type="rotate" from="360 19 19" to="0 19 19" dur="0.9s" repeatCount="indefinite"/>
+  </circle>
 </svg>
