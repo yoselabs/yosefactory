@@ -15,6 +15,7 @@ _DEFAULT_TOOLS = [
     "WebFetch",
     "WebSearch",
     "Agent",
+    "Skill",
 ]
 
 

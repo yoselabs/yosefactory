@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+from pathlib import Path
 from typing import Any
 
 from claude_agent_sdk.types import (
@@ -66,6 +68,10 @@ async def run_stage(
         # invoking user's global config would bleed unrelated context in.
         "setting_sources": ["project", "local"],
     }
+    plugins = _resolve_plugins()
+    if plugins:
+        options_kwargs["plugins"] = plugins
+        logger.info("loaded plugins: %s", [p["path"] for p in plugins])
     if effort is not None:
         sdk_effort = _EFFORT_SDK_MAP.get(effort)
         if sdk_effort is None:
@@ -220,6 +226,34 @@ async def _handle_assistant_message(
                             if subject:
                                 progress_state.tasks[subject] = status
         # TextBlock dropped — logging covers it.
+
+
+def _resolve_plugins() -> list[dict[str, str]]:
+    """Resolve SdkPluginConfig list from ``A2SDLC_PLUGIN_PATHS`` env var.
+
+    Colon-separated absolute paths pointing at plugin roots (a dir
+    containing `.claude-plugin/plugin.json`). Non-existent paths are
+    skipped with a warning — a missing optional plugin shouldn't fail
+    the stage, but a misconfigured workflow shouldn't run silently
+    without the skills the prompt references either.
+    """
+    raw = os.environ.get("A2SDLC_PLUGIN_PATHS", "").strip()
+    if not raw:
+        return []
+    resolved: list[dict[str, str]] = []
+    for part in raw.split(":"):
+        path = Path(part).expanduser()
+        if not path.is_dir():
+            logger.warning("plugin path not a directory, skipping: %s", path)
+            continue
+        manifest = path / ".claude-plugin" / "plugin.json"
+        if not manifest.is_file():
+            logger.warning(
+                "plugin path missing .claude-plugin/plugin.json, skipping: %s", path
+            )
+            continue
+        resolved.append({"type": "local", "path": str(path)})
+    return resolved
 
 
 # ── StageRunner implementation ──────────────────────────────────────

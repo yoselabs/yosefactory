@@ -14,5 +14,14 @@ class ReviewStage:
         name="review",
         max_turns=150,
         timeout_minutes=20,
-        allowed_tools=["Bash", "Read", "Glob", "Grep", "WebFetch", "WebSearch"],
+        allowed_tools=[
+            "Bash",
+            "Read",
+            "Glob",
+            "Grep",
+            "WebFetch",
+            "WebSearch",
+            "Agent",
+            "Skill",
+        ],
     )
