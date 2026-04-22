@@ -144,6 +144,17 @@ _SPINNER_URL = (
     "https://raw.githubusercontent.com/yoselabs/a2sdlc/main/assets/spinner.svg"
 )
 
+# Header icon per terminal status. The QUESTIONS icon ❓ calls out "human
+# input required" — distinct from a normal ✅ completion so watchers
+# don't miss a paused pipeline. Changes-requested reviews get 🔄 to
+# signal "another loop coming." Others fall back to ✅.
+_STATUS_ICONS: dict[str, str] = {
+    "complete": "✅",
+    "approved": "✅",
+    "questions": "❔",  # ❔ white question mark (bigger visual weight than ?)
+    "changes_requested": "\U0001f504",
+}
+
 
 def _format_tasks(tasks: dict[str, str]) -> str:
     """Render task list with status icons."""
@@ -255,8 +266,16 @@ def format_final(
     max_turns: int,
     context_window: int | None,
     tasks: dict[str, str] | None = None,
+    status: str | None = None,
 ) -> str:
-    """Build the final completion comment with collapsed stats."""
+    """Build the final completion comment with collapsed stats.
+
+    `status` — one of "complete" | "approved" | "changes_requested" |
+    "questions" | None. Drives the header icon so watchers can tell at a
+    glance whether the stage finished cleanly, needs human input, or
+    requested changes on a PR. None falls back to ✅ (legacy callers +
+    the "no status block found" path use this).
+    """
     bar = _stats_bar(
         stats,
         model=model,
@@ -276,8 +295,9 @@ def format_final(
         if tasks_text:
             stats_lines.append(f"\n{tasks_text}")
     stats_body = "\n".join(stats_lines)
+    icon = _STATUS_ICONS.get(status or "complete", "\u2705")
     parts = [
-        f"### \u2705 a2sdlc:{stage}\n",
+        f"### {icon} a2sdlc:{stage}\n",
         body,
         f"\n\n<details>\n<summary>Stats</summary>\n\n{stats_body}\n\n</details>",
     ]

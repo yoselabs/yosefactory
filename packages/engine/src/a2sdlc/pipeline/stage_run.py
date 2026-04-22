@@ -182,6 +182,7 @@ async def execute_ai_stage(
         max_turns=stage_config.max_turns,
         context_window=ctx_window,
         tasks=tasks,
+        status=stage_result.status.value,
     )
     comment.finalize(final_comment)
 

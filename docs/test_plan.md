@@ -1,0 +1,194 @@
+# a2sdlc Smoke Test Plan
+
+Scenarios that can't be covered by unit tests — they require a real
+GitHub App, the Claude Agent SDK, and the superpowers plugin on a live
+runner. Run these after any change to dispatch, runner, adapters, or
+the stage prompts. Keep this file honest: every scenario you actually
+run gets a status row update; every scenario you add should have a
+pass criterion that's concretely verifiable from `gh` / the repo, not
+from the agent's self-report.
+
+## Where this runs
+
+- Engine repo: `yoselabs/a2sdlc`, branch `main`.
+- Smoke repo: `iorlas/a2sdlc-smoke`, workflow pinned `@main`.
+- Secrets: `A2SDLC_APP_ID` + `A2SDLC_APP_PRIVATE_KEY` + `CLAUDE_CODE_OAUTH_TOKEN` set on the smoke repo.
+- Smoke config (`.a2sdlc/config.yaml`): `gates: {merge: auto}`, no `self_answer` (defaults to false).
+
+## Pass criteria vocabulary
+
+- **Post-merge clean** — issue closed, labels `[]`, PR merged with descriptive title (not `agent/N`), main's `.a2sdlc/` contains only `config.yaml`, `agent/{N}~1` has `state.json` for debug history.
+- **QUESTIONS clean** — issue OPEN, labels include `needs-input`, final comment ends with `{"status": "questions"}` + load-bearing choices listed, PR is seed-draft only (no spec committed).
+- **Breaker clean** — issue OPEN, `stage:blocked` label, "Blocked: `<reason>`" comment pinned.
+
+---
+
+## 1. Happy path — full pipeline
+
+**What it validates:** dispatch composition root, preflight → ensure draft PR → SPEC → IMPLEMENT → REVIEW → MERGE transitions, title-promote-at-merge, pre-merge strip, progress telemetry, MLflow session wiring.
+
+**Ticket shape:** clear scope, unambiguous deliverable. Good templates:
+- "Add a short helper for X in `scripts/foo.py` — one function, one test."
+- "Add a cross-reference helper to `docs/util.md` — one paragraph + worked example."
+
+**Expected:** Post-merge clean. Cost $0.20–$4 depending on scope. Duration 2–15 min.
+
+**Sentinel runs:**
+- 2026-04-22 smoke #20 — $0.18 / 2 min, plugin loading was dormant (thin SPEC path).
+- 2026-04-22 smoke #22 — $2.99 / 18 min, plugin loading active, full brainstorm + plan + TDD workflow ran.
+
+**Retry after:** any change to `pipeline/dispatch.py`, `preflight.py`, `stage_run.py`, `merge_flow.py`, `stages/*`, `adapters/work/github.py`, `adapters/review/github.py`, stage prompts.
+
+---
+
+## 2. QUESTIONS — Phase 1: agent pauses on load-bearing ambiguity
+
+**What it validates:** SPEC decision-gate prompt + `mark_needs_input` label path + engine does NOT proceed to IMPLEMENT when agent returns `{"status": "questions"}`.
+
+**Ticket shape:** multiple load-bearing choices with no reasonable default. Good templates:
+- "Add metrics collection to the CLI." (which metrics? where stored? opt-out? schema?)
+- "Add authentication to $SCRIPT." (scheme? storage? scope?)
+- "Integrate with $EXTERNAL_SERVICE." (creds? format? retry?)
+
+**Bad templates (don't use):**
+- "Fix the CLI." — the agent will pick something reasonable and proceed.
+- Anything with a single missing fact — the agent may infer.
+
+**Expected:** QUESTIONS clean. SPEC terminates <3 min. Cost $0.15–$0.50.
+
+**Sentinel runs:**
+- 2026-04-22 smoke #24 — failed (went to IMPLEMENT despite `self_answer: false`); fixed by commit `2bf212f` (SPEC decision gate).
+- 2026-04-22 smoke #26 — ✅ $0.20 / 2:51, 4 questions listed, `needs-input` label present.
+
+**Retry after:** any change to `prompts/stages/spec.md`, `_DEFAULT_TOOLS` in `stages/spec.py`, `mark_needs_input`, feedback routing.
+
+---
+
+## 3. QUESTIONS — Phase 2: resume on human answer
+
+**What it validates:** `collect_issue_feedback` picks up `@a2sdlc` comment, dispatch routes as feedback event, SPEC re-enters with user_prompt_override, eventually produces a spec + proceeds to IMPLEMENT.
+
+**Prereq:** a ticket sitting in Phase-1 state (open, `needs-input` label).
+
+**Steps:**
+1. Post a comment on the issue: `@a2sdlc <answers>`. Example answers to smoke #26's questions: `1) now CLI, 2) local JSONL file, 3) NOW_NO_TELEMETRY env var, 4) event-level only, no install ID`.
+2. Wait for the `issue_comment` workflow run to fire.
+3. Expect SPEC to re-enter. Two valid outcomes:
+   - Agent has all info → writes spec + plan, returns `complete`. Proceeds to IMPLEMENT, etc.
+   - Agent has partial info → returns `questions` again with remaining gaps. Loop back to Phase 2.
+4. Validate that `needs-input` is stripped on the next stage transition (via `_strip_transient_labels`).
+
+**Expected multi-turn:** up to 2–3 Q&A cycles on a deliberately-ambiguous ticket, then full pipeline to merge. Cumulative cost $2–$8.
+
+**Sentinel runs:** _TBD — run against smoke #26._
+
+**Retry after:** any change to `feedback_routing.py`, `_parse_issue_comment_event`, `_strip_transient_labels`, `collect_issue_feedback`.
+
+---
+
+## 4. Feedback loop — human PR review on a merged-path ticket
+
+**What it validates:** `collect_pr_feedback` picks up human review comment requesting changes, engine routes to IMPLEMENT with feedback, subsequent REVIEW stage approves.
+
+**Prereq:** a ticket where SPEC + IMPLEMENT have landed and a PR is in REVIEW (gate=human) or just-landed REVIEW.
+
+**Steps:**
+1. On the PR, submit a review with `CHANGES_REQUESTED` and a specific feedback comment.
+2. Expect engine to fire `pull_request_review` workflow, route to IMPLEMENT.
+3. Verify review_cycles counter increments (visible in `state.json`).
+4. IMPLEMENT addresses the feedback, REVIEW re-approves, MERGE happens.
+
+**Expected:** Post-merge clean with `review_cycles >= 1` in the pre-strip `state.json`.
+
+**Sentinel runs:** _TBD — not yet exercised._
+
+**Retry after:** feedback routing changes, review adapter changes, circuit-breaker-cycle logic.
+
+---
+
+## 5. Circuit breakers
+
+### 5a. Review cycle breaker
+
+**What it validates:** `check_review_cycles` trips when `review_cycles >= max_review_cycles`, stage is blocked before execution.
+
+**Setup:** Force IMPLEMENT → REVIEW → CHANGES_REQUESTED → IMPLEMENT loop by setting `max_review_cycles: 1` in smoke config and asking for a ticket the agent will get "wrong" on first try, then human requests changes.
+
+**Expected:** After the second REVIEW, next dispatch trips breaker: `stage:blocked` label + comment "Blocked: review cycle ceiling (X >= Y)."
+
+### 5b. Cost ceiling breaker
+
+**What it validates:** `check_cost_ceiling` trips when accumulated cost >= `max_cost_usd_per_ticket`.
+
+**Setup:** Set `max_cost_usd_per_ticket: 0.5` in smoke config, file any non-trivial ticket.
+
+**Expected:** After first SPEC stage, cumulative cost exceeds ceiling → next dispatch trips breaker.
+
+**Sentinel runs:** _TBD — not yet exercised._
+
+**Retry after:** `pipeline/breakers.py` changes, cost-accounting changes in `stage_run.py` state write.
+
+---
+
+## 6. Stage override directives
+
+**What it validates:** `parse_directives` extracts `base:` and `gate_spec:` / `gate_merge:` from ticket body and they override project config.
+
+**Ticket shape:** Include YAML-style directives in the body:
+```
+base: develop
+gate_merge: human
+---
+<normal ticket body>
+```
+
+**Expected:** Branch is `agent/{N}` against `develop` (not `main`). MERGE stage blocks on human approval even though project config has `gates: {merge: auto}`.
+
+**Sentinel runs:** _TBD — not yet exercised._
+
+**Retry after:** `domain/directives.py` changes, `preflight.py` gate merging logic.
+
+---
+
+## 7. Closed-ticket short-circuit
+
+**What it validates:** `is_closed` event triggers `mark_done` without invoking the agent, leaving no stage label behind.
+
+**Setup:** Close any open agent-labeled issue manually via GitHub UI.
+
+**Expected:** Engine fires `issues:closed` workflow, stamps done, no AI call. Labels become `[]`. Cost $0.
+
+**Sentinel runs:** Implicit — validated in post-merge cleanup of every happy-path smoke.
+
+**Retry after:** `is_closed` path in `preflight.py`, `mark_done` in work adapter.
+
+---
+
+## 8. Idempotency — duplicate event delivery
+
+**What it validates:** `check_idempotency` rejects a second dispatch with the same `run_id`, no double-charge.
+
+**Setup:** Trigger the same workflow twice rapidly (e.g., add `agent` label, remove, re-add within seconds).
+
+**Expected:** Second run returns early with `error="duplicate_run_id"`, no AI call, no state change. Visible in GHA log as `dispatch.duplicate_run_id`.
+
+**Sentinel runs:** _TBD — not easily producible manually; relies on `run_id` derivation from `event.key + stage + git_head_sha` being identical across runs._
+
+**Retry after:** `_derive_mode2_run_id` in `cli/dispatch.py`, `check_idempotency` in `state_storage`.
+
+---
+
+## Open gaps — scenarios this plan doesn't yet cover
+
+- Concurrent tickets racing on `cleanup_base` or state writes (the rebase-retry band-aid landed; not live-tested).
+- Mid-stage runner death (timeout / cancelled). Depends on `fork_session` behavior in SDK.
+- Multiple consumer workflows hitting the engine at once (cross-repo isolation).
+- Non-trivial directive combinations (`base: feature/x` + `gate_merge: human` + feedback loop).
+
+## How to cite this plan in a commit
+
+> Retest scenarios: 1 (happy path), 3 (QUESTIONS resume) per `docs/test_plan.md`.
+
+Keep a `Sentinel runs:` line per scenario updated as runs accumulate —
+future sessions should be able to answer "was this validated in prod
+recently?" without re-running the smoke.
