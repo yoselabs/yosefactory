@@ -47,6 +47,12 @@ class WorkflowInputReader:
             )
         return body
 
+    def get_ticket_title(self, key: str) -> str:
+        # Dispatcher-routed mode: title arrives via env var alongside body.
+        # Empty string when unset — dispatch falls back to keeping the
+        # branch-derived placeholder title on the PR.
+        return os.environ.get("TICKET_TITLE", "")
+
     def get_labels(self, key: str) -> list[str]:
         return []
 

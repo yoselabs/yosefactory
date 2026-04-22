@@ -50,6 +50,7 @@ class FakeWorkAdapter:
         self,
         event: PipelineEvent | None = None,
         ticket_body: str = "",
+        ticket_title: str = "Test ticket",
         labels: list[str] | None = None,
         issue_feedback: Sequence[FeedbackItem] = (),
         last_handover: HandoverComment | None = None,
@@ -57,6 +58,7 @@ class FakeWorkAdapter:
     ) -> None:
         self._event = event
         self._ticket_body = ticket_body
+        self._ticket_title = ticket_title
         self._labels: list[str] = labels or []
         self._issue_feedback = issue_feedback
         self._last_handover = last_handover
@@ -82,6 +84,9 @@ class FakeWorkAdapter:
 
     def get_ticket(self, key: str) -> str:
         return self._ticket_body
+
+    def get_ticket_title(self, key: str) -> str:
+        return self._ticket_title
 
     def get_labels(self, key: str) -> list[str]:
         return list(self._labels)
@@ -158,6 +163,7 @@ class FakeReviewAdapter:
         self.updated_prs: list[
             tuple[int, str, str, str]
         ] = []  # (pr_number, title, body, ticket_key)
+        self.updated_titles: list[tuple[int, str]] = []  # (pr_number, title)
         self.ready_prs: list[int] = []  # pr_numbers
         self.merged_prs: list[tuple[int, str]] = []  # (pr_number, method)
         self.reviews: list[tuple[int, str, str]] = []  # (pr_number, body, verdict)
@@ -177,6 +183,9 @@ class FakeReviewAdapter:
 
     def update_pr(self, pr_number: int, title: str, body: str, ticket_key: str) -> None:
         self.updated_prs.append((pr_number, title, body, ticket_key))
+
+    def update_pr_title(self, pr_number: int, title: str) -> None:
+        self.updated_titles.append((pr_number, title))
 
     def mark_pr_ready(self, pr_number: int) -> None:
         self.ready_prs.append(pr_number)

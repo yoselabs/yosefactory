@@ -78,6 +78,12 @@ class LocalNoopReviewAdapter:
         data["ticket_key"] = ticket_key
         self._write_pr(data)
 
+    def update_pr_title(self, pr_number: int, title: str) -> None:
+        """Update pr.json title only (leave body + ticket_key intact)."""
+        data = self._read_pr()
+        data["title"] = title
+        self._write_pr(data)
+
     def mark_pr_ready(self, pr_number: int) -> None:
         """Set status='ready'."""
         data = self._read_pr()

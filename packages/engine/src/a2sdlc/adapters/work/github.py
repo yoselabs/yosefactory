@@ -245,6 +245,11 @@ class GitHubWorkAdapter:
         issue = self._repo.get_issue(int(key))
         return issue.body or ""
 
+    def get_ticket_title(self, key: str) -> str:
+        """Return issue title — source of truth for the PR title."""
+        issue = self._repo.get_issue(int(key))
+        return issue.title or ""
+
     def is_ticket_active(self, key: str) -> bool:
         """False if the issue (or PR) is closed/merged.
 

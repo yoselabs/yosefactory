@@ -269,14 +269,14 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
                         )
 
                 ctx.git.sync_with_base(base)
-                # Strip state pre-merge on the feature branch — squash carries
-                # a clean tree into base. Works under branch protection.
+                # Strip state, promote title, merge. Engine owns all PR ops.
                 try:
                     ctx.git.strip_runtime_state()
                 except Exception:  # noqa: BLE001
                     ctx.logger.warning("dispatch.state_strip_failed", exc_info=True)
+                if tt := ctx.work.get_ticket_title(event.key):
+                    pr_lifecycle.update_title(pr_number, tt)
                 pr_lifecycle.merge(pr_number)
-                # GH auto-links #N so humans jump to the diff in one click.
                 comment.finalize(f"\u2705 Merged #{pr_number}")
                 ctx.work.mark_done(event.key)
                 ctx.logger.info("dispatch.merged", extra={"pr": pr_number})

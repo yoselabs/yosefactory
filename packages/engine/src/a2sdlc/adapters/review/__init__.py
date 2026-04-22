@@ -35,6 +35,16 @@ class ReviewAdapter(Protocol):
     def update_pr(
         self, pr_number: int, title: str, body: str, ticket_key: str
     ) -> None: ...
+    def update_pr_title(self, pr_number: int, title: str) -> None:
+        """Set the PR title without touching the body.
+
+        Called by the engine right before merge so the squash-merged
+        commit on base carries the ticket intent, not the branch-derived
+        placeholder title. Distinct from `update_pr` so we don't have to
+        re-construct the body + Closes-link text every time.
+        """
+        ...
+
     def mark_pr_ready(self, pr_number: int) -> None: ...
     def merge_pr(self, pr_number: int, method: str = "squash") -> None: ...
     def get_approvals(self, pr_number: int) -> list[Approval]: ...

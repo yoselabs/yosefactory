@@ -118,6 +118,16 @@ class LocalFileWorkAdapter:
             return ""
         return self._ticket_path.read_text()
 
+    def get_ticket_title(self, key: str) -> str:
+        # Local mode has no separate title field — derive from the first
+        # non-empty line of the ticket body, a reasonable heuristic.
+        body = self.get_ticket(key)
+        for line in body.splitlines():
+            stripped = line.strip().lstrip("# ").strip()
+            if stripped:
+                return stripped
+        return ""
+
     def get_labels(self, key: str) -> list[str]:
         return []
 

@@ -49,6 +49,11 @@ class GitHubReviewAdapter:
         pull.edit(title=title, body=full_body)
         logger.debug("updated PR #%d", pr_number)
 
+    def update_pr_title(self, pr_number: int, title: str) -> None:
+        pull = self._repo.get_pull(pr_number)
+        pull.edit(title=title)
+        logger.debug("updated PR #%d title: %r", pr_number, title)
+
     def mark_pr_ready(self, pr_number: int) -> None:
         # PyGithub's `mark_ready_for_review` issues the GraphQL
         # `markPullRequestReadyForReview` mutation — the correct path to

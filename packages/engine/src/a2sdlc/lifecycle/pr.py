@@ -33,6 +33,13 @@ class PRLifecycle:
         approvals: list[Approval] = self._review.get_approvals(pr_number)
         return any(not a.is_bot for a in approvals)
 
+    def update_title(self, pr_number: int, title: str) -> None:
+        """Set the PR title — called before merge so the squash-merged
+        commit on base reflects the ticket title rather than the bare
+        `agent/<key>` placeholder from draft creation.
+        """
+        must_succeed(lambda: self._review.update_pr_title(pr_number, title))
+
     def merge(self, pr_number: int, method: str = "squash") -> None:
         """Mark the PR ready for review, then merge it."""
         must_succeed(lambda: self._review.mark_pr_ready(pr_number))
