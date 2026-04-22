@@ -53,7 +53,7 @@ class TestFormatProgress:
         ]
         text = format_progress("implement", ps, elapsed=135.0)
         assert "**a2sdlc:implement** in progress..." in text
-        assert "spinner.gif" in text
+        assert "spinner.svg" in text
         assert "claude-sonnet-4-6" in text
         assert "feat/T-1" in text
         assert "| Read | src/app.py |" in text
@@ -80,7 +80,7 @@ class TestFormatProgress:
         ps = _make_progress()
         text = format_progress("spec", ps, elapsed=0.0)
         assert "**a2sdlc:spec** in progress..." in text
-        assert "spinner.gif" in text
+        assert "spinner.svg" in text
 
 
 @pytest.mark.unit

@@ -141,7 +141,7 @@ _TASK_ICONS: dict[str, str] = {
 # release. GitHub's Camo image proxy preserves GIF animation for raw
 # URLs on this host, so the spinner actually moves in issue comments.
 _SPINNER_URL = (
-    "https://raw.githubusercontent.com/yoselabs/a2sdlc/main/assets/spinner.gif"
+    "https://raw.githubusercontent.com/yoselabs/a2sdlc/main/assets/spinner.svg"
 )
 
 
