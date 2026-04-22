@@ -58,7 +58,7 @@ from the agent's self-report.
 
 **Sentinel runs:**
 - 2026-04-22 smoke #24 — failed (went to IMPLEMENT despite `self_answer: false`); fixed by commit `2bf212f` (SPEC decision gate).
-- 2026-04-22 smoke #26 — ✅ $0.20 / 2:51, 4 questions listed, `needs-input` label present.
+- 2026-04-22 smoke #26 (Phase 1) — ✅ $0.20 / 2:51, 4 questions listed, `needs-input` label present.
 
 **Retry after:** any change to `prompts/stages/spec.md`, `_DEFAULT_TOOLS` in `stages/spec.py`, `mark_needs_input`, feedback routing.
 
@@ -80,7 +80,8 @@ from the agent's self-report.
 
 **Expected multi-turn:** up to 2–3 Q&A cycles on a deliberately-ambiguous ticket, then full pipeline to merge. Cumulative cost $2–$8.
 
-**Sentinel runs:** _TBD — run against smoke #26._
+**Sentinel runs:**
+- 2026-04-22 smoke #26 (Phase 2, resume) — ✅ after user-authored `@a2sdlc` answer comment: SPEC re-entered with feedback as user_prompt_override, wrote spec + plan, IMPLEMENT ran full TDD cycle (red test commit → impl → hermetic fix), REVIEW approved first try (0 cycles), MERGE clean. **Cumulative cost $3.71, duration ~23 min, 1 Q&A round** (agent had enough info from round 1 answers; didn't ask follow-ups). PR #27 merged with engine-promoted title, labels empty, main clean. Icon logic not live-exercised (no post-change QUESTIONS finalize); covered by unit tests.
 
 **Retry after:** any change to `feedback_routing.py`, `_parse_issue_comment_event`, `_strip_transient_labels`, `collect_issue_feedback`.
 
