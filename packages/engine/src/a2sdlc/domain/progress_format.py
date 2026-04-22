@@ -151,7 +151,7 @@ _SPINNER_URL = (
 _STATUS_ICONS: dict[str, str] = {
     "complete": "✅",
     "approved": "✅",
-    "questions": "❔",  # ❔ white question mark (bigger visual weight than ?)
+    "questions": "❓",  # ❓ red question mark — visible on both light + dark
     "changes_requested": "\U0001f504",
 }
 
