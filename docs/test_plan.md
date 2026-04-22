@@ -36,6 +36,7 @@ from the agent's self-report.
 **Sentinel runs:**
 - 2026-04-22 smoke #20 — $0.18 / 2 min, plugin loading was dormant (thin SPEC path).
 - 2026-04-22 smoke #22 — $2.99 / 18 min, plugin loading active, full brainstorm + plan + TDD workflow ran.
+- 2026-04-22 smoke #30 — ~14 min, validates cross-scope App token install (commit `1f401e1`, `x-access-token:${ENGINE_TOKEN}@github.com/yoselabs/a2sdlc` auth path). Install step worked while engine repo still public (over-specification harmless); private-repo path now unblocked.
 
 **Retry after:** any change to `pipeline/dispatch.py`, `preflight.py`, `stage_run.py`, `merge_flow.py`, `stages/*`, `adapters/work/github.py`, `adapters/review/github.py`, stage prompts.
 
