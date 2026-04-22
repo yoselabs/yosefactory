@@ -228,9 +228,9 @@ class TestMainDispatch:
                 main(["dispatch", "--project-root", str(tmp_path)])
             assert exc.value.code == 0
 
-        # Factory called with env-derived token + repo; expected_app_id
-        # defaults to None when A2SDLC_APP_ID isn't set.
-        mock_work.from_token.assert_called_once_with("tkn", "o/r", expected_app_id=None)
+        # Factory called with env-derived token + repo. Installation-token
+        # probe lives inside from_token; CLI no longer passes app_id.
+        mock_work.from_token.assert_called_once_with("tkn", "o/r")
         mock_review.assert_called_once()
 
     def test_main_dispatch_dispatcher_mode(self, tmp_path: Path) -> None:

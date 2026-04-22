@@ -8,6 +8,7 @@ import os
 import re
 from datetime import datetime
 
+import requests
 from github import Github
 from github.Repository import Repository
 
@@ -55,18 +56,19 @@ class GitHubWorkAdapter:
         cls,
         token: str,
         repo_name: str,
-        expected_app_id: str | None = None,  # noqa: ARG003
         trigger_mention: str = "@a2sdlc",
     ) -> "GitHubWorkAdapter":
         """Construct an adapter from raw credentials.
 
-        `expected_app_id` is reserved for a future App-id probe. The
-        obvious implementation — `Github(token).get_app()` — doesn't work:
-        PyGithub requires JWT `AppAuth` for that endpoint, but Mode 2
-        runs with an installation access token. Kept in the signature so
-        a sound probe (raw `/installation/*` API call) can slot in later
-        without another CLI-side change. See P2.6b in the followups.
+        Verifies the token is a valid App installation token before
+        handing out an adapter. GitHub Actions' default `GITHUB_TOKEN`
+        shares the `ghs_` prefix with App installation tokens but is
+        issued to the workflow runner — it can't hit the
+        `/installation/*` endpoints an App needs for issue / PR / label
+        operations. Catching the mismatch here fails loudly instead of
+        letting a downstream PyGithub call raise a confusing 404.
         """
+        _probe_installation_token(token)
         gh = Github(token)
         repo = gh.get_repo(repo_name)
         return cls(repo, trigger_mention=trigger_mention)
@@ -416,6 +418,52 @@ class GitHubWorkAdapter:
                 if best is None or parsed.created_at > best.created_at:
                     best = parsed
         return best
+
+
+def _probe_installation_token(token: str) -> None:
+    """Verify `token` is an App installation token by hitting an endpoint
+    only such tokens can call.
+
+    `/installation/repositories` requires App-installation auth — JWT
+    `AppAuth` tokens and GHA's default `GITHUB_TOKEN` both fail it,
+    albeit with different status codes. A 2xx response means the token
+    is bound to an installation; anything else raises ValueError with a
+    pointer at `actions/create-github-app-token@v3`, which is the only
+    supported way to mint a valid installation token in a consumer
+    workflow.
+
+    Does NOT verify which App — the endpoint doesn't surface the app_id
+    in headers or body, and there's no installation-token-compatible way
+    to retrieve it. Catching "wrong token type" is the primary goal; a
+    wrong-App case would already fail on `get_repo()` with a 404.
+    """
+    try:
+        r = requests.get(
+            "https://api.github.com/installation/repositories",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            params={"per_page": 1},
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        # Network errors shouldn't fail auth validation — let PyGithub's
+        # own retries handle transient issues downstream.
+        logger.debug("token probe network error: %s", exc)
+        return
+
+    if r.status_code < 300:
+        return
+
+    raise ValueError(
+        f"GITHUB_TOKEN is not a valid App installation token "
+        f"(/installation/repositories returned {r.status_code}). "
+        f"If you're using GitHub Actions' default GITHUB_TOKEN, switch "
+        f"to an App installation token via "
+        f"actions/create-github-app-token@v3 — see docs/mode2/README.md."
+    )
 
 
 __all__ = ["GitHubWorkAdapter"]

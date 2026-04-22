@@ -248,13 +248,10 @@ def dispatch_command(
 
         token = os.environ.get("GITHUB_TOKEN", os.environ.get("GH_TOKEN", ""))
         repo_name = os.environ.get("GITHUB_REPOSITORY", "")
-        # Optional App-id verification lives in the adapter factory —
-        # distinguishes a correctly-configured App token from the GHA
-        # default, which share the `ghs_` prefix but different app_id.
-        expected_app_id = os.environ.get("A2SDLC_APP_ID") or None
-        work_adapter = GitHubWorkAdapter.from_token(
-            token, repo_name, expected_app_id=expected_app_id
-        )
+        # Factory probes /installation/repositories to distinguish an App
+        # installation token from GHA's default GITHUB_TOKEN, which share
+        # the `ghs_` prefix. Misconfigured consumers fail loudly here.
+        work_adapter = GitHubWorkAdapter.from_token(token, repo_name)
         review_adapter = GitHubReviewAdapter(work_adapter._repo)  # noqa: SLF001
 
         # Derive a deterministic run_id so duplicate event deliveries (GHA
