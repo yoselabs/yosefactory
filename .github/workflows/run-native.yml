@@ -67,9 +67,26 @@ jobs:
         with:
           version: "latest"
 
+      - name: Mint engine-install token
+        # Cross-scope token for cloning yoselabs/a2sdlc. The main app-token
+        # above is scoped to the consumer repo; this one is scoped to the
+        # engine repo (read-only). Works against both public and private
+        # visibility — over-specifies on public, required on private.
+        # Prereq: the a2sdlc GitHub App must be installed on yoselabs org
+        # with Contents: Read on the a2sdlc repo.
+        id: engine-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.A2SDLC_APP_ID }}
+          private-key: ${{ secrets.A2SDLC_APP_PRIVATE_KEY }}
+          owner: yoselabs
+          repositories: a2sdlc
+
       - name: Install engine
+        env:
+          ENGINE_TOKEN: ${{ steps.engine-token.outputs.token }}
         run: |
-          uv tool install --from 'git+https://github.com/yoselabs/a2sdlc@main#subdirectory=packages/engine' a2sdlc-engine
+          uv tool install --from "git+https://x-access-token:${ENGINE_TOKEN}@github.com/yoselabs/a2sdlc@main#subdirectory=packages/engine" a2sdlc-engine
 
       - name: Install plugins
         # Skills/agents for the Claude Agent SDK runtime. SPEC/IMPLEMENT
