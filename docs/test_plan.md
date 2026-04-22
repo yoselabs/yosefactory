@@ -59,6 +59,7 @@ from the agent's self-report.
 **Sentinel runs:**
 - 2026-04-22 smoke #24 — failed (went to IMPLEMENT despite `self_answer: false`); fixed by commit `2bf212f` (SPEC decision gate).
 - 2026-04-22 smoke #26 (Phase 1) — ✅ $0.20 / 2:51, 4 questions listed, `needs-input` label present.
+- 2026-04-22 smoke #28 (Phase 1) — ✅ with `### ❔ a2sdlc:spec` header (commit `af00029` icon live-sighted). 4:10 / ~$0.30, agent asked one focused follow-up before committing to design.
 
 **Retry after:** any change to `prompts/stages/spec.md`, `_DEFAULT_TOOLS` in `stages/spec.py`, `mark_needs_input`, feedback routing.
 
@@ -125,7 +126,8 @@ from the agent's self-report.
 
 **Expected:** After first SPEC stage, cumulative cost exceeds ceiling → next dispatch trips breaker.
 
-**Sentinel runs:** _TBD — not yet exercised._
+**Sentinel runs:**
+- 2026-04-22 smoke #28 (5b cost-ceiling) — ✅ breaker tripped at IMPLEMENT dispatch after resume SPEC pushed accumulated cost to $1.32 (ceiling $0.50). `stage:blocked` label added, `Blocked: Cost ceiling: $1.32 >= $0.50 per-ticket max` comment posted. Known minor artifacts: (1) duplicate "Blocked:" comment from the CLI error-handler path alongside the breaker's own, (2) workflow exit code `failure` instead of `success` on breaker trip — both UX-only, not regressions. Worth a follow-up cleanup but don't block validation.
 
 **Retry after:** `pipeline/breakers.py` changes, cost-accounting changes in `stage_run.py` state write.
 
