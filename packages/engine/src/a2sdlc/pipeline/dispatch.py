@@ -1,4 +1,11 @@
-"""Dispatch v2 — thin orchestrator composing v2 modules."""
+"""Dispatch — composition root for one pipeline run.
+
+Thin orchestrator: preflight → ensure draft PR → comment + subscriber →
+telemetry session → delegate to merge_flow or stage_run. Each phase
+lives in its own module (see `preflight.py`, `merge_flow.py`,
+`stage_run.py`). This file wires them together and owns the StageEnd
+emission contract (fires unconditionally once a stage is attempted).
+"""
 
 from __future__ import annotations
 
@@ -6,42 +13,23 @@ import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 
 from a2sdlc.adapters.git import GitAdapter
 from a2sdlc.adapters.review import ReviewAdapter
 from a2sdlc.adapters.runner import StageRunner
 from a2sdlc.adapters.work import WorkAdapter
-from a2sdlc.lifecycle.comment import CommentManager
 from a2sdlc.config import ProjectConfig, load_stage_config
-from a2sdlc.pipeline.context import assemble_context, pick_handover
-from a2sdlc.domain.directives import parse_directives
-from a2sdlc.domain.exceptions import BlockedError, SkipEvent
-from a2sdlc.pipeline.feedback_routing import resolve_target_stage
-from a2sdlc.domain.models import (
-    GateConfig,
-    GateMode,
-    StageName,
-    StageStatus,
-    TicketState,
-    strip_status_block,
-)
-from a2sdlc.lifecycle.pr import PRLifecycle
+from a2sdlc.domain.models import StageName
 from a2sdlc.domain.progress import ProgressState, Subscriber
-from a2sdlc.domain.progress_format import (
-    context_window_for_model,
-    format_error,
-    format_final,
-)
+from a2sdlc.domain.progress_format import context_window_for_model
 from a2sdlc.domain.run_result import DispatchResult
-from a2sdlc.assembly.prompt import assemble_system_prompt
-from a2sdlc.pipeline.stage_executor import StageExecutor
-from a2sdlc.stages import next_stage
 from a2sdlc.evaluation.telemetry import NoopTelemetry, Telemetry
-from a2sdlc.lifecycle.state import StateManager
-from a2sdlc.lifecycle.state_storage import GitFileStateStorage
-from a2sdlc.pipeline.breakers import check_cost_ceiling, check_review_cycles
+from a2sdlc.lifecycle.comment import CommentManager
+from a2sdlc.lifecycle.pr import PRLifecycle
+from a2sdlc.pipeline.merge_flow import execute_merge
+from a2sdlc.pipeline.preflight import PreflightOutcome, run_preflight
+from a2sdlc.pipeline.stage_run import execute_ai_stage
 
 
 @dataclass
@@ -65,436 +53,123 @@ class DispatchContext:
 
 async def dispatch(ctx: DispatchContext) -> DispatchResult:
     """Run one pipeline stage. Returns what happened."""
-    # 1. Parse event
-    try:
-        event = ctx.work.parse_event()
-    except SkipEvent as e:
-        ctx.logger.info("dispatch.skip", extra={"reason": e.reason})
-        return DispatchResult(stage=StageName.SPEC, error=e.reason)
+    # 1. Preflight — event parse, routing, branch setup, idempotency,
+    # circuit breakers. Early-returns for skip/closed/inactive/duplicate/
+    # tripped-breaker/git-blocked.
+    pre = run_preflight(ctx)
+    if isinstance(pre, DispatchResult):
+        return pre
 
-    # 1.5. Ticket-closed: stamp done, strip transient labels, no AI call.
-    # Handled before is_ticket_active because the close IS the signal.
-    if event.is_closed:
-        ctx.logger.info("dispatch.ticket_closed", extra={"key": event.key})
-        ctx.work.mark_done(event.key)
-        return DispatchResult(stage=StageName.MERGE, error="ticket_closed")
-
-    # 1.6. Skip stages on terminal tickets (stale delayed events, etc.).
-    if not ctx.work.is_ticket_active(event.key):
-        ctx.logger.info(
-            "dispatch.skip",
-            extra={"reason": "ticket_not_active", "key": event.key},
-        )
-        return DispatchResult(stage=StageName.SPEC, error="ticket_not_active")
-
-    # 2. Shared setup: ticket body + directives
-    ticket_body = ctx.work.get_ticket(event.key)
-    directives, clean_body = parse_directives(ticket_body)
-
-    # ── Route: feedback / proceed / label ──────────────────────
-    user_prompt_override: str | None = None
-
-    if event.is_feedback:
-        # Collect handovers from both issue and PR
-        issue_handover = ctx.work.find_last_handover(event.key)
-        pr_handover = None
-        pr_diff = None
-        if event.pr_number:
-            pr_handover = ctx.review.find_last_handover(event.pr_number)
-            pr_diff = ctx.review.read_pr_diff(event.pr_number)
-
-        handover = pick_handover(issue_handover, pr_handover)
-        since = handover.created_at if handover else datetime.min
-
-        context = assemble_context(
-            ticket_body=clean_body,
-            issue_handover=issue_handover,
-            pr_handover=pr_handover,
-            issue_feedback=ctx.work.collect_issue_feedback(event.key, since),
-            pr_feedback=(
-                ctx.review.collect_pr_feedback(event.pr_number, since)
-                if event.pr_number
-                else []
-            ),
-            pr_diff=pr_diff,
-        )
-
-        # Dedup: skip if handover is newer than all feedback
-        if context.feedback and not context.is_first_run:
-            newest_feedback = max(f.created_at for f in context.feedback)
-            if handover and handover.created_at > newest_feedback:
-                ctx.logger.info("dispatch.feedback_already_addressed")
-                return DispatchResult(
-                    stage=context.current_stage or StageName.SPEC,
-                    error="feedback_already_addressed",
-                )
-
-        target_stage = resolve_target_stage(context.current_stage)
-        user_prompt_override = context.user_prompt
-
-    elif event.trigger_stage is None:
-        # Proceed: advance past current gate
-        issue_handover = ctx.work.find_last_handover(event.key)
-        current_stage = issue_handover.stage if issue_handover else None
-        if current_stage == StageName.SPEC:
-            target_stage = StageName.IMPLEMENT
-        elif current_stage == StageName.REVIEW:
-            target_stage = StageName.MERGE
-        else:
-            target_stage = StageName.IMPLEMENT  # fallback
-
-    else:
-        target_stage = event.trigger_stage
-
-    # ── Shared setup continues ────────────────────────────────
-    ctx.logger.info(
-        "dispatch.start",
-        extra={"key": event.key, "stage": target_stage.value},
-    )
-
-    gates = ctx.config.gate_config()
-    if directives.gate_merge is not None:
-        gates = GateConfig(merge=directives.gate_merge, spec=gates.spec)
-    if directives.gate_spec is not None:
-        gates = GateConfig(merge=gates.merge, spec=directives.gate_spec)
-
-    self_answer = ctx.config.self_answer
-
-    # 3. Branch setup — state.json lives on the ticket branch so must
-    # checkout before reading it.
-    state_mgr = StateManager(GitFileStateStorage(ctx.git), event.key)
-    base = directives.base or ctx.config.default_base
-    branch = ctx.work.format_branch(event.key)
-    try:
-        ctx.git.setup_branch(branch, base)
-        ctx.logger.info("dispatch.branch_setup", extra={"branch": branch, "base": base})
-    except BlockedError as e:
-        ctx.logger.error("dispatch.git_blocked", extra={"reason": e.reason})
-        ctx.work.mark_blocked(event.key, e.reason)
-        return DispatchResult(stage=target_stage, blocked=True, error=e.reason)
-
-    # 4. Read state + idempotency check (branch is now checked out)
-    state = state_mgr.read_state()
-
-    if ctx.run_id and state_mgr.check_idempotency(ctx.run_id):
-        ctx.logger.info("dispatch.duplicate_run_id", extra={"run_id": ctx.run_id})
-        return DispatchResult(stage=target_stage, error="duplicate_run_id")
-
-    # 5. Circuit breakers — review-cycle loop + per-ticket cost ceiling.
-    _stage_cfg = load_stage_config(target_stage.value, ctx.config)
-    for reason in (
-        check_review_cycles(target_stage, state, _stage_cfg),
-        check_cost_ceiling(state, ctx.config),
-    ):
-        if reason is not None:
-            ctx.logger.error("dispatch.circuit_breaker", extra={"reason": reason})
-            ctx.work.mark_blocked(event.key, reason)
-            return DispatchResult(stage=target_stage, blocked=True, error=reason)
-
-    # 6. Draft PR creation (on spec stage if no PR exists yet)
+    # 2. Draft PR creation (on spec stage if no PR exists yet).
     pr_lifecycle = PRLifecycle(ctx.review)
-    pr_number = state.pr_number if state else None
-    if target_stage == StageName.SPEC and pr_number is None:
-        # GitHub rejects PRs against unpushed branches and empty-diff PRs. Seed
-        # the branch with an empty commit, push it, then open the draft PR.
-        ctx.git.commit_empty(f"chore(a2sdlc): open session for {event.key}")
-        ctx.git.push()
-        pr_number = pr_lifecycle.create_draft(branch, base, event.key)
-        ctx.logger.info("dispatch.draft_pr_created", extra={"pr": pr_number})
+    pr_number = _ensure_draft_pr(ctx, pre, pr_lifecycle)
 
-    if event.pr_number is not None:
-        pr_number = event.pr_number
-
-    # 7. Start comment
-    comment = CommentManager(ctx.work, event.key)
-    comment.start(target_stage.value)
-
-    # Register the comment-driving subscriber now that we have a comment handle.
-    # Dispatch doesn't know which subscriber class — the CLI supplies a factory.
+    # 3. Start comment + comment-driving subscriber. Dispatch doesn't
+    # know which subscriber class — the CLI supplies a factory.
+    comment = CommentManager(ctx.work, pre.event.key)
+    comment.start(pre.target_stage.value)
     if ctx.make_comment_subscriber is not None:
         ctx.progress_state.subscribe(ctx.make_comment_subscriber(comment))
 
-    # 7.5 Load stage config early so stage_start has model/max_turns even for MERGE.
-    stage_config = load_stage_config(target_stage.value, ctx.config)
+    # 4. Load stage config early so stage_start has model/max_turns even for MERGE.
+    stage_config = load_stage_config(pre.target_stage.value, ctx.config)
     # Scope MLflow parent per-run so A/B fan-outs on one ticket don't collide.
-    session_id = f"{event.key}:{ctx.run_id or uuid.uuid4()}"
+    session_id = f"{pre.event.key}:{ctx.run_id or uuid.uuid4()}"
     # Telemetry wraps only actually-attempted stages. Pre-execution early
-    # returns (SkipEvent, feedback_already_addressed, duplicate_run_id,
-    # circuit_breaker, git_blocked) intentionally produce no MLflow runs.
+    # returns intentionally produce no MLflow runs.
     telemetry = ctx.telemetry or NoopTelemetry()
 
+    return await _run_attempted_stage(
+        ctx,
+        pre,
+        pr_lifecycle,
+        comment,
+        pr_number,
+        stage_config,
+        session_id,
+        telemetry,
+    )
+
+
+def _ensure_draft_pr(
+    ctx: DispatchContext,
+    pre: PreflightOutcome,
+    pr_lifecycle: PRLifecycle,
+) -> int | None:
+    """Return the PR number for this ticket, creating a draft on SPEC if needed.
+
+    GitHub rejects PRs against unpushed branches and empty-diff PRs —
+    seed an empty commit, push, then open.
+    """
+    pr_number = pre.state.pr_number if pre.state else None
+    if pre.target_stage == StageName.SPEC and pr_number is None:
+        ctx.git.commit_empty(f"chore(a2sdlc): open session for {pre.event.key}")
+        ctx.git.push()
+        pr_number = pr_lifecycle.create_draft(pre.branch, pre.base, pre.event.key)
+        ctx.logger.info("dispatch.draft_pr_created", extra={"pr": pr_number})
+
+    if pre.event.pr_number is not None:
+        pr_number = pre.event.pr_number
+
+    return pr_number
+
+
+async def _run_attempted_stage(
+    ctx: DispatchContext,
+    pre: PreflightOutcome,
+    pr_lifecycle: PRLifecycle,
+    comment: CommentManager,
+    pr_number: int | None,
+    stage_config,  # noqa: ANN001 — forward ref to StageConfig
+    session_id: str,
+    telemetry: Telemetry,
+) -> DispatchResult:
+    """Execute a stage under telemetry + progress envelope.
+
+    Emits `stage_start` / `stage_end` unconditionally once the stage is
+    attempted. Delegates to `execute_merge` for deterministic MERGE or
+    `execute_ai_stage` for SPEC/IMPLEMENT/REVIEW.
+    """
     with (
         telemetry.session(session_id) as opener,
-        opener.stage(target_stage.value) as run,
+        opener.stage(pre.target_stage.value) as run,
     ):
-        run.log_tag("ticket_key", event.key)
-        run.log_tag("target_stage", target_stage.value)
+        run.log_tag("ticket_key", pre.event.key)
+        run.log_tag("target_stage", pre.target_stage.value)
 
         await ctx.progress_state.stage_start(
-            target_stage,
+            pre.target_stage,
             session_id,
             model=stage_config.model,
             max_turns=stage_config.max_turns,
             context_window=context_window_for_model(stage_config.model) or 0,
-            branch=branch,
+            branch=pre.branch,
         )
 
-        # Initialize success/error trackers BEFORE the try block. Default error to
-        # "unknown" so an unhandled crash produces an informative StageEnd payload.
-        _stage_success: bool = False
-        _stage_error: str | None = "unknown"
+        # Default error to "unknown" so an unhandled crash produces an
+        # informative StageEnd payload.
+        success: bool = False
+        error: str | None = "unknown"
 
         try:
-            # 8. Merge stage — deterministic, no AI
-            if target_stage == StageName.MERGE:
-                if pr_number is None:
-                    reason = f"No PR found for branch {branch}"
-                    comment.finalize(f"\U0001f6a8 {reason}")
-                    ctx.work.mark_blocked(event.key, reason)
-                    _stage_error = reason
-                    return DispatchResult(
-                        stage=StageName.MERGE, blocked=True, error=reason
-                    )
+            if pre.target_stage == StageName.MERGE:
+                result, success, error = execute_merge(
+                    ctx, pre, pr_lifecycle, comment, pr_number
+                )
+                return result
 
-                if gates.merge == GateMode.HUMAN:
-                    if not pr_lifecycle.check_human_approval(pr_number):
-                        comment.finalize(
-                            "\u23f3 Waiting for human approval before merge."
-                        )
-                        _stage_error = "waiting_for_approval"
-                        return DispatchResult(
-                            stage=StageName.MERGE,
-                            blocked=True,
-                            error="waiting_for_approval",
-                        )
-
-                ctx.git.sync_with_base(base)
-                # Strip state, promote title, merge. Engine owns all PR ops.
-                try:
-                    ctx.git.strip_runtime_state()
-                except Exception:  # noqa: BLE001
-                    ctx.logger.warning("dispatch.state_strip_failed", exc_info=True)
-                if tt := ctx.work.get_ticket_title(event.key):
-                    pr_lifecycle.update_title(pr_number, tt)
-                pr_lifecycle.merge(pr_number)
-                comment.finalize(f"\u2705 Merged #{pr_number}")
-                ctx.work.mark_done(event.key)
-                ctx.logger.info("dispatch.merged", extra={"pr": pr_number})
-                _stage_success = True
-                _stage_error = None
-                return DispatchResult(stage=StageName.MERGE)
-
-            # 9. Assemble prompts (stage_config already loaded above)
-            system_prompt = assemble_system_prompt(
-                target_stage.value, ctx.project_root / ".a2sdlc"
+            result, success, error = await execute_ai_stage(
+                ctx, pre, pr_lifecycle, comment, pr_number, stage_config, run
             )
-
-            if event.is_feedback:
-                system_prompt = (
-                    "IMPORTANT: You are addressing feedback on your previous work. "
-                    "Focus on the feedback items below.\n\n" + system_prompt
-                )
-
-            if self_answer and target_stage == StageName.SPEC:
-                system_prompt = (
-                    "IMPORTANT: Make your best judgment for all ambiguous requirements. "
-                    "Do not ask questions \u2014 produce the spec directly.\n\n"
-                    + system_prompt
-                )
-
-            # 10. Build user prompt
-            if user_prompt_override is not None:
-                user_prompt = user_prompt_override
-            else:
-                user_prompt = clean_body
-                if target_stage == StageName.REVIEW and pr_number is not None:
-                    pr_context = pr_lifecycle.read_context(pr_number)
-                    user_prompt = f"{clean_body}\n\n{pr_context}"
-
-            # 11. Execute stage
-            executor = StageExecutor(ctx.runner)
-            exec_result = await executor.run(
-                user_prompt=user_prompt,
-                system_prompt=system_prompt,
-                config=stage_config,
-                ticket_key=event.key,
-                stage=target_stage,
-                project_root=str(ctx.project_root),
-                progress_state=ctx.progress_state,
-                is_resume=False,
-                branch=branch,
-            )
-
-            stage_result = exec_result.stage_result
-
-            # 12. Log full output to CI (logging only — no progress event;
-            # an empty GroupOpen/GroupClose pair would render as a foldable
-            # block with nothing inside).
-            ctx.logger.info("agent.output", extra={"len": len(exec_result.output)})
-
-            # Build shared format kwargs
-            _milestones = exec_result.milestones
-            _ctx_window = (
-                exec_result.progress.context_window if exec_result.progress else None
-            )
-
-            # Helper: commit and push
-            def _commit_and_push() -> None:
-                # Commit the state.json ledger + real deliverables (docs/).
-                # Other runtime under .a2sdlc/state/ (logs) stays on the
-                # runner's tree and is never committed. Pre-merge strip
-                # wipes the whole .a2sdlc/state/ folder before the squash.
-                try:
-                    ctx.git.commit_artifacts(
-                        "chore: stage artifacts",
-                        [".a2sdlc/state/state.json", "docs/"],
-                    )
-                    ctx.git.push()
-                except Exception:  # noqa: BLE001
-                    ctx.logger.warning("dispatch.commit_push_failed", exc_info=True)
-
-            # 13. Handle failure
-            if not exec_result.success:
-                error_comment = format_error(
-                    exec_result.error or "unknown",
-                    stage=target_stage.value,
-                    stats=exec_result.stats,
-                    milestones=_milestones,
-                    model=stage_config.model,
-                    branch=branch,
-                    max_turns=stage_config.max_turns,
-                    context_window=_ctx_window,
-                )
-                comment.finalize(error_comment)
-                _commit_and_push()
-                ctx.work.mark_blocked(event.key, exec_result.error or "unknown")
-                _stage_error = exec_result.error or "unknown"
-                return DispatchResult(
-                    stage=target_stage,
-                    blocked=True,
-                    error=exec_result.error,
-                    output=exec_result.output,
-                )
-
-            # 14. No status block even after follow-ups
-            if stage_result is None:
-                partial = exec_result.output[:2000]
-                no_status_footer = format_final(
-                    partial,
-                    stage=target_stage.value,
-                    stats=exec_result.stats,
-                    milestones=_milestones,
-                    model=stage_config.model,
-                    branch=branch,
-                    max_turns=stage_config.max_turns,
-                    context_window=_ctx_window,
-                )
-                error_msg = (
-                    f"\u26a0\ufe0f No status block in **{target_stage.value}** output."
-                    f"\n\n{partial}\n\n{no_status_footer}"
-                )
-                comment.finalize(error_msg)
-                _commit_and_push()
-                ctx.work.mark_blocked(event.key, "no status block in output")
-                _stage_error = "no_status_block"
-                return DispatchResult(
-                    stage=target_stage,
-                    blocked=True,
-                    error="no_status_block",
-                    output=exec_result.output,
-                )
-
-            # 15. Success path
-            comment_body = strip_status_block(exec_result.output)
-            _tasks = exec_result.progress.tasks if exec_result.progress else None
-            final_comment = format_final(
-                comment_body,
-                stage=target_stage.value,
-                stats=exec_result.stats,
-                milestones=_milestones,
-                model=stage_config.model,
-                branch=branch,
-                max_turns=stage_config.max_turns,
-                context_window=_ctx_window,
-                tasks=_tasks,
-            )
-            comment.finalize(final_comment)
-
-            # Side effects
-            if target_stage == StageName.REVIEW and pr_number is not None:
-                verdict = (
-                    "APPROVE"
-                    if stage_result.status == StageStatus.APPROVED
-                    else "REQUEST_CHANGES"
-                )
-                pr_lifecycle.post_review(pr_number, comment_body, verdict)
-
-            # 16. Write state
-            review_cycles = state.review_cycles if state else 0
-            if stage_result.status == StageStatus.CHANGES_REQUESTED:
-                review_cycles += 1
-            new_state = TicketState(
-                stage=target_stage,
-                status=stage_result.status,
-                base_branch=base,
-                branch=branch,
-                pr_number=pr_number,
-                stage_run_id=ctx.run_id or "",
-                review_cycles=review_cycles,
-                accumulated_cost_usd=(state.accumulated_cost_usd if state else 0.0)
-                + exec_result.stats.cost_usd,
-                accumulated_tokens_in=(state.accumulated_tokens_in if state else 0)
-                + exec_result.stats.tokens_in,
-                accumulated_tokens_out=(state.accumulated_tokens_out if state else 0)
-                + exec_result.stats.tokens_out,
-                accumulated_duration_ms=(state.accumulated_duration_ms if state else 0)
-                + exec_result.stats.duration_ms,
-                last_updated=datetime.now(timezone.utc).isoformat(),
-            )
-            state_mgr.write_state(new_state)
-            _commit_and_push()
-
-            # 17. Transition
-            next_st = next_stage(target_stage, stage_result.status, gates)
-
-            ctx.logger.info(
-                "dispatch.transition",
-                extra={
-                    "from": target_stage.value,
-                    "status": stage_result.status.value,
-                    "to": next_st.value if next_st else None,
-                },
-            )
-
-            if next_st is not None:
-                ctx.work.set_current_stage(event.key, next_st)
-            elif stage_result.status == StageStatus.QUESTIONS:
-                ctx.work.mark_needs_input(event.key)  # pipeline paused on human reply
-
-            _stage_success = True
-            _stage_error = None
-
-            # Log metrics before exiting the telemetry context manager.
-            run.log_metric("tokens_in", exec_result.stats.tokens_in)
-            run.log_metric("tokens_out", exec_result.stats.tokens_out)
-            run.log_metric("cost_usd", exec_result.stats.cost_usd)
-            run.log_metric("turns", exec_result.stats.num_turns)
-            run.log_metric("duration_ms", exec_result.stats.duration_ms)
-
-            return DispatchResult(
-                stage=target_stage,
-                status=stage_result.status,
-                next_stage=next_st,
-                blocked=False,
-                stats=exec_result.stats,
-                output=exec_result.output,
-            )
+            return result
 
         finally:
-            # Emit StageEnd unconditionally for whichever path we took.
             await ctx.progress_state.stage_end(
-                target_stage,
-                success=_stage_success,
-                error=_stage_error,
+                pre.target_stage,
+                success=success,
+                error=error,
                 final=ctx.progress_state.snapshot_metrics(),
             )
+
+
+__all__ = ["DispatchContext", "dispatch"]
