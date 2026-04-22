@@ -18,9 +18,11 @@ Hexagonal-lite layout. Read `docs/architecture.md` before adding modules. Summar
 ```bash
 make lint          # agent-harness lint (runs all checks, safe anytime)
 make fix           # auto-fix formatting, then lint
-make test          # run tests (with coverage)
+make test          # run tests (with coverage; skips recorded GH integration)
+make test-integration        # replay recorded GH adapter cassettes (no network)
+make record-integration      # re-record cassettes — needs GITHUB_TOKEN for iorlas/a2sdlc-smoke
 make security-audit          # check deps + secrets in working dir (fast)
-make check                   # full gate: lint + test + coverage-diff + security-audit
+make check                   # full gate: lint + test + test-integration + coverage-diff + security-audit
 make bootstrap               # first-time setup: deps + harness config + pre-commit hooks
 agent-harness security-audit-history  # deep scan git history for deleted secrets (run once)
 ```
@@ -32,7 +34,29 @@ Before declaring work done, always run `make check` — it's the full quality ga
 If `make coverage-diff` fails, write tests for the uncovered lines you changed.
 On first setup or when onboarding a new repo, run `agent-harness security-audit-history` once to scan full git history for leaked secrets.
 
+## GH adapter integration tier
+
+Cassette-backed tests at `tests/integration/adapters/` catch PyGithub
+auth-mode bugs that unit-test mocks miss (two such bugs shipped to main
+on 2026-04-21 — see the reflect signal dated the same). Touching
+`adapters/work/github.py` or `adapters/review/github.py`:
+
+1. Run `make test-integration` — replays current cassettes, no token needed.
+2. If a response shape changed or a new endpoint is called, re-record:
+   ```bash
+   GITHUB_TOKEN=ghs_... make record-integration   # installation token
+   git add tests/integration/adapters/cassettes
+   ```
+3. Scrubber in `tests/integration/adapters/conftest.py` strips
+   `authorization` / cookies before cassettes hit disk. Diff cassettes
+   before committing — no live token should ever appear.
+
+If `test-integration` says "no cassettes — skipping", the tier is
+dormant. Seed it once with a real installation token from the smoke
+repo's App and commit the cassettes.
+
 ## Never
 
 - Never truncate lint/test output with `| tail` or `| head` — output is already optimized
 - Never skip `make check` before declaring a task complete
+- Never commit cassettes without diffing them first — a leaked `authorization` header is a credential disclosure

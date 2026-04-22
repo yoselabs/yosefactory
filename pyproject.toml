@@ -86,4 +86,5 @@ dev = [
     "ty>=0.0.28",
     "import-linter>=2.0",
     "pytest-timeout>=2.4.0",
+    "pytest-recording>=0.13",
 ]

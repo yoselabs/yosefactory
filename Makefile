@@ -1,4 +1,4 @@
-.PHONY: lint lint-harness lint-jscpd lint-actions fix test check coverage-diff security-audit arch bootstrap similar
+.PHONY: lint lint-harness lint-jscpd lint-actions fix test test-integration record-integration check coverage-diff security-audit arch bootstrap similar
 
 lint: lint-harness lint-jscpd lint-actions
 
@@ -15,8 +15,23 @@ fix:
 	agent-harness fix
 
 test:
-	uv run pytest tests/ -n auto -m "not serial" --cov=a2sdlc --cov-report=xml --cov-report=term-missing
-	uv run pytest tests/ -m "serial" --cov=a2sdlc --cov-report=xml --cov-report=term-missing --cov-append || [ $$? -eq 5 ]
+	uv run pytest tests/ --ignore=tests/integration/adapters -n auto -m "not serial" --cov=a2sdlc --cov-report=xml --cov-report=term-missing
+	uv run pytest tests/ --ignore=tests/integration/adapters -m "serial" --cov=a2sdlc --cov-report=xml --cov-report=term-missing --cov-append || [ $$? -eq 5 ]
+
+test-integration: ## Replay recorded GH adapter cassettes (no network, no token needed)
+	@if [ -z "$$(find tests/integration/adapters/cassettes -name '*.yaml' 2>/dev/null)" ]; then \
+		echo "⚠  no cassettes — run 'make record-integration' once to seed. Skipping."; \
+	else \
+		uv run pytest tests/integration/adapters --record-mode=none; \
+	fi
+
+record-integration: ## Re-record GH adapter cassettes — needs GITHUB_TOKEN for iorlas/a2sdlc-smoke
+	@if [ -z "$$GITHUB_TOKEN" ]; then \
+		echo "GITHUB_TOKEN required. Get an installation token (e.g. via actions/create-github-app-token) and export it."; \
+		exit 1; \
+	fi
+	rm -rf tests/integration/adapters/cassettes
+	uv run pytest tests/integration/adapters --record-mode=once
 
 coverage-diff:
 	@uv run diff-cover coverage.xml --compare-branch=main --fail-under=95
@@ -27,7 +42,7 @@ security-audit:
 arch:
 	@uv run lint-imports
 
-check: lint arch test coverage-diff security-audit
+check: lint arch test test-integration coverage-diff security-audit
 
 similar: ## Report similarly-named functions/classes (advisory)
 	@uv run python scripts/find_similar.py
