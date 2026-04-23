@@ -10,6 +10,10 @@ from typing import Any
 
 from claude_agent_sdk.types import (
     AssistantMessage,
+    HookContext,
+    HookInput,
+    HookJSONOutput,
+    HookMatcher,
     ResultMessage,
     ToolUseBlock,
 )
@@ -21,6 +25,75 @@ from a2sdlc.domain.progress import ProgressState
 from a2sdlc.domain.progress_format import extract_target
 
 logger = logging.getLogger("a2sdlc.pipeline.runner")
+
+# Bash-subcommand denylist — the agent may not invoke any of these
+# because they touch the PR object, which is exclusively the engine's
+# responsibility (``_ensure_draft_pr`` + ``PRLifecycle``). A prompt
+# guardrail says the same thing, but SPEC-stage smokes showed the
+# agent will still shell out to ``gh pr create`` when its self-
+# authored plan tells it to; this is the hard stop.
+_BLOCKED_PR_SUBSTRINGS: tuple[str, ...] = (
+    "gh pr create",
+    "gh pr edit",
+    "gh pr merge",
+    "gh pr ready",
+    "gh pr close",
+    "gh pr reopen",
+    "gh pr review",
+    "hub pull-request",
+    "glab mr create",
+    "glab mr edit",
+    "glab mr merge",
+    "glab mr close",
+)
+
+
+async def _deny_engine_owned_pr_commands(
+    input_data: HookInput,
+    tool_use_id: str | None,
+    context: HookContext,
+) -> HookJSONOutput:
+    """PreToolUse hook — block Bash invocations of engine-owned PR commands.
+
+    The engine (`pipeline/dispatch.py:_ensure_draft_pr` and
+    `lifecycle/pr.py:PRLifecycle`) owns the PR object's full lifecycle.
+    Agent stages are not allowed to open, edit, merge, or close PRs —
+    a stage that tries to is signalling either a misunderstood plan or
+    a prompt leak, and its output would bypass the engine's draft-PR
+    + title-promotion invariants.
+
+    Signature uses ``HookInput`` (the union) to match the SDK's
+    ``HookCallback`` type; we narrow on ``tool_name`` inside.
+    """
+    tool_name = input_data.get("tool_name")  # type: ignore[typeddict-item]
+    if tool_name != "Bash":
+        return {}
+    tool_input = input_data.get("tool_input", {})  # type: ignore[typeddict-item]
+    command = tool_input.get("command", "") if isinstance(tool_input, dict) else ""
+    if not isinstance(command, str):
+        return {}
+    lowered = command.lower()
+    for pattern in _BLOCKED_PR_SUBSTRINGS:
+        if pattern in lowered:
+            logger.warning(
+                "pre_tool_use.denied: blocked PR command: %s (pattern=%s)",
+                command[:120],
+                pattern,
+            )
+            return {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": (
+                        f"Blocked: `{pattern}` is an engine-owned command. "
+                        "The a2sdlc engine manages the PR object's full "
+                        "lifecycle (open / edit / merge). Do not invoke PR "
+                        "commands directly — emit code + doc commits only."
+                    ),
+                },
+            }
+    return {}
+
 
 # Maps a2sdlc's ``effort`` config to the SDK's ``ClaudeAgentOptions.effort``.
 _EFFORT_SDK_MAP: dict[str, str] = {
@@ -67,6 +140,19 @@ async def run_stage(
         # a2sdlc is a self-contained pipeline; personal instructions from the
         # invoking user's global config would bleed unrelated context in.
         "setting_sources": ["project", "local"],
+        # Hard-block engine-owned PR commands at the SDK level.
+        # Defense-in-depth alongside the prompt guidance in
+        # prompts/stages/spec.md — a stage cannot "helpfully" run
+        # `gh pr create`, `gh pr merge`, etc. even if its plan tells
+        # it to.
+        "hooks": {
+            "PreToolUse": [
+                HookMatcher(
+                    matcher="Bash",
+                    hooks=[_deny_engine_owned_pr_commands],
+                )
+            ],
+        },
     }
     plugins = _resolve_plugins()
     if plugins:
