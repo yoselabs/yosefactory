@@ -230,6 +230,7 @@ explicitly out of V1.0, but still in the vision (post-V1.0 work).
 |---|---|---|
 | `make check` post-IMPLEMENT | **IN** | Already exists. `RunQualityGate` effect wraps it. |
 | Diff-coverage threshold | **IN** | `make coverage-diff` is already part of `make check` per project CLAUDE.md. Free. |
+| Architecture lint (`make arch`) | **IN (P8)** | `import-linter` contracts in `pyproject.toml` `[tool.importlinter]` + cap test at `tests/architecture/test_composition_cap.py`. Chained into `make check`. |
 | Secrets scan (gitleaks) | **IN** | Single effect + interpreter arm. High trust value, cheap. |
 | Trivy (container / dep CVEs) | **POSTPONED** | Effect variant may be registered for forward-compat; no interpreter arm. |
 | Semgrep (SAST rules) | **POSTPONED** | Same — registered, not wired. |
