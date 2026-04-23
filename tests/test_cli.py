@@ -298,7 +298,7 @@ class TestNotifyStageFailure:
     """L1 coverage for _notify_stage_failure — both profiles + blocked path."""
 
     def test_dispatcher_profile_is_a_noop(self) -> None:
-        from a2sdlc.assembly.composition import resolve_composition_profile
+        from a2sdlc.composition import resolve_composition_profile
         from a2sdlc.cli.dispatch import _notify_stage_failure
 
         profile = resolve_composition_profile(
@@ -311,7 +311,7 @@ class TestNotifyStageFailure:
     def test_ci_github_native_marks_ticket_blocked(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from a2sdlc.assembly.composition import resolve_composition_profile
+        from a2sdlc.composition import resolve_composition_profile
         from a2sdlc.cli.dispatch import _notify_stage_failure
 
         event_file = tmp_path / "event.json"

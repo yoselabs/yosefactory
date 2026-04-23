@@ -10,7 +10,7 @@ import pytest
 
 from pathlib import Path
 
-from a2sdlc.assembly.composition import (
+from a2sdlc.composition import (
     CompositionProfile,
     build_adapters,
     build_subscribers,

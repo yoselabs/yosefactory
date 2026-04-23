@@ -183,7 +183,7 @@ def dispatch_command(
     """Run pipeline dispatch against a GitHub-backed work adapter."""
     root = project_root or find_project_root()
 
-    from a2sdlc.assembly.composition import (  # noqa: PLC0415
+    from a2sdlc.composition import (  # noqa: PLC0415
         build_adapters,
         build_subscribers,
         resolve_composition_profile,
