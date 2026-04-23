@@ -147,7 +147,7 @@ from the agent's self-report.
 <normal ticket body>
 ```
 
-(Not YAML front-matter. Earlier drafts of this plan and inline ticket templates used `gate_merge: human` under a `---` separator — that never parsed; the first run of scenario 4 auto-merged because the directive was silently ignored.)
+(Not YAML front-matter. Earlier drafts of this plan and inline ticket templates used `gate_merge: human` under a `---` separator — that never parsed; the first run of scenario 4 auto-merged because the directive was silently ignored. Same bracket syntax applies to scenario 6 below.)
 
 **Expected:** Branch is `agent/{N}` against `develop` (not `main`). MERGE stage blocks on human approval even though project config has `gates: {merge: auto}`.
 
