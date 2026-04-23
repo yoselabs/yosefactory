@@ -242,9 +242,13 @@ def dispatch_command(
     try:
         result = asyncio.run(dispatch(ctx))
         if result.blocked:
-            logger.error("Dispatch blocked: %s", result.error)
-            _notify_stage_failure(ctx, result.error or "unknown", profile)
-            raise typer.Exit(code=1)
+            # Preflight already handled this (ingress calls mark_blocked
+            # before returning blocked=True — git-setup BlockedError,
+            # cost/cycle breakers). The ticket already carries a user-
+            # facing "Blocked: ..." comment; posting another would
+            # duplicate, and exit(1) would redden the workflow on a
+            # clean breaker trip. Log + exit 0.
+            logger.info("Dispatch blocked: %s", result.error)
     except KeyboardInterrupt:
         logger.info("Interrupted")
     except typer.Exit:

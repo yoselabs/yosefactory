@@ -328,13 +328,19 @@ class TestNotifyStageFailure:
         assert args[0] == "42"
         assert "boom" in args[1]
 
-    def test_dispatch_blocked_result_calls_notify(self, tmp_path: Path) -> None:
-        """End-to-end: a blocked DispatchResult triggers _notify_stage_failure."""
+    def test_dispatch_blocked_result_exits_clean_without_double_notify(
+        self, tmp_path: Path
+    ) -> None:
+        """A blocked DispatchResult means preflight already called mark_blocked
+        (breakers, BlockedError). CLI must NOT post a second "Stage failed"
+        comment and must NOT exit 1 — a clean breaker trip is correct behavior,
+        not a workflow failure.
+        """
         from unittest.mock import patch
 
         (tmp_path / ".a2sdlc").mkdir()
         (tmp_path / ".a2sdlc" / "config.yaml").write_text("default_base: main\n")
-        blocked_result = MagicMock(blocked=True, error="git_blocked")
+        blocked_result = MagicMock(blocked=True, error="Cost ceiling: $5 >= $5")
 
         with (
             patch("a2sdlc.adapters.work.GitHubWorkAdapter") as mock_work,
@@ -360,12 +366,13 @@ class TestNotifyStageFailure:
 
             mock_dispatch.side_effect = _fake_dispatch
 
+            # Typer wraps clean return as SystemExit(0) — allow it,
+            # but assert the exit code is 0 (not 1 from the old behavior).
             with pytest.raises(SystemExit) as exc:
                 main(["dispatch", "--project-root", str(tmp_path)])
-            assert exc.value.code == 1
+            assert exc.value.code == 0
 
-        mock_notify.assert_called_once()
-        assert mock_notify.call_args[0][1] == "git_blocked"
+        mock_notify.assert_not_called()
 
     def test_dispatch_unhandled_exception_calls_notify(self, tmp_path: Path) -> None:
         """A non-typer exception raised by dispatch triggers _notify_stage_failure."""
