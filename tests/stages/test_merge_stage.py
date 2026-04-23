@@ -24,6 +24,7 @@ from a2sdlc.domain.pipeline_event import PipelineEvent
 from a2sdlc.domain.stage_outcome import StageOutcome
 from a2sdlc.lifecycle.comment import CommentManager
 from a2sdlc.lifecycle.pr import PRLifecycle
+from a2sdlc.pipeline.effects_apply import apply as apply_effects
 from a2sdlc.pipeline.preflight import PreflightOutcome, run_preflight
 from a2sdlc.stages.merge import MergeStage
 from tests.fakes import make_dispatch_context
@@ -56,17 +57,56 @@ async def test_merge_stage_auto_gate_merges() -> None:
     pre = _populate_per_run_state(ctx)
     pre.gates = GateConfig(merge=GateMode.AUTO)
 
-    outcome = await MergeStage().execute(ctx)
+    stage = MergeStage()
+    outcome = await stage.execute(ctx)
+    await apply_effects(ctx, stage.effects(ctx, outcome))
 
     assert isinstance(outcome, StageOutcome)
     assert outcome.merged is True
     assert outcome.blocked is False
     assert outcome.status is None
-    # Merge lifecycle happened.
+    # Merge lifecycle happened — applied via interpreter now.
     assert len(review.merged_prs) == 1
     assert review.merged_prs[0][0] == 42
     assert git.state_strips == 1
     assert ("35", "stage:done") in work.label_history
+
+
+@pytest.mark.asyncio
+async def test_merge_stage_happy_path_emits_effects_without_calling_adapters() -> None:
+    """P3 step 7: execute() is adapter-pure; effects drive the merge sequence."""
+    from a2sdlc.domain.effects import (
+        CommentFinalize,
+        MarkDone,
+        MergePR,
+        StripRuntimeState,
+        SyncBase,
+        UpdatePRTitle,
+    )
+
+    ctx, work, git, review, _runner = _merge_ctx(
+        project_root=Path("/tmp/test_merge_stage_effects_happy"),
+    )
+    pre = _populate_per_run_state(ctx)
+    pre.gates = GateConfig(merge=GateMode.AUTO)
+
+    stage = MergeStage()
+    outcome = await stage.execute(ctx)
+    effects = stage.effects(ctx, outcome)
+
+    # execute() did not touch adapters.
+    assert review.merged_prs == []
+    assert git.state_strips == 0
+    assert work.label_history == []
+    assert work.finalized_comments == []
+
+    types_ = [type(e) for e in effects]
+    assert SyncBase in types_
+    assert StripRuntimeState in types_
+    assert UpdatePRTitle in types_
+    assert MergePR in types_
+    assert CommentFinalize in types_
+    assert MarkDone in types_
 
 
 @pytest.mark.asyncio
@@ -76,7 +116,9 @@ async def test_merge_stage_no_pr_blocks() -> None:
     )
     _populate_per_run_state(ctx, pr_number=None)
 
-    outcome = await MergeStage().execute(ctx)
+    stage = MergeStage()
+    outcome = await stage.execute(ctx)
+    await apply_effects(ctx, stage.effects(ctx, outcome))
 
     assert outcome.blocked is True
     assert outcome.merged is False
@@ -93,7 +135,9 @@ async def test_merge_stage_human_gate_without_approval_blocks() -> None:
     pre = _populate_per_run_state(ctx)
     pre.gates = GateConfig(merge=GateMode.HUMAN)
 
-    outcome = await MergeStage().execute(ctx)
+    stage = MergeStage()
+    outcome = await stage.execute(ctx)
+    await apply_effects(ctx, stage.effects(ctx, outcome))
 
     assert outcome.blocked is True
     assert outcome.error == "waiting_for_approval"
@@ -110,7 +154,9 @@ async def test_merge_stage_human_gate_with_approval_merges() -> None:
     pre = _populate_per_run_state(ctx)
     pre.gates = GateConfig(merge=GateMode.HUMAN)
 
-    outcome = await MergeStage().execute(ctx)
+    stage = MergeStage()
+    outcome = await stage.execute(ctx)
+    await apply_effects(ctx, stage.effects(ctx, outcome))
 
     assert outcome.merged is True
     assert len(review.merged_prs) == 1
@@ -130,7 +176,9 @@ async def test_merge_stage_strip_runtime_state_failure_is_swallowed() -> None:
 
     git.strip_runtime_state = _boom  # type: ignore[method-assign]
 
-    outcome = await MergeStage().execute(ctx)
+    stage = MergeStage()
+    outcome = await stage.execute(ctx)
+    await apply_effects(ctx, stage.effects(ctx, outcome))
 
     assert outcome.merged is True
     assert len(review.merged_prs) == 1

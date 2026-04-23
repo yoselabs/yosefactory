@@ -23,8 +23,11 @@ from a2sdlc.domain.effects import (
     RunSecretsScan,
     SetCurrentStage,
     StateWrite,
+    StripRuntimeState,
+    SyncBase,
     Transition,
     UpdatePR,
+    UpdatePRTitle,
 )
 from a2sdlc.domain.models import StageName, TicketState
 from a2sdlc.domain.stage_outcome import InlineComment
@@ -174,6 +177,12 @@ class TestEffectMatch:
                 return "run_quality_gate"
             case RunSecretsScan():
                 return "run_secrets_scan"
+            case SyncBase():
+                return "sync_base"
+            case StripRuntimeState():
+                return "strip_runtime_state"
+            case UpdatePRTitle():
+                return "update_pr_title"
 
     def test_match_covers_every_arm(self) -> None:
         ic = InlineComment(file="a.py", line_start=1, line_end=1, body="b")
@@ -203,8 +212,11 @@ class TestEffectMatch:
             LogArtifact(path="/p"),
             RunQualityGate(command="c"),
             RunSecretsScan(paths=("src/",)),
+            SyncBase(base="main"),
+            StripRuntimeState(),
+            UpdatePRTitle(pr_number=1, title="t"),
         ]
         labels = [self._label(a) for a in arms]
-        # All 19 arms matched (no None returned).
+        # All 22 arms matched (no None returned).
         assert all(lbl for lbl in labels)
-        assert len(set(labels)) == 19
+        assert len(set(labels)) == 22

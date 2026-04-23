@@ -164,6 +164,38 @@ class CleanupBase:
     base: str
 
 
+@dataclass(frozen=True)
+class SyncBase:
+    """Fetch + merge ``base`` into the current branch (pre-merge sync).
+
+    Part of the MERGE stage's pre-merge sequence (P3 step 7). Ensures
+    the PR head is up-to-date with base before the squash.
+    """
+
+    base: str
+
+
+@dataclass(frozen=True)
+class StripRuntimeState:
+    """Wipe runtime state (``.a2sdlc/state/``) before merge.
+
+    Best-effort in V1.0 — the interpreter logs + continues on failure,
+    matching the pre-migration inline try/except pattern.
+    """
+
+
+@dataclass(frozen=True)
+class UpdatePRTitle:
+    """Set the PR title before merge so the squash commit reflects ticket intent.
+
+    Distinct from ``UpdatePR`` which also sets body + ticket_key. Kept
+    narrow because the merge flow only needs title promotion.
+    """
+
+    pr_number: int
+    title: str
+
+
 # ── Control flow ─────────────────────────────────────────────────────
 
 
@@ -238,6 +270,9 @@ Effect = (
     | MarkNeedsInput
     | CommitAndPush
     | CleanupBase
+    | SyncBase
+    | StripRuntimeState
+    | UpdatePRTitle
     | Transition
     | LogMetric
     | LogArtifact
@@ -263,6 +298,9 @@ __all__ = [
     # Git
     "CommitAndPush",
     "CleanupBase",
+    "SyncBase",
+    "StripRuntimeState",
+    "UpdatePRTitle",
     # Control flow
     "Transition",
     # Quality / evaluation

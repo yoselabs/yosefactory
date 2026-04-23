@@ -33,6 +33,9 @@ from a2sdlc.domain.effects import (
     PostReview,
     SetCurrentStage,
     StateWrite,
+    StripRuntimeState,
+    SyncBase,
+    UpdatePRTitle,
 )
 
 if TYPE_CHECKING:
@@ -75,6 +78,19 @@ def _apply_one(ctx: "DispatchContext", eff: Effect) -> None:  # noqa: C901,PLR09
 
         case MergePR(pr_number=pr, method=method):
             _require(ctx.pr_lifecycle, "pr_lifecycle").merge(pr, method)
+
+        case SyncBase(base=base):
+            ctx.git.sync_with_base(base)
+
+        case StripRuntimeState():
+            # Best-effort — matches the pre-migration inline try/except.
+            try:
+                ctx.git.strip_runtime_state()
+            except Exception:  # noqa: BLE001
+                ctx.logger.warning("dispatch.state_strip_failed", exc_info=True)
+
+        case UpdatePRTitle(pr_number=pr, title=title):
+            _require(ctx.pr_lifecycle, "pr_lifecycle").update_title(pr, title)
 
         case StateWrite(state=state):
             pre = _require(ctx.pre, "pre")
