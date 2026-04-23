@@ -200,11 +200,16 @@ class TestMainDispatch:
         dispatch_result = MagicMock(blocked=False, error=None)
 
         with (
-            # Patch the adapter at the namespace where cli.py looks it up
-            # (via `from a2sdlc.adapters.work import GitHubWorkAdapter`).
+            # Patch adapters at the namespace where the factory looks them
+            # up lazily (``from a2sdlc.adapters.{work,review,git} import …``
+            # inside each arm). Also patch ``github.Github`` since the
+            # ``github`` review arm constructs its own PyGithub client
+            # post-P6 (previously the review adapter reused the work
+            # adapter's ``_repo``).
             patch("a2sdlc.adapters.work.GitHubWorkAdapter") as mock_work,
             patch("a2sdlc.adapters.review.GitHubReviewAdapter") as mock_review,
             patch("a2sdlc.adapters.git.LocalGitAdapter") as mock_git,
+            patch("github.Github") as mock_github,
             patch("a2sdlc.pipeline.dispatch.dispatch") as mock_dispatch,
             patch.dict(
                 "os.environ",
@@ -213,11 +218,10 @@ class TestMainDispatch:
             ),
         ):
             mock_git.return_value = MagicMock(name="git")
-            # Factory returns a real-enough adapter stub; dispatch.py reaches
-            # into ._repo for the review adapter so set it on the stub.
             fake_adapter = MagicMock(name="gh_work_adapter")
             fake_adapter._repo = MagicMock(name="repo")
             mock_work.from_token.return_value = fake_adapter
+            mock_github.return_value.get_repo.return_value = MagicMock(name="repo")
 
             async def _fake_dispatch(_ctx: object) -> object:
                 return dispatch_result
@@ -288,3 +292,114 @@ class TestMainDispatch:
             run_hmac="hmac-abc",
             http=mock_httpx.return_value,
         )
+
+
+class TestNotifyStageFailure:
+    """L1 coverage for _notify_stage_failure — both profiles + blocked path."""
+
+    def test_dispatcher_profile_is_a_noop(self) -> None:
+        from a2sdlc.assembly.composition import resolve_composition_profile
+        from a2sdlc.cli.dispatch import _notify_stage_failure
+
+        profile = resolve_composition_profile(
+            env={"DISPATCHER_URL": "http://d"}, mode="dispatch"
+        )
+        ctx = MagicMock(name="ctx")
+        _notify_stage_failure(ctx, "boom", profile)
+        ctx.work.mark_blocked.assert_not_called()
+
+    def test_ci_github_native_marks_ticket_blocked(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from a2sdlc.assembly.composition import resolve_composition_profile
+        from a2sdlc.cli.dispatch import _notify_stage_failure
+
+        event_file = tmp_path / "event.json"
+        event_file.write_text('{"issue": {"number": 42}}')
+        monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_file))
+        monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+        monkeypatch.setenv("GITHUB_RUN_ID", "run-99")
+
+        profile = resolve_composition_profile(env={}, mode="dispatch")
+        ctx = MagicMock(name="ctx")
+        _notify_stage_failure(ctx, "boom", profile)
+        ctx.work.mark_blocked.assert_called_once()
+        args = ctx.work.mark_blocked.call_args[0]
+        assert args[0] == "42"
+        assert "boom" in args[1]
+
+    def test_dispatch_blocked_result_calls_notify(self, tmp_path: Path) -> None:
+        """End-to-end: a blocked DispatchResult triggers _notify_stage_failure."""
+        from unittest.mock import patch
+
+        (tmp_path / ".a2sdlc").mkdir()
+        (tmp_path / ".a2sdlc" / "config.yaml").write_text("default_base: main\n")
+        blocked_result = MagicMock(blocked=True, error="git_blocked")
+
+        with (
+            patch("a2sdlc.adapters.work.GitHubWorkAdapter") as mock_work,
+            patch("a2sdlc.adapters.review.GitHubReviewAdapter"),
+            patch("a2sdlc.adapters.git.LocalGitAdapter") as mock_git,
+            patch("github.Github") as mock_github,
+            patch("a2sdlc.pipeline.dispatch.dispatch") as mock_dispatch,
+            patch("a2sdlc.cli.dispatch._notify_stage_failure") as mock_notify,
+            patch.dict(
+                "os.environ",
+                {"GITHUB_TOKEN": "tkn", "GITHUB_REPOSITORY": "o/r"},
+                clear=False,
+            ),
+        ):
+            mock_git.return_value = MagicMock(name="git")
+            fake_adapter = MagicMock(name="gh_work_adapter")
+            fake_adapter._repo = MagicMock(name="repo")
+            mock_work.from_token.return_value = fake_adapter
+            mock_github.return_value.get_repo.return_value = MagicMock(name="repo")
+
+            async def _fake_dispatch(_ctx: object) -> object:
+                return blocked_result
+
+            mock_dispatch.side_effect = _fake_dispatch
+
+            with pytest.raises(SystemExit) as exc:
+                main(["dispatch", "--project-root", str(tmp_path)])
+            assert exc.value.code == 1
+
+        mock_notify.assert_called_once()
+        assert mock_notify.call_args[0][1] == "git_blocked"
+
+    def test_dispatch_unhandled_exception_calls_notify(self, tmp_path: Path) -> None:
+        """A non-typer exception raised by dispatch triggers _notify_stage_failure."""
+        from unittest.mock import patch
+
+        (tmp_path / ".a2sdlc").mkdir()
+        (tmp_path / ".a2sdlc" / "config.yaml").write_text("default_base: main\n")
+
+        with (
+            patch("a2sdlc.adapters.work.GitHubWorkAdapter") as mock_work,
+            patch("a2sdlc.adapters.review.GitHubReviewAdapter"),
+            patch("a2sdlc.adapters.git.LocalGitAdapter") as mock_git,
+            patch("github.Github") as mock_github,
+            patch("a2sdlc.pipeline.dispatch.dispatch") as mock_dispatch,
+            patch("a2sdlc.cli.dispatch._notify_stage_failure") as mock_notify,
+            patch.dict(
+                "os.environ",
+                {"GITHUB_TOKEN": "tkn", "GITHUB_REPOSITORY": "o/r"},
+                clear=False,
+            ),
+        ):
+            mock_git.return_value = MagicMock(name="git")
+            fake_adapter = MagicMock(name="gh_work_adapter")
+            fake_adapter._repo = MagicMock(name="repo")
+            mock_work.from_token.return_value = fake_adapter
+            mock_github.return_value.get_repo.return_value = MagicMock(name="repo")
+
+            async def _boom(_ctx: object) -> object:
+                raise RuntimeError("crash")
+
+            mock_dispatch.side_effect = _boom
+
+            with pytest.raises(SystemExit):
+                main(["dispatch", "--project-root", str(tmp_path)])
+
+        mock_notify.assert_called_once()
+        assert "RuntimeError" in mock_notify.call_args[0][1]

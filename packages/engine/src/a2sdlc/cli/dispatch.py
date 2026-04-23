@@ -96,11 +96,11 @@ def setup_logging(ticket_key: str, stage: str, project_root: Path) -> None:
     root.addHandler(file_handler)
 
 
-# ── Mode 2 run_id derivation ─────────────────────────────────────────
+# ── GH-native run_id derivation ──────────────────────────────────────
 
 
-def _derive_mode2_run_id() -> str | None:
-    """Deterministic run_id for GH-native Mode 2 dispatches.
+def _derive_github_native_run_id() -> str | None:
+    """Deterministic run_id for the ``ci-github-native`` profile.
 
     Combines the triggering event's unique identifier (label.id, comment.id,
     review.id) with GITHUB_SHA so that the same delivery arriving twice
@@ -183,19 +183,23 @@ def dispatch_command(
     """Run pipeline dispatch against a GitHub-backed work adapter."""
     root = project_root or find_project_root()
 
+    from a2sdlc.assembly.composition import (  # noqa: PLC0415
+        build_adapters,
+        build_subscribers,
+        resolve_composition_profile,
+        validate_profile,
+    )
+    from a2sdlc.assembly.wire import build_progress_state  # noqa: PLC0415
     from a2sdlc.config import load_config_file  # noqa: PLC0415
+    from a2sdlc.domain.models import StageName  # noqa: PLC0415
     from a2sdlc.domain.run_context import RunContext  # noqa: PLC0415
+    from a2sdlc.evaluation.telemetry import telemetry_from_env  # noqa: PLC0415
     from a2sdlc.pipeline.dispatch import dispatch  # noqa: PLC0415
+    from a2sdlc.pipeline.runner import SdkStageRunner  # noqa: PLC0415
 
     config = load_config_file(root)
     setup_logging("dispatch", "dispatch", root)
 
-    from a2sdlc.adapters.git import LocalGitAdapter  # noqa: PLC0415
-    from a2sdlc.assembly.wire import build_progress_state  # noqa: PLC0415
-    from a2sdlc.evaluation.telemetry import telemetry_from_env  # noqa: PLC0415
-    from a2sdlc.pipeline.runner import SdkStageRunner  # noqa: PLC0415
-
-    git = LocalGitAdapter(root)
     telemetry = telemetry_from_env(experiment_name=root.name)
     progress_state = build_progress_state(
         root,
@@ -203,67 +207,23 @@ def dispatch_command(
         with_mlflow_trace=telemetry.traces_enabled,
     )
 
-    # Mode selection is ambient — DISPATCHER_URL signals Jira-dispatcher mode,
-    # otherwise we use the existing GH-native composition.
-    dispatcher_url = os.environ.get("DISPATCHER_URL")
+    profile = resolve_composition_profile(os.environ, mode="dispatch")
+    validate_profile(profile)
 
-    if dispatcher_url:
-        # ── Mode 1 (dispatcher-driven) ────────────────────────────────
-        from a2sdlc.adapters.subscriber.dispatcher_event import (  # noqa: PLC0415
-            DispatcherEventSubscriber,
-        )
-        from a2sdlc.adapters.subscriber.console import ConsoleSubscriber  # noqa: PLC0415
-        from a2sdlc.adapters.work.workflow_input import WorkflowInputReader  # noqa: PLC0415
-        from github import Github  # noqa: PLC0415
-        from a2sdlc.adapters.review import GitHubReviewAdapter  # noqa: PLC0415
-        import httpx  # noqa: PLC0415
+    work_adapter, git, review_adapter = build_adapters(
+        profile,
+        project_root=root,
+        session_id="dispatch",
+        stage=StageName.SPEC,
+        env=os.environ,
+    )
+    make_comment_subscriber = build_subscribers(profile, progress_state, env=os.environ)
 
-        work_adapter = WorkflowInputReader()
-        # The engine still opens PRs via GH — review adapter needs GH auth,
-        # but this is narrowly-scoped to the target repo's GITHUB_TOKEN.
-        token = os.environ["GITHUB_TOKEN"]
-        repo_name = os.environ["GITHUB_REPOSITORY"]
-        review_adapter = GitHubReviewAdapter(Github(token).get_repo(repo_name))
-
-        run_id = os.environ["RUN_ID"]
-        run_hmac = os.environ["RUN_HMAC"]
-        http = httpx.Client(timeout=30.0)
-        dispatcher_sub = DispatcherEventSubscriber(
-            dispatcher_url=dispatcher_url,
-            run_id=run_id,
-            run_hmac=run_hmac,
-            http=http,
-        )
-        progress_state.subscribe(dispatcher_sub)
-
-        # Dispatcher mode: comments flow to Jira via DispatcherEventSubscriber.
-        # We still need *some* comment subscriber per RunContext contract —
-        # ConsoleSubscriber is harmless local stdout, not tracker-bound.
-        def make_comment_subscriber(_comment):
-            return ConsoleSubscriber(progress_state)
-    else:
-        # ── Mode 2 / legacy CI (GH-native) ────────────────────────────
-        from a2sdlc.adapters.review import GitHubReviewAdapter  # noqa: PLC0415
-        from a2sdlc.adapters.subscriber.gh_comment import GhCommentSubscriber  # noqa: PLC0415
-        from a2sdlc.adapters.work import GitHubWorkAdapter  # noqa: PLC0415
-
-        token = os.environ.get("GITHUB_TOKEN", os.environ.get("GH_TOKEN", ""))
-        repo_name = os.environ.get("GITHUB_REPOSITORY", "")
-        # Factory probes /installation/repositories to distinguish an App
-        # installation token from GHA's default GITHUB_TOKEN, which share
-        # the `ghs_` prefix. Misconfigured consumers fail loudly here.
-        work_adapter = GitHubWorkAdapter.from_token(token, repo_name)
-        review_adapter = GitHubReviewAdapter(work_adapter._repo)  # noqa: SLF001
-
-        # Derive a deterministic run_id so duplicate event deliveries (GHA
-        # re-runs, webhook redelivery) are caught by state-level idempotency
-        # instead of re-executing the stage. GITHUB_SHA is the commit the
-        # event was triggered against; combined with the ticket key this
-        # dedupes the common "same event fired twice" cases.
-        mode2_run_id = _derive_mode2_run_id()
-
-        def make_comment_subscriber(comment):
-            return GhCommentSubscriber(comment, progress_state)
+    run_id = (
+        os.environ.get("RUN_ID")
+        if profile.work == "workflow_input"
+        else _derive_github_native_run_id()
+    )
 
     ctx = RunContext(
         work=work_adapter,
@@ -276,14 +236,14 @@ def dispatch_command(
         logger=logging.getLogger("a2sdlc.pipeline.dispatch"),
         make_comment_subscriber=make_comment_subscriber,
         telemetry=telemetry,
-        run_id=run_id if dispatcher_url else mode2_run_id,
+        run_id=run_id,
     )
 
     try:
         result = asyncio.run(dispatch(ctx))
         if result.blocked:
             logger.error("Dispatch blocked: %s", result.error)
-            _notify_stage_failure(ctx, result.error or "unknown", dispatcher_url)
+            _notify_stage_failure(ctx, result.error or "unknown", profile)
             raise typer.Exit(code=1)
     except KeyboardInterrupt:
         logger.info("Interrupted")
@@ -293,16 +253,18 @@ def dispatch_command(
         # Full traceback stays in the CI job log (useful for debugging).
         # The issue gets a short, actionable comment pointing at the run.
         logger.exception("dispatch.unhandled_exception")
-        _notify_stage_failure(ctx, f"{type(exc).__name__}: {exc}", dispatcher_url)
+        _notify_stage_failure(ctx, f"{type(exc).__name__}: {exc}", profile)
         raise typer.Exit(code=1) from exc
 
 
-def _notify_stage_failure(ctx, reason: str, dispatcher_url: str | None) -> None:
-    """Post a short "stage failed" comment on the ticket and set the blocked
-    label. Best-effort — a failure here must not mask the original error."""
-    # Mode 1 (Jira dispatcher) routes comments over HTTP; let it handle
-    # failures via its own subscriber. This helper is Mode-2 only.
-    if dispatcher_url:
+def _notify_stage_failure(ctx, reason: str, profile) -> None:
+    """Post a short "stage failed" comment on the ticket + set the blocked label.
+
+    Best-effort — a failure here must not mask the original error.
+    Dispatcher-profile runs route failures over HTTP via their own
+    subscriber, so this helper is a no-op there.
+    """
+    if profile.work == "workflow_input":
         return
     try:
         event_path = os.environ.get("GITHUB_EVENT_PATH")

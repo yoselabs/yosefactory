@@ -16,10 +16,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
-from a2sdlc.adapters.git import LocalBranchGitAdapter, LocalGitAdapter
-from a2sdlc.adapters.review import GitHubReviewAdapter, LocalNoopReviewAdapter
-from a2sdlc.adapters.work import GitHubWorkAdapter, LocalFileWorkAdapter
-from a2sdlc.adapters.work.workflow_input import WorkflowInputReader
 from a2sdlc.domain.models import StageName
 
 
@@ -41,6 +37,8 @@ def build_work_adapter(
       Reads ``TICKET_KEY`` + ``TICKET_BODY`` etc. from env at call time.
     """
     if name == "local_file":
+        from a2sdlc.adapters.work import LocalFileWorkAdapter  # noqa: PLC0415
+
         return LocalFileWorkAdapter(
             project_root=project_root,
             session_id=session_id,
@@ -48,11 +46,17 @@ def build_work_adapter(
             ticket_path=ticket_path,
         )
     if name == "github_issue":
+        from a2sdlc.adapters.work import GitHubWorkAdapter  # noqa: PLC0415
+
         env = env or {}
         token = env.get("GITHUB_TOKEN") or env.get("GH_TOKEN") or ""
         repo_name = env.get("GITHUB_REPOSITORY", "")
         return GitHubWorkAdapter.from_token(token, repo_name)
     if name == "workflow_input":
+        from a2sdlc.adapters.work.workflow_input import (  # noqa: PLC0415
+            WorkflowInputReader,
+        )
+
         return WorkflowInputReader()
     raise ValueError(f"unknown work adapter: {name}")
 
@@ -70,9 +74,13 @@ def build_review_adapter(
       ``GITHUB_TOKEN``/``GH_TOKEN`` + ``GITHUB_REPOSITORY`` from env.
     """
     if name == "local_noop":
+        from a2sdlc.adapters.review import LocalNoopReviewAdapter  # noqa: PLC0415
+
         return LocalNoopReviewAdapter(project_root=project_root)
     if name == "github":
         from github import Github  # noqa: PLC0415
+
+        from a2sdlc.adapters.review import GitHubReviewAdapter  # noqa: PLC0415
 
         env = env or {}
         token = env.get("GITHUB_TOKEN") or env.get("GH_TOKEN") or ""
@@ -91,7 +99,11 @@ def build_git_adapter(name: str, *, project_root: Path):
       working).
     """
     if name == "local_branch":
+        from a2sdlc.adapters.git import LocalBranchGitAdapter  # noqa: PLC0415
+
         return LocalBranchGitAdapter(project_root=project_root)
     if name in {"local", "github"}:
+        from a2sdlc.adapters.git import LocalGitAdapter  # noqa: PLC0415
+
         return LocalGitAdapter(project_root=project_root)
     raise ValueError(f"unknown git adapter: {name}")
