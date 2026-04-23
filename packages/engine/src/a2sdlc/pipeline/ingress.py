@@ -33,11 +33,7 @@ from a2sdlc.lifecycle.state import StateManager
 from a2sdlc.lifecycle.state_storage import GitFileStateStorage
 from a2sdlc.pipeline.context import assemble_context, pick_handover
 from a2sdlc.pipeline.feedback_routing import resolve_target_stage
-from a2sdlc.pipeline.gating import (
-    check_cost_ceiling,
-    check_duplicate_run_id,
-    check_review_cycles,
-)
+from a2sdlc.pipeline.gating import check_cost_ceiling, check_review_cycles
 
 if TYPE_CHECKING:
     from a2sdlc.domain.pipeline_event import PipelineEvent
@@ -150,9 +146,11 @@ def resolve_intent(
     """Build the ``RunIntent`` for ``event``, or short-circuit.
 
     Runs after ``parse_event`` + ``gating.check_ticket_active`` — handles
-    directive parsing, routing, branch setup, state read, idempotency
-    and circuit breakers. Returns a ``DispatchResult`` when git setup
-    is blocked, the run_id is a duplicate, or a circuit breaker trips.
+    directive parsing, routing, branch setup, state read, and circuit
+    breakers. Returns a ``DispatchResult`` when git setup is blocked
+    or a circuit breaker trips. Idempotency is enforced by the
+    ``with_idempotency`` middleware downstream; it needs this function
+    to have resolved ``intent.state_mgr`` first.
     """
     ticket_body = ctx.work.get_ticket(event.key)
     directives, clean_body = parse_directives(ticket_body)
@@ -188,9 +186,6 @@ def resolve_intent(
         return DispatchResult(stage=target_stage, blocked=True, error=e.reason)
 
     state = state_mgr.read_state()
-
-    if reason := check_duplicate_run_id(ctx, state_mgr, ctx.run_id):
-        return DispatchResult(stage=target_stage, error=reason)
 
     stage_cfg = load_stage_config(target_stage.value, ctx.config)
     for reason in (
