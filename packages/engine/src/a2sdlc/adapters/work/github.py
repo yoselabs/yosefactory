@@ -185,6 +185,17 @@ class GitHubWorkAdapter:
         if sender_type == "Bot":
             raise SkipEvent("bot PR review sender")
 
+        review_state = event.get("review", {}).get("state", "")
+        # An APPROVED review is a "release the gate" signal (relevant only
+        # for gate:merge=human). It is NOT feedback — routing it through
+        # the feedback path would fire IMPLEMENT with no actionable work,
+        # burn a cycle, and loop because REVIEW keeps re-approving.
+        # A "dismissed" review isn't a fresh signal either.
+        # CHANGES_REQUESTED and COMMENTED reviews still flow through: the
+        # reviewer's body/comments are actionable feedback.
+        if review_state in ("approved", "dismissed"):
+            raise SkipEvent(f"PR review state {review_state!r} is not feedback")
+
         pr_number = event["pull_request"]["number"]
         key = self._get_issue_key_for_pr(pr_number)
         return PipelineEvent(

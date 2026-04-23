@@ -308,12 +308,12 @@ class TestParseEventComments:
         assert result.key == "15"
         assert result.is_feedback is True
 
-    def test_pr_review_submitted(self, tmp_path: Path) -> None:
+    def test_pr_review_changes_requested_is_feedback(self, tmp_path: Path) -> None:
         path = self._write_event(
             tmp_path,
             {
                 "action": "submitted",
-                "review": {"body": "Looks good", "state": "approved"},
+                "review": {"body": "Fix X", "state": "changes_requested"},
                 "pull_request": {"number": 42},
                 "sender": {"type": "User"},
             },
@@ -328,6 +328,65 @@ class TestParseEventComments:
         assert result.trigger_stage is None
         assert result.is_feedback is True
         assert result.pr_number == 42
+
+    def test_pr_review_approved_is_not_feedback(self, tmp_path: Path) -> None:
+        """APPROVED is a gate-release signal, not a feedback trigger.
+        Routing it as feedback kicks IMPLEMENT with nothing actionable
+        and spins the pipeline indefinitely under gate:merge=human.
+        """
+        path = self._write_event(
+            tmp_path,
+            {
+                "action": "submitted",
+                "review": {"body": "LGTM", "state": "approved"},
+                "pull_request": {"number": 42},
+                "sender": {"type": "User"},
+            },
+        )
+        with patch.dict(
+            os.environ,
+            {"GITHUB_EVENT_PATH": path, "GITHUB_EVENT_NAME": "pull_request_review"},
+        ):
+            adapter = _make_work_adapter()
+            with pytest.raises(SkipEvent, match="PR review state 'approved'"):
+                adapter.parse_event()
+
+    def test_pr_review_dismissed_is_not_feedback(self, tmp_path: Path) -> None:
+        path = self._write_event(
+            tmp_path,
+            {
+                "action": "submitted",
+                "review": {"body": "", "state": "dismissed"},
+                "pull_request": {"number": 42},
+                "sender": {"type": "User"},
+            },
+        )
+        with patch.dict(
+            os.environ,
+            {"GITHUB_EVENT_PATH": path, "GITHUB_EVENT_NAME": "pull_request_review"},
+        ):
+            adapter = _make_work_adapter()
+            with pytest.raises(SkipEvent, match="PR review state 'dismissed'"):
+                adapter.parse_event()
+
+    def test_pr_review_commented_is_still_feedback(self, tmp_path: Path) -> None:
+        """`commented` reviews carry inline comments — actionable feedback."""
+        path = self._write_event(
+            tmp_path,
+            {
+                "action": "submitted",
+                "review": {"body": "See inline", "state": "commented"},
+                "pull_request": {"number": 42},
+                "sender": {"type": "User"},
+            },
+        )
+        with patch.dict(
+            os.environ,
+            {"GITHUB_EVENT_PATH": path, "GITHUB_EVENT_NAME": "pull_request_review"},
+        ):
+            adapter = _make_work_adapter()
+            result = adapter.parse_event()
+        assert result.is_feedback is True
 
     def test_pr_review_from_bot_skips(self, tmp_path: Path) -> None:
         path = self._write_event(
