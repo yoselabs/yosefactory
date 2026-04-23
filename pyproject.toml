@@ -42,8 +42,6 @@ layers = [
 ignore_imports = [
     # config.py's lazy stage-registry lookup (get_stage inside a function).
     "a2sdlc.config -> a2sdlc.stages",
-    # Subscriber renders progress using the format helper. Pre-P8.
-    "a2sdlc.adapters.subscriber.gh_comment -> a2sdlc.observability.progress_format",
     # Arch §2: "Middleware may also import gating/" (idempotency → duplicate-run check).
     "a2sdlc.middleware.idempotency -> a2sdlc.gating",
     # Ingress orchestrates pre-stage breakers — peer-tier-B sanctioned call.

@@ -24,7 +24,7 @@ from a2sdlc.domain.models import (
     extract_inline_comments,
     strip_status_block,
 )
-from a2sdlc.observability.progress_format import format_final
+from a2sdlc.domain.progress_format import format_final
 from a2sdlc.domain.stage_outcome import StageOutcome
 from a2sdlc.pipeline.stage_executor import StageExecutor
 from a2sdlc.stages._shared import (

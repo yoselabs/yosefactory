@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from a2sdlc.domain.progress import Milestone, ProgressState, ToolEntry
-from a2sdlc.observability.progress_format import (
+from a2sdlc.domain.progress_format import (
     format_error,
     format_final,
     format_progress,
