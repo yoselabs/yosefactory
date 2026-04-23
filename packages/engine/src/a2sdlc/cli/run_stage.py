@@ -15,18 +15,18 @@ import logging
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import typer
 from ulid import ULID
 
-from a2sdlc.adapters.factory import (
-    build_git_adapter,
-    build_review_adapter,
-    build_work_adapter,
-)
 from a2sdlc.adapters.review import LocalNoopReviewAdapter
-from a2sdlc.adapters.subscriber.gh_comment import GhCommentSubscriber
+from a2sdlc.assembly.composition import (
+    CompositionProfile,
+    build_adapters,
+    build_subscribers,
+    validate_profile,
+)
 from a2sdlc.assembly.wire import build_progress_state
 from a2sdlc.config import load_config_file
 from a2sdlc.domain.exceptions import BlockedError
@@ -132,19 +132,31 @@ def _run_stage_impl(
             )
             return 2
 
-    work = build_work_adapter(
-        cfg.adapters.work,
-        project_root=project_root,
-        session_id=session_id,
-        stage=stage,
-        ticket_path=ticket,
+    # cfg.adapters.* are plain ``str`` (user-supplied); the profile slots
+    # are ``Literal[...]``. Validation happens in ``validate_profile`` +
+    # the factory's per-name arms — cast at the boundary.
+    profile = CompositionProfile(
+        work=cast(Any, cfg.adapters.work),
+        review=cast(Any, cfg.adapters.review),
+        git=cast(Any, cfg.adapters.git),
+        progress_subscribers=("gh_comment",),
+        credential_profile="github_token",
     )
-    review = build_review_adapter(cfg.adapters.review, project_root=project_root)
-    git = build_git_adapter(cfg.adapters.git, project_root=project_root)
+    validate_profile(profile)
 
     progress_state = build_progress_state(
         project_root, cfg.adapters.progress, with_mlflow_trace=telemetry.traces_enabled
     )
+    work, git, review = build_adapters(
+        profile,
+        project_root=project_root,
+        session_id=session_id,
+        stage=stage,
+        ticket_path=ticket,
+        env={},
+    )
+    make_comment_subscriber = build_subscribers(profile, progress_state, env={})
+
     if runner is None:
         from a2sdlc.pipeline.runner import SdkStageRunner  # noqa: PLC0415
 
@@ -166,9 +178,7 @@ def _run_stage_impl(
         config=cfg,
         project_root=project_root,
         logger=logging.getLogger("a2sdlc.pipeline.dispatch"),
-        make_comment_subscriber=lambda comment: GhCommentSubscriber(
-            comment, progress_state
-        ),
+        make_comment_subscriber=make_comment_subscriber,
     )
 
     result: DispatchResult | None = None
