@@ -141,8 +141,9 @@ Fixed this session (2026-04-21):
 - [ ] Keep `[a2sdlc ...]` bracket directives for the **override** cases that don't map cleanly to a finite label set: `base=feature/xyz` (free-text branch name), `model=claude-opus-4-7` (free-text), future knobs like `timeout=600s`. Directives stay the low-friction escape hatch.
 - [ ] Migration plan when we pick this up:
   1. Parser learns `label → directive` precedence: label-derived gate is authoritative if present; bracket directive is the override only when no matching label exists.
-  2. Update `docs/test_plan.md` scenarios 4 + 6 ticket shape to use labels by default.
-  3. Keep bracket parsing intact — we want zero migration pain for anyone already using it.
+  2. **Re-read labels fresh each dispatch.** The engine currently reads `event["label"]["name"]` (the triggering label only) from the webhook payload. That's fine for "which label fired this run" but WRONG for "what gates are active" — a reviewer who labels `agent` first and `gate:merge:human` second triggers the pipeline on label #1; label #2 lives only on the issue, not in the event payload of the active run. Fix: at every gate-decision point (preflight + MERGE stage) call `ctx.work.get_labels(key)` against GitHub's live API and recompute. Same discipline as directive re-parsing via `get_ticket` already does. Directives don't have this bug because body is re-fetched; labels do.
+  3. Update `docs/test_plan.md` scenarios 4 + 6 ticket shape to use labels by default.
+  4. Keep bracket parsing intact — we want zero migration pain for anyone already using it.
 
 ## SPEC-stage prompt leaks surfaced in smoke #38 (2026-04-23)
 
