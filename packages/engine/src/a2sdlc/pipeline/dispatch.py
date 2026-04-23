@@ -2,27 +2,25 @@
 
 Reads as pseudocode per architecture vision §7.3: ingress parses the
 event, gating admits it, ingress resolves intent, then we wire per-run
-state onto ``ctx`` and hand off to the stage handler under telemetry.
+state onto ``ctx`` and hand off to the stage-attempt middleware stack.
 Each AI stage (and MERGE since P2 step 8) owns its own ``execute()``;
-this file wires them together and owns the ``stage_end`` contract.
+this file wires them together and hands off to the middleware onion
+(telemetry today; P5 step 4 adds idempotency).
 """
 
 from __future__ import annotations
 
-import uuid
-
 from a2sdlc.config import load_stage_config
 from a2sdlc.domain.models import StageName
-from a2sdlc.domain.progress_format import context_window_for_model
 from a2sdlc.domain.run_context import RunContext
 from a2sdlc.domain.run_intent import RunIntent
 from a2sdlc.domain.run_result import DispatchResult
-from a2sdlc.evaluation.telemetry import NoopTelemetry
 from a2sdlc.lifecycle.comment import CommentManager
 from a2sdlc.lifecycle.pr import PRLifecycle
 from a2sdlc.pipeline import gating, ingress
 from a2sdlc.pipeline.effects_apply import apply as apply_effects
-from a2sdlc.pipeline.stage_finish import outcome_to_dispatch_tuple
+from a2sdlc.pipeline.middleware.telemetry import with_telemetry
+from a2sdlc.pipeline.stage_finish import outcome_to_dispatch_result
 from a2sdlc.stages import get_stage
 
 
@@ -50,7 +48,9 @@ async def dispatch(ctx: RunContext) -> DispatchResult:
     ctx.pr_number = _ensure_draft_pr(ctx, intent)
     ctx.stage_config = load_stage_config(intent.target_stage.value, ctx.config)
     _wire_comment_and_subscriber(ctx, intent)
-    return await _run_attempted_stage(ctx, intent)
+
+    stack = with_telemetry(run_stage)
+    return await stack(ctx, intent)
 
 
 def _ensure_draft_pr(ctx: RunContext, intent: RunIntent) -> int | None:
@@ -81,58 +81,17 @@ def _wire_comment_and_subscriber(ctx: RunContext, intent: RunIntent) -> None:
         ctx.progress_state.subscribe(ctx.make_comment_subscriber(comment))
 
 
-async def run_stage(
-    ctx: RunContext, intent: RunIntent
-) -> tuple[DispatchResult, bool, str | None]:
-    """Resolve the stage handler, execute it, apply effects, pack the result.
+async def run_stage(ctx: RunContext, intent: RunIntent) -> DispatchResult:
+    """Pure stage-attempt unit — handler + effects + result.
 
-    Pure with respect to telemetry + progress — those wrap this call in
-    ``_run_attempted_stage`` (P5 step 3 moves them to middleware). The
-    three-tuple return is transitional: step 3 drops the ``(success,
-    error)`` tail once telemetry middleware derives them from
-    ``DispatchResult`` directly.
+    The innermost call of the middleware stack. Telemetry/progress
+    envelopes and idempotency short-circuits live in middleware that
+    wraps this function.
     """
     handler = get_stage(intent.target_stage)
     outcome = await handler.execute(ctx)
     await apply_effects(ctx, handler.effects(ctx, outcome))
-    return outcome_to_dispatch_tuple(intent, outcome)
-
-
-async def _run_attempted_stage(ctx: RunContext, intent: RunIntent) -> DispatchResult:
-    """Execute the resolved stage under telemetry + progress envelope.
-
-    Emits ``stage_start`` / ``stage_end`` unconditionally once attempted.
-    """
-    stage_config = ctx.stage_config
-    session_id = f"{intent.event.key}:{ctx.run_id or uuid.uuid4()}"
-    telemetry = ctx.telemetry or NoopTelemetry()
-    with (
-        telemetry.session(session_id) as opener,
-        opener.stage(intent.target_stage.value) as run,
-    ):
-        run.log_tag("ticket_key", intent.event.key)
-        run.log_tag("target_stage", intent.target_stage.value)
-        await ctx.progress_state.stage_start(
-            intent.target_stage,
-            session_id,
-            model=stage_config.model,
-            max_turns=stage_config.max_turns,
-            context_window=context_window_for_model(stage_config.model) or 0,
-            branch=intent.branch,
-        )
-        success: bool = False
-        error: str | None = "unknown"
-        try:
-            ctx.run = run
-            result, success, error = await run_stage(ctx, intent)
-            return result
-        finally:
-            await ctx.progress_state.stage_end(
-                intent.target_stage,
-                success=success,
-                error=error,
-                final=ctx.progress_state.snapshot_metrics(),
-            )
+    return outcome_to_dispatch_result(intent, outcome)
 
 
 __all__ = ["dispatch"]

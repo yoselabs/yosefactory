@@ -33,37 +33,34 @@ def pipeline_pause_reason(effects: Sequence[Effect]) -> str | None:
     return None
 
 
-def outcome_to_dispatch_tuple(
-    pre: RunIntent, outcome: StageOutcome
-) -> tuple[DispatchResult, bool, str | None]:
-    """Translate a handler's StageOutcome into dispatch's tuple shape."""
+def outcome_to_dispatch_result(
+    intent: RunIntent, outcome: StageOutcome
+) -> DispatchResult:
+    """Translate a handler's StageOutcome into a ``DispatchResult``.
+
+    Success + error labels for telemetry are read directly off the
+    returned ``DispatchResult`` by telemetry middleware; no tuple
+    plumbing required.
+    """
     pause_reason = pipeline_pause_reason(outcome.prepared_effects)
     if pause_reason is not None:
-        return (
-            DispatchResult(
-                stage=pre.target_stage,
-                blocked=True,
-                error=pause_reason,
-                output=outcome.output_text,
-            ),
-            False,
-            pause_reason,
+        return DispatchResult(
+            stage=intent.target_stage,
+            blocked=True,
+            error=pause_reason,
+            output=outcome.output_text,
         )
     if outcome.merged:
-        return (DispatchResult(stage=pre.target_stage), True, None)
+        return DispatchResult(stage=intent.target_stage)
     assert outcome.status is not None, "non-paused StageOutcome must carry a status"  # noqa: S101
-    return (
-        DispatchResult(
-            stage=pre.target_stage,
-            status=outcome.status,
-            next_stage=outcome.next_stage_hint,
-            blocked=False,
-            stats=outcome.stats,
-            output=outcome.output_text,
-        ),
-        True,
-        None,
+    return DispatchResult(
+        stage=intent.target_stage,
+        status=outcome.status,
+        next_stage=outcome.next_stage_hint,
+        blocked=False,
+        stats=outcome.stats,
+        output=outcome.output_text,
     )
 
 
-__all__ = ["outcome_to_dispatch_tuple", "pipeline_pause_reason"]
+__all__ = ["outcome_to_dispatch_result", "pipeline_pause_reason"]
