@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from a2sdlc.pipeline.breakers import check_cost_ceiling, check_review_cycles
+from a2sdlc.gating.breakers import check_cost_ceiling, check_review_cycles
 
 if TYPE_CHECKING:
     from a2sdlc.domain.pipeline_event import PipelineEvent

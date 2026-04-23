@@ -13,7 +13,7 @@ from __future__ import annotations
 from a2sdlc.domain.run_context import RunContext
 from a2sdlc.domain.run_intent import RunIntent
 from a2sdlc.domain.run_result import DispatchResult
-from a2sdlc.pipeline import gating
+from a2sdlc import gating
 from a2sdlc.middleware import StageAttempt
 
 

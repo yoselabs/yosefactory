@@ -12,7 +12,7 @@ from pathlib import Path
 from a2sdlc.domain.pipeline_event import PipelineEvent
 from a2sdlc.lifecycle.state import StateManager
 from a2sdlc.lifecycle.state_storage import GitFileStateStorage
-from a2sdlc.pipeline.gating import (
+from a2sdlc.gating import (
     check_duplicate_run_id,
     check_ticket_active,
 )

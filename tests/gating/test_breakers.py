@@ -8,7 +8,7 @@ import pytest
 
 from a2sdlc.config import ProjectConfig, StageConfig
 from a2sdlc.domain.models import StageName, TicketState
-from a2sdlc.pipeline.breakers import check_cost_ceiling, check_review_cycles
+from a2sdlc.gating.breakers import check_cost_ceiling, check_review_cycles
 
 
 def _make_state(**kwargs) -> TicketState:

@@ -33,7 +33,7 @@ from a2sdlc.lifecycle.state import StateManager
 from a2sdlc.lifecycle.state_storage import GitFileStateStorage
 from a2sdlc.ingress.context import assemble_context, pick_handover
 from a2sdlc.ingress.feedback_routing import resolve_target_stage
-from a2sdlc.pipeline.gating import check_cost_ceiling, check_review_cycles
+from a2sdlc.gating import check_cost_ceiling, check_review_cycles
 
 if TYPE_CHECKING:
     from a2sdlc.domain.pipeline_event import PipelineEvent
