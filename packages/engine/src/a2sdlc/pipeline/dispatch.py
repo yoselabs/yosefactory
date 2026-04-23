@@ -1,10 +1,10 @@
 """Dispatch — composition root for one pipeline run.
 
 Thin orchestrator: preflight → ensure draft PR → comment + subscriber →
-telemetry session → delegate to merge_flow or stage_run. Each phase
-lives in its own module (see `preflight.py`, `merge_flow.py`,
-`stage_run.py`). This file wires them together and owns the StageEnd
-emission contract (fires unconditionally once a stage is attempted).
+telemetry session → delegate to the per-stage handler. Each AI stage
+owns its own ``execute()``; MERGE too since P2 step 8. This file wires
+them together and owns the StageEnd emission contract (fires
+unconditionally once a stage is attempted).
 """
 
 from __future__ import annotations
@@ -28,10 +28,9 @@ from a2sdlc.domain.stage_outcome import StageOutcome
 from a2sdlc.evaluation.telemetry import NoopTelemetry, RunHandle, Telemetry
 from a2sdlc.lifecycle.comment import CommentManager
 from a2sdlc.lifecycle.pr import PRLifecycle
-from a2sdlc.pipeline.merge_flow import execute_merge
 from a2sdlc.pipeline.preflight import PreflightOutcome, run_preflight
-from a2sdlc.pipeline.stage_run import execute_ai_stage
 from a2sdlc.stages.implement import ImplementStage
+from a2sdlc.stages.merge import MergeStage
 from a2sdlc.stages.review import ReviewStage
 from a2sdlc.stages.spec import SpecStage
 
@@ -158,8 +157,8 @@ async def _run_attempted_stage(
     """Execute a stage under telemetry + progress envelope.
 
     Emits `stage_start` / `stage_end` unconditionally once the stage is
-    attempted. Delegates to `execute_merge` for deterministic MERGE or
-    `execute_ai_stage` for SPEC/IMPLEMENT/REVIEW.
+    attempted. Delegates to the appropriate ``StageHandler.execute()``.
+    Step 9 collapses the per-stage branches into a single registry lookup.
     """
     with (
         telemetry.session(session_id) as opener,
@@ -183,38 +182,16 @@ async def _run_attempted_stage(
         error: str | None = "unknown"
 
         try:
+            ctx.run = run
             if pre.target_stage == StageName.MERGE:
-                result, success, error = execute_merge(
-                    ctx, pre, pr_lifecycle, comment, pr_number
-                )
-                return result
-
-            # P2 step 6: all AI stages route through their handlers.
-            # execute_ai_stage() is dead after this branch and is deleted
-            # in step 8 (kept here to avoid the larger cross-package delete).
-            if pre.target_stage == StageName.SPEC:
-                ctx.run = run
+                outcome = await MergeStage().execute(ctx)
+            elif pre.target_stage == StageName.SPEC:
                 outcome = await SpecStage().execute(ctx)
-                result, success, error = _outcome_to_dispatch_tuple(pre, outcome)
-                return result
-
-            if pre.target_stage == StageName.IMPLEMENT:
-                ctx.run = run
+            elif pre.target_stage == StageName.IMPLEMENT:
                 outcome = await ImplementStage().execute(ctx)
-                result, success, error = _outcome_to_dispatch_tuple(pre, outcome)
-                return result
-
-            if pre.target_stage == StageName.REVIEW:
-                ctx.run = run
+            else:
                 outcome = await ReviewStage().execute(ctx)
-                result, success, error = _outcome_to_dispatch_tuple(pre, outcome)
-                return result
-
-            # Dead path — all StageName values handled above. Kept until
-            # step 8 deletes execute_ai_stage outright.
-            result, success, error = await execute_ai_stage(
-                ctx, pre, pr_lifecycle, comment, pr_number, stage_config, run
-            )
+            result, success, error = _outcome_to_dispatch_tuple(pre, outcome)
             return result
 
         finally:
@@ -248,7 +225,15 @@ def _outcome_to_dispatch_tuple(
             False,
             outcome.error or "unknown",
         )
-    # Happy path — status is present.
+    # MERGE happy path — deterministic, no StageStatus. The ``merged`` flag
+    # is the success discriminator; dispatch emits a status-less result.
+    if outcome.merged:
+        return (
+            DispatchResult(stage=pre.target_stage),
+            True,
+            None,
+        )
+    # AI-stage happy path — status is present.
     assert outcome.status is not None, "non-blocked StageOutcome must carry a status"  # noqa: S101
     return (
         DispatchResult(
