@@ -8,11 +8,16 @@ from __future__ import annotations
 
 import pytest
 
+from pathlib import Path
+
 from a2sdlc.assembly.composition import (
     CompositionProfile,
+    build_adapters,
+    build_subscribers,
     resolve_composition_profile,
     validate_profile,
 )
+from a2sdlc.domain.models import StageName
 
 
 @pytest.mark.unit
@@ -127,3 +132,87 @@ class TestValidateProfile:
         )
         with pytest.raises(NotImplementedError, match="dual_app"):
             validate_profile(profile)
+
+
+@pytest.mark.unit
+class TestBuildAdapters:
+    def test_local_file_profile_builds_local_adapters(self, tmp_path: Path) -> None:
+        from a2sdlc.adapters.git import LocalBranchGitAdapter
+        from a2sdlc.adapters.review import LocalNoopReviewAdapter
+        from a2sdlc.adapters.work import LocalFileWorkAdapter
+
+        import subprocess
+
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+        (tmp_path / ".a2sdlc").mkdir()
+
+        profile = resolve_composition_profile(env={}, mode="run-stage")
+        work, git, review = build_adapters(
+            profile,
+            project_root=tmp_path,
+            session_id="sid",
+            stage=StageName.SPEC,
+            env={},
+        )
+        assert isinstance(work, LocalFileWorkAdapter)
+        assert isinstance(git, LocalBranchGitAdapter)
+        assert isinstance(review, LocalNoopReviewAdapter)
+
+
+@pytest.mark.unit
+class TestBuildSubscribers:
+    def test_gh_comment_profile_returns_comment_factory(self) -> None:
+        from a2sdlc.adapters.subscriber.gh_comment import GhCommentSubscriber
+        from a2sdlc.domain.progress import ProgressState
+        from unittest.mock import MagicMock
+
+        profile = resolve_composition_profile(env={}, mode="run-stage")
+        ps = ProgressState(project_root="/tmp/test_build_subs")
+        factory = build_subscribers(profile, ps, env={})
+        assert callable(factory)
+        # No progress-state subscribers attached for a gh_comment-only profile.
+        assert ps._subscribers == []  # type: ignore[attr-defined]
+        # Factory wraps a live CommentManager into a GhCommentSubscriber.
+        sub = factory(MagicMock(name="CommentManager"))
+        assert isinstance(sub, GhCommentSubscriber)
+
+    def test_ci_dispatcher_profile_attaches_dispatcher_and_console(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from a2sdlc.adapters.subscriber.console import ConsoleSubscriber
+        from a2sdlc.adapters.subscriber.dispatcher_event import (
+            DispatcherEventSubscriber,
+        )
+        from a2sdlc.domain.progress import ProgressState
+
+        profile = resolve_composition_profile(
+            env={"DISPATCHER_URL": "http://d"}, mode="dispatch"
+        )
+        ps = ProgressState(project_root="/tmp/test_build_subs_disp")
+        factory = build_subscribers(
+            profile,
+            ps,
+            env={
+                "DISPATCHER_URL": "http://d",
+                "RUN_ID": "r-1",
+                "RUN_HMAC": "h-1",
+            },
+        )
+        assert factory is None
+        types = [type(s) for s in ps._subscribers]  # type: ignore[attr-defined]
+        assert DispatcherEventSubscriber in types
+        assert ConsoleSubscriber in types
+
+    def test_unknown_subscriber_raises(self) -> None:
+        from a2sdlc.domain.progress import ProgressState
+
+        profile = CompositionProfile(
+            work="local_file",
+            review="local_noop",
+            git="local_branch",
+            progress_subscribers=("nope",),
+            credential_profile="github_token",
+        )
+        ps = ProgressState(project_root="/tmp/test_build_subs_bad")
+        with pytest.raises(ValueError, match="unknown progress subscriber"):
+            build_subscribers(profile, ps, env={})
