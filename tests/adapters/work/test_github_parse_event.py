@@ -329,10 +329,11 @@ class TestParseEventComments:
         assert result.is_feedback is True
         assert result.pr_number == 42
 
-    def test_pr_review_approved_is_not_feedback(self, tmp_path: Path) -> None:
-        """APPROVED is a gate-release signal, not a feedback trigger.
-        Routing it as feedback kicks IMPLEMENT with nothing actionable
-        and spins the pipeline indefinitely under gate:merge=human.
+    def test_pr_review_approved_emits_proceed_event(self, tmp_path: Path) -> None:
+        """APPROVED is a "release the gate" signal. Emits a proceed-shaped
+        PipelineEvent (trigger_stage=None, is_feedback=False) so
+        ingress.resolve_routing advances past the current gate —
+        REVIEW → MERGE under gate:merge=human.
         """
         path = self._write_event(
             tmp_path,
@@ -348,8 +349,14 @@ class TestParseEventComments:
             {"GITHUB_EVENT_PATH": path, "GITHUB_EVENT_NAME": "pull_request_review"},
         ):
             adapter = _make_work_adapter()
-            with pytest.raises(SkipEvent, match="PR review state 'approved'"):
-                adapter.parse_event()
+            # _get_issue_key_for_pr falls back to str(pr_number) when the
+            # PR body lookup fails — acceptable for this unit test.
+            with patch.object(adapter, "_get_issue_key_for_pr", return_value="42"):
+                result = adapter.parse_event()
+        assert result.key == "42"
+        assert result.trigger_stage is None
+        assert result.is_feedback is False
+        assert result.pr_number == 42
 
     def test_pr_review_dismissed_is_not_feedback(self, tmp_path: Path) -> None:
         path = self._write_event(
