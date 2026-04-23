@@ -75,8 +75,10 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
     telemetry = ctx.telemetry or NoopTelemetry()
 
     # Populate per-run orchestration state on ctx so handlers can read it
-    # via a single argument. P4 narrows this into a dedicated RunContext.
+    # via a single argument. ``ctx.pre`` stays for legacy reads; ``ctx.intent``
+    # is the renamed alias pointing at the same RunIntent value (P4 step 7).
     ctx.pre = pre
+    ctx.intent = pre
     ctx.pr_lifecycle = pr_lifecycle
     ctx.comment = comment
     ctx.pr_number = pr_number
