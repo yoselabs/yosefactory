@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from a2sdlc.domain.effects import (
+    AwaitHumanDecision,
     CleanupBase,
     CommentFinalize,
     CommentStart,
@@ -46,6 +47,14 @@ class TestEffectArms:
 
     def test_mark_needs_input_no_args(self) -> None:
         assert MarkNeedsInput() == MarkNeedsInput()
+
+    def test_await_human_decision(self) -> None:
+        e = AwaitHumanDecision(kind="approval", reason="waiting_for_approval")
+        assert e.kind == "approval"
+        assert e.reason == "waiting_for_approval"
+
+    def test_await_human_decision_input_kind(self) -> None:
+        assert AwaitHumanDecision(kind="input", reason="questions").kind == "input"
 
     def test_set_current_stage(self) -> None:
         e = SetCurrentStage(stage=StageName.IMPLEMENT)
@@ -163,6 +172,8 @@ class TestEffectMatch:
                 return "mark_done"
             case MarkNeedsInput():
                 return "mark_needs_input"
+            case AwaitHumanDecision():
+                return "await_human_decision"
             case CommitAndPush():
                 return "commit_and_push"
             case CleanupBase():
@@ -205,6 +216,7 @@ class TestEffectMatch:
             MarkBlocked(reason="r"),
             MarkDone(),
             MarkNeedsInput(),
+            AwaitHumanDecision(kind="approval", reason="r"),
             CommitAndPush(message="m", paths=("p",)),
             CleanupBase(base="main"),
             Transition(next=None),
@@ -217,6 +229,6 @@ class TestEffectMatch:
             UpdatePRTitle(pr_number=1, title="t"),
         ]
         labels = [self._label(a) for a in arms]
-        # All 22 arms matched (no None returned).
+        # All 23 arms matched (no None returned).
         assert all(lbl for lbl in labels)
-        assert len(set(labels)) == 22
+        assert len(set(labels)) == 23

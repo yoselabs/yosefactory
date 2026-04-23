@@ -9,6 +9,7 @@ from a2sdlc.assembly.prompt import assemble_system_prompt
 from a2sdlc.config import StageConfig
 from a2sdlc.domain.block_reason import BlockReason
 from a2sdlc.domain.effects import (
+    AwaitHumanDecision,
     CommentFinalize,
     Effect,
     LogMetric,
@@ -211,6 +212,7 @@ class SpecStage:
             effects.append(SetCurrentStage(stage=next_st))
         elif stage_result.status == StageStatus.QUESTIONS:
             effects.append(MarkNeedsInput())
+            effects.append(AwaitHumanDecision(kind="input", reason="questions"))
         # Metrics last — they feed stage_end telemetry; other effects
         # should land before a partial failure could crash the run.
         effects.extend(

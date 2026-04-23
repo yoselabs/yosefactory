@@ -20,6 +20,7 @@ from a2sdlc.adapters.review import ReviewAdapter
 from a2sdlc.adapters.runner import StageRunner
 from a2sdlc.adapters.work import WorkAdapter
 from a2sdlc.config import ProjectConfig, StageConfig, load_stage_config
+from a2sdlc.domain.effects import AwaitHumanDecision, Effect, MarkBlocked
 from a2sdlc.domain.models import StageName
 from a2sdlc.domain.progress import ProgressState, Subscriber
 from a2sdlc.domain.progress_format import context_window_for_model
@@ -200,27 +201,49 @@ async def _run_attempted_stage(
             )
 
 
+_PAUSE_ARMS = (MarkBlocked, AwaitHumanDecision)
+
+
+def _pipeline_pause_reason(effects: list[Effect]) -> str | None:
+    """Return the pause-reason label if the effect list signals a non-advance.
+
+    Two arms signal "this run did not advance the pipeline":
+    - ``MarkBlocked`` — platform-visible ticket flag (failure paths).
+    - ``AwaitHumanDecision`` — pipeline-pause signal with no platform
+      flag (human-gate waits).
+
+    Either presence means dispatch should emit a ``success=False``
+    ``stage_end`` telemetry event and expose the reason as the error
+    label. Returns ``None`` when the run advanced (or merged).
+    """
+    for eff in effects:
+        if isinstance(eff, _PAUSE_ARMS):
+            return eff.reason
+    return None
+
+
 def _outcome_to_dispatch_tuple(
     pre: PreflightOutcome, outcome: StageOutcome
 ) -> tuple[DispatchResult, bool, str | None]:
-    """Translate a handler's StageOutcome into dispatch's legacy tuple shape.
+    """Translate a handler's StageOutcome into dispatch's tuple shape.
 
     The ``(DispatchResult, success, error)`` shape feeds ``stage_end``
-    telemetry. P2 step 5 introduces this converter as the seam between
-    handlers (new) and dispatch's pre-handler contract. P3 folds the
-    tuple shape away entirely once Effects land.
+    telemetry. Pause signal flows from the effect list (see
+    ``_pipeline_pause_reason``); status/merged/next_stage_hint stay on
+    the outcome. P4 collapses this translator entirely when
+    ``RunContext`` lands.
     """
-    stats = outcome.stats
-    if outcome.blocked:
+    pause_reason = _pipeline_pause_reason(outcome.prepared_effects)
+    if pause_reason is not None:
         return (
             DispatchResult(
                 stage=pre.target_stage,
                 blocked=True,
-                error=outcome.error,
+                error=pause_reason,
                 output=outcome.output_text,
             ),
             False,
-            outcome.error or "unknown",
+            pause_reason,
         )
     # MERGE happy path — deterministic, no StageStatus. The ``merged`` flag
     # is the success discriminator; dispatch emits a status-less result.
@@ -231,14 +254,14 @@ def _outcome_to_dispatch_tuple(
             None,
         )
     # AI-stage happy path — status is present.
-    assert outcome.status is not None, "non-blocked StageOutcome must carry a status"  # noqa: S101
+    assert outcome.status is not None, "non-paused StageOutcome must carry a status"  # noqa: S101
     return (
         DispatchResult(
             stage=pre.target_stage,
             status=outcome.status,
             next_stage=outcome.next_stage_hint,
             blocked=False,
-            stats=stats,
+            stats=outcome.stats,
             output=outcome.output_text,
         ),
         True,

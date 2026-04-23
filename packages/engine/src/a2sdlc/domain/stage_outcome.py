@@ -63,16 +63,6 @@ class StageOutcome(BaseModel):
       structural at the boundary.
     - ``merged`` — True iff this was a successful MergeStage run. Null
       for AI stages.
-    - ``blocked`` — True iff execute() decided this run should block the
-      ticket (agent failure, no-status-block, mid-flight error). Distinct
-      from ``preconditions()`` returning a BlockReason: preconditions
-      blocks BEFORE work starts, ``blocked`` means work started and
-      couldn't complete. P3 replaces this with a ``MarkBlocked`` Effect
-      variant in the effects() ADT.
-    - ``error`` — short tag describing why ``blocked`` is set, or the
-      agent's surfaced error. ``None`` on the happy path. Flows into
-      ``stage_end`` telemetry. P3 moves this into the ``CommentError``
-      Effect variant.
     - ``next_stage_hint`` — stage the handler suggests routing to next.
       Null means "use the transition table" (the normal case). Non-null
       lets a handler carry explicit hand-off info (rare — used by N2
@@ -95,8 +85,6 @@ class StageOutcome(BaseModel):
     inline_comments: list[InlineComment] = Field(default_factory=list)
     stats: Any | None = None
     merged: bool | None = None
-    blocked: bool = False
-    error: str | None = None
     next_stage_hint: StageName | None = None
     prepared_effects: list[Any] = Field(default_factory=list)
 

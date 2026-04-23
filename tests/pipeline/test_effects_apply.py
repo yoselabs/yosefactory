@@ -15,6 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from a2sdlc.domain.effects import (
+    AwaitHumanDecision,
     CleanupBase,
     CommentFinalize,
     CommitAndPush,
@@ -81,6 +82,37 @@ async def test_mark_needs_input_calls_adapter() -> None:
     ctx, work, *_ = _ctx_with_run_state()
     await apply(ctx, [MarkNeedsInput()])
     assert work.needs_input == ["42"]
+
+
+@pytest.mark.asyncio
+async def test_await_human_decision_no_adapter_side_effect(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """V1.0 interpreter arm: structured log, no adapter side effect."""
+    import logging
+
+    ctx, work, *_ = _ctx_with_run_state()
+    ctx.logger = logging.getLogger("test.await_human")
+    ctx.logger.setLevel(logging.INFO)
+
+    with caplog.at_level(logging.INFO, logger="test.await_human"):
+        await apply(
+            ctx,
+            [AwaitHumanDecision(kind="approval", reason="waiting_for_approval")],
+        )
+
+    # No adapter mutation — this is a dispatch-level signal effect.
+    assert work.blocked == []
+    assert work.label_history == []
+    # Structured log fired with kind/reason fields.
+    matching = [
+        r
+        for r in caplog.records
+        if r.message == "dispatch.await_human"
+        and getattr(r, "kind", None) == "approval"
+        and getattr(r, "reason", None) == "waiting_for_approval"
+    ]
+    assert len(matching) == 1
 
 
 @pytest.mark.asyncio

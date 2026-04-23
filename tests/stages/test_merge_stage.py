@@ -63,7 +63,6 @@ async def test_merge_stage_auto_gate_merges() -> None:
 
     assert isinstance(outcome, StageOutcome)
     assert outcome.merged is True
-    assert outcome.blocked is False
     assert outcome.status is None
     # Merge lifecycle happened — applied via interpreter now.
     assert len(review.merged_prs) == 1
@@ -120,10 +119,7 @@ async def test_merge_stage_no_pr_blocks() -> None:
     outcome = await stage.execute(ctx)
     await apply_effects(ctx, stage.effects(ctx, outcome))
 
-    assert outcome.blocked is True
     assert outcome.merged is False
-    assert outcome.error is not None
-    assert "No PR found" in outcome.error
     assert len(work.blocked) == 1
 
 
@@ -139,8 +135,6 @@ async def test_merge_stage_human_gate_without_approval_blocks() -> None:
     outcome = await stage.execute(ctx)
     await apply_effects(ctx, stage.effects(ctx, outcome))
 
-    assert outcome.blocked is True
-    assert outcome.error == "waiting_for_approval"
     assert review.merged_prs == []
 
 

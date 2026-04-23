@@ -138,7 +138,6 @@ async def test_review_stage_execute_approve_posts_native_review() -> None:
 
     assert isinstance(outcome, StageOutcome)
     assert outcome.status == StageStatus.APPROVED
-    assert outcome.blocked is False
     assert len(review.reviews) == 1
     pr_number, _body, verdict = review.reviews[0]
     assert pr_number == 42
@@ -179,8 +178,6 @@ async def test_review_stage_execute_failure_returns_blocked_outcome() -> None:
     outcome = await stage.execute(ctx)
     await apply_effects(ctx, stage.effects(ctx, outcome))
 
-    assert outcome.blocked is True
-    assert outcome.error == "timeout"
     assert len(work.blocked) == 1
     # No native review on failure.
     assert review.reviews == []
@@ -198,8 +195,6 @@ async def test_review_stage_execute_no_status_block_returns_blocked() -> None:
     outcome = await stage.execute(ctx)
     await apply_effects(ctx, stage.effects(ctx, outcome))
 
-    assert outcome.blocked is True
-    assert outcome.error == "no_status_block"
     assert len(work.blocked) == 1
     assert review.reviews == []
 

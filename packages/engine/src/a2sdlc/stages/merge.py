@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from a2sdlc.config import StageConfig
 from a2sdlc.domain.block_reason import BlockReason
 from a2sdlc.domain.effects import (
+    AwaitHumanDecision,
     CommentFinalize,
     Effect,
     MarkBlocked,
@@ -48,32 +49,26 @@ class MergeStage:
         pr_lifecycle = _require(ctx.pr_lifecycle, "pr_lifecycle")
         pr_number = ctx.pr_number
 
-        # 1. No PR → block.
+        # 1. No PR → platform-blocked (ticket marked, pipeline paused).
         if pr_number is None:
             reason = f"No PR found for branch {pre.branch}"
             effects: list[Effect] = [
                 CommentFinalize(body=f"\U0001f6a8 {reason}"),
                 MarkBlocked(reason=reason),
             ]
-            return StageOutcome(
-                blocked=True, error=reason, merged=False, prepared_effects=effects
-            )
+            return StageOutcome(merged=False, prepared_effects=effects)
 
-        # 2. Human gate → block, pipeline pauses for human approval.
-        # check_human_approval is a read-only adapter call — part of the
-        # gate decision, not a side effect.
+        # 2. Human gate → pipeline pause only (no platform flag — ticket
+        # stays in stage:merge awaiting an Approve click). AwaitHumanDecision
+        # is the first-class signal dispatch reads for pause semantics.
         if pre.gates.merge == GateMode.HUMAN and not pr_lifecycle.check_human_approval(
             pr_number
         ):
             effects = [
-                CommentFinalize(body="⏳ Waiting for human approval before merge.")
+                CommentFinalize(body="⏳ Waiting for human approval before merge."),
+                AwaitHumanDecision(kind="approval", reason="waiting_for_approval"),
             ]
-            return StageOutcome(
-                blocked=True,
-                error="waiting_for_approval",
-                merged=False,
-                prepared_effects=effects,
-            )
+            return StageOutcome(merged=False, prepared_effects=effects)
 
         # 3. Success — build the full merge sequence as effects. Ordering
         # matters: sync + strip before merge; merge before mark_done.

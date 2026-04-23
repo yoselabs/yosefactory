@@ -64,8 +64,6 @@ async def test_implement_stage_execute_runs_standalone_and_returns_outcome() -> 
 
     assert isinstance(outcome, StageOutcome)
     assert outcome.status == StageStatus.COMPLETE
-    assert outcome.blocked is False
-    assert outcome.error is None
     assert outcome.stats is not None
     assert len(work.finalized_comments) == 1
     assert len(git.written_state) >= 1
@@ -84,8 +82,6 @@ async def test_implement_stage_execute_failure_returns_blocked_outcome() -> None
     outcome = await stage.execute(ctx)
     await apply_effects(ctx, stage.effects(ctx, outcome))
 
-    assert outcome.blocked is True
-    assert outcome.error == "timeout"
     assert outcome.status is None
     assert len(work.blocked) == 1
 
@@ -164,8 +160,6 @@ async def test_implement_stage_execute_no_status_block_returns_blocked() -> None
     outcome = await stage.execute(ctx)
     await apply_effects(ctx, stage.effects(ctx, outcome))
 
-    assert outcome.blocked is True
-    assert outcome.error == "no_status_block"
     assert outcome.status is None
     assert len(work.blocked) == 1
 
@@ -182,7 +176,6 @@ async def test_implement_stage_execute_questions_marks_needs_input() -> None:
     await apply_effects(ctx, stage.effects(ctx, outcome))
 
     assert outcome.status == StageStatus.QUESTIONS
-    assert outcome.blocked is False
     assert len(work.needs_input) == 1
 
 

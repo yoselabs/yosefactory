@@ -9,6 +9,7 @@ from a2sdlc.assembly.prompt import assemble_system_prompt
 from a2sdlc.config import StageConfig
 from a2sdlc.domain.block_reason import BlockReason
 from a2sdlc.domain.effects import (
+    AwaitHumanDecision,
     CommentFinalize,
     Effect,
     LogMetric,
@@ -185,6 +186,7 @@ class ImplementStage:
             effects.append(SetCurrentStage(stage=next_st))
         elif stage_result.status == StageStatus.QUESTIONS:
             effects.append(MarkNeedsInput())
+            effects.append(AwaitHumanDecision(kind="input", reason="questions"))
         effects.extend(
             [
                 LogMetric(key="tokens_in", value=float(exec_result.stats.tokens_in)),

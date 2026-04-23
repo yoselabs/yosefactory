@@ -25,7 +25,7 @@ so additions are detected, not silently dropped.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from a2sdlc.domain.models import StageName, TicketState
@@ -137,6 +137,35 @@ class MarkDone:
 @dataclass(frozen=True)
 class MarkNeedsInput:
     """Flag the ticket as awaiting human input (QUESTIONS status)."""
+
+
+@dataclass(frozen=True)
+class AwaitHumanDecision:
+    """The pipeline has paused; a human must act for it to resume.
+
+    First-class human-in-the-loop primitive. Distinct from
+    ``MarkNeedsInput`` / ``MarkBlocked`` (those are **platform ticket
+    flags** — they mutate tracker state). ``AwaitHumanDecision`` carries
+    the **pipeline-pause semantics** + routing metadata: who needs to
+    decide, what they're deciding, why.
+
+    V1.0 interpreter arm: structured log + contributes to the
+    ``stage_end`` pause signal (dispatch reads this alongside
+    ``MarkBlocked`` to build telemetry). Future phases grow the
+    interpreter arm — dashboard API POST, Slack notification, SLA
+    tracking, audit persistence — without schema churn on handlers.
+
+    May coexist with platform-flag effects on the same run: e.g. a SPEC
+    QUESTIONS outcome emits ``MarkNeedsInput`` (platform flag) +
+    ``AwaitHumanDecision(kind="input", ...)`` (pipeline-pause signal).
+    """
+
+    kind: Literal["approval", "input", "escalation"]
+    reason: str
+    # Future fields (backwards-compat-safe to add since dataclass):
+    # approvers: tuple[str, ...] | None
+    # deadline: datetime | None
+    # dashboard_context: dict[str, Any] | None
 
 
 # ── Git ──────────────────────────────────────────────────────────────
@@ -268,6 +297,7 @@ Effect = (
     | MarkBlocked
     | MarkDone
     | MarkNeedsInput
+    | AwaitHumanDecision
     | CommitAndPush
     | CleanupBase
     | SyncBase
@@ -295,6 +325,7 @@ __all__ = [
     "MarkBlocked",
     "MarkDone",
     "MarkNeedsInput",
+    "AwaitHumanDecision",
     # Git
     "CommitAndPush",
     "CleanupBase",

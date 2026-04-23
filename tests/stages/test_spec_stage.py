@@ -70,8 +70,6 @@ async def test_spec_stage_execute_runs_standalone_and_returns_outcome() -> None:
 
     assert isinstance(outcome, StageOutcome)
     assert outcome.status == StageStatus.COMPLETE
-    assert outcome.blocked is False
-    assert outcome.error is None
     assert outcome.stats is not None
     # Happy path emits a state write + a stage comment finalized — now via
     # the interpreter, not direct adapter calls from execute().
@@ -93,8 +91,6 @@ async def test_spec_stage_execute_failure_returns_blocked_outcome() -> None:
     outcome = await stage.execute(ctx)
     await apply_effects(ctx, stage.effects(ctx, outcome))
 
-    assert outcome.blocked is True
-    assert outcome.error == "timeout"
     assert outcome.status is None
     assert len(work.blocked) == 1
 
@@ -171,7 +167,6 @@ async def test_spec_stage_questions_emits_mark_needs_input() -> None:
     await apply_effects(ctx, stage.effects(ctx, outcome))
 
     assert outcome.status == StageStatus.QUESTIONS
-    assert outcome.blocked is False
     types_ = [type(e) for e in outcome.prepared_effects]
     assert MarkNeedsInput in types_
     assert SetCurrentStage not in types_
@@ -211,8 +206,6 @@ async def test_spec_stage_failure_path_emits_blocked_effects() -> None:
 
     # The outcome still carries the blocked/error flags for dispatch's tuple
     # translation — step 9 removes this duplication after all handlers migrate.
-    assert outcome.blocked is True
-    assert outcome.error == "timeout"
 
 
 def test_spec_stage_name_and_valid_statuses() -> None:

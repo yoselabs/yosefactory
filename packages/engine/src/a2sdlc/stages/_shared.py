@@ -64,8 +64,6 @@ def agent_failure_outcome(
     return StageOutcome(
         output_text=exec_result.output,
         stats=exec_result.stats,
-        blocked=True,
-        error=error,
         prepared_effects=effects,
     )
 
@@ -96,13 +94,11 @@ def no_status_block_outcome(
     effects: list[Effect] = [
         CommentFinalize(body=error_msg),
         commit_and_push_effect(),
-        MarkBlocked(reason="no status block in output"),
+        MarkBlocked(reason="no_status_block"),
     ]
     return StageOutcome(
         output_text=exec_result.output,
         stats=exec_result.stats,
-        blocked=True,
-        error="no_status_block",
         prepared_effects=effects,
     )
 

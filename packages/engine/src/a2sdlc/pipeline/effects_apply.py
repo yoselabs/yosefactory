@@ -21,6 +21,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from a2sdlc.domain.effects import (
+    AwaitHumanDecision,
     CommentFinalize,
     CommitAndPush,
     Effect,
@@ -63,6 +64,17 @@ def _apply_one(ctx: "DispatchContext", eff: Effect) -> None:  # noqa: C901,PLR09
 
         case MarkNeedsInput():
             ctx.work.mark_needs_input(_key(ctx))
+
+        case AwaitHumanDecision(kind=kind, reason=reason):
+            # V1.0: structured log only. The dispatch-level pause signal
+            # is read directly from the effect list at the translator in
+            # pipeline/dispatch.py. Future phases extend this arm —
+            # dashboard notification, Slack ping, SLA tracking — without
+            # changing the handler-side emission.
+            ctx.logger.info(
+                "dispatch.await_human",
+                extra={"kind": kind, "reason": reason, "ticket": _key(ctx)},
+            )
 
         case SetCurrentStage(stage=stage):
             ctx.work.set_current_stage(_key(ctx), stage)
