@@ -1,4 +1,13 @@
 # .github/workflows/run-native.yml
+#
+# REFERENCE-ONLY on non-Enterprise GitHub plans while this repo is
+# private. GitHub's `uses: yoselabs/a2sdlc/.github/workflows/run-
+# native.yml@main` cross-account-private fetch requires Enterprise
+# Cloud. For paid-Team/Pro consumers: inline the contents of this
+# file into the consumer repo's own workflow. Upstream of truth
+# stays here — consumers re-sync when the file changes (or switch to
+# a same-org consumer repo, where reusable-workflow fetch works).
+#
 # Reusable workflow: runs `a2sdlc dispatch` on a single GitHub event.
 # Consumer workflows pass the event context through and provide secrets.
 

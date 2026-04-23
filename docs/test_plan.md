@@ -37,6 +37,7 @@ from the agent's self-report.
 - 2026-04-22 smoke #20 — $0.18 / 2 min, plugin loading was dormant (thin SPEC path).
 - 2026-04-22 smoke #22 — $2.99 / 18 min, plugin loading active, full brainstorm + plan + TDD workflow ran.
 - 2026-04-22 smoke #30 — ~14 min, validates cross-scope App token install (commit `1f401e1`, `x-access-token:${ENGINE_TOKEN}@github.com/yoselabs/a2sdlc` auth path). Install step worked while engine repo still public (over-specification harmless); private-repo path now unblocked.
+- 2026-04-22 smoke #32 — ~5 min, validates **engine-repo-PRIVATE + workflow-inlined-in-smoke + cross-scope App token**. The reusable-workflow path (`uses: yoselabs/a2sdlc/.github/workflows/run-native.yml@main`) broke the instant engine went private — GitHub can't fetch reusable workflow files from a private cross-account repo on non-Enterprise plans. Fix: inline `run-native.yml` content into `iorlas/a2sdlc-smoke/.github/workflows/a2sdlc-run.yml`. Engine CODE still pulled authenticated via cross-scope token. PR #33 merged clean.
 
 **Retry after:** any change to `pipeline/dispatch.py`, `preflight.py`, `stage_run.py`, `merge_flow.py`, `stages/*`, `adapters/work/github.py`, `adapters/review/github.py`, stage prompts.
 
