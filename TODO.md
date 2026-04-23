@@ -136,3 +136,20 @@ Fixed this session (2026-04-21):
 
 - [ ] `make test` wall-clock is 18-34s under xdist; pytest itself is ~11s. The extra time is coverage finalization + the serial pass exit-5 dance. If the gap becomes painful, drop coverage from the default dev loop (keep it in `make check`) or skip the serial pass when no `@pytest.mark.serial` tests exist.
 - [ ] Zero tests currently marked `@pytest.mark.serial`. Preserve this as an invariant — any new `serial` mark should come with a follow-up ticket to deflake.
+
+## Track C — post-v0.2.0 polish + coverage (from 2026-04-22 session)
+
+### Bugs caught in smoke #28 (breaker validation)
+
+- [ ] Duplicate `Blocked:` comment on breaker trip. `check_cost_ceiling` / `check_review_cycles` call `mark_blocked(reason)` in preflight, then the CLI's error-handler wrapper in `cli/dispatch.py` ALSO calls `mark_blocked(f"Stage failed: {reason}")` because it treats the `DispatchResult(blocked=True)` return as an error. Fix: make the CLI wrapper distinguish "pre-execution breaker trip" (clean exit) from "mid-stage exception" (error path with traceback). Dedupe path already exists in `mark_blocked` but the message differs (`"Cost ceiling..."` vs `"Stage failed: Cost ceiling..."`), so the existing scan-for-duplicate check misses it.
+- [ ] Workflow exit code `failure` on clean breaker trip. `DispatchResult(blocked=True, error=<breaker-reason>)` propagates as Typer non-zero exit → workflow fails. Consumers see a red X on breaker trip even though behavior is correct. Fix: either (a) CLI exits 0 when `blocked=True` AND `error` matches a known-breaker reason, or (b) add a dedicated `breaker_tripped` field on `DispatchResult` that CLI checks.
+
+### Cassette seeding for GH adapter integration tier (blocked on user)
+
+- [ ] Run `GITHUB_TOKEN=ghs_... make record-integration` once with a real installation token from the smoke repo's App. Commits cassettes to `tests/integration/adapters/cassettes/`. Unblocks CI-level auth-mode regression catching (see `Evolution/signals/2026-04-21-2341-unit-tests-miss-gh-token-auth-bugs.yaml` for context). Scrubber strips `authorization` + cookies before cassettes hit disk — still diff before committing.
+
+### Smoke scenarios still not live-validated (docs/test_plan.md)
+
+- [ ] **Scenario 4 — human PR review feedback loop.** Prereq: a ticket sitting in REVIEW with `gate_merge: human`. Submit PR review with `CHANGES_REQUESTED` + specific feedback comment. Expect engine to route to IMPLEMENT with feedback, increment `review_cycles`, REVIEW re-approves, MERGE. Cost ~$3, ~15 min. Retry after any `feedback_routing.py` / review-adapter / cycle-counter change.
+- [ ] **Scenario 6 — stage-override directives.** Prereq: a `develop` branch on smoke repo. Ticket body includes `base: develop\n---\n<body>` or `gate_merge: human`. Expect branch `agent/{N}` against `develop`, MERGE blocks on human approval despite project config `gates: {merge: auto}`. Cost ~$3. Retry after `domain/directives.py` / `preflight.py` gate-merging changes.
+- [ ] **Scenario 5a — review-cycle breaker live.** Lower priority — mechanism already validated by 5b (cost-ceiling) in smoke #28. Skip unless the cycle-counting logic in `breakers.py` changes.
