@@ -159,6 +159,6 @@ Fixed this session (2026-04-21):
 
 ### Smoke scenarios still not live-validated (docs/test_plan.md)
 
-- [ ] **Scenario 4 — human PR review feedback loop.** Prereq: a ticket sitting in REVIEW with `gate_merge: human`. Submit PR review with `CHANGES_REQUESTED` + specific feedback comment. Expect engine to route to IMPLEMENT with feedback, increment `review_cycles`, REVIEW re-approves, MERGE. Cost ~$3, ~15 min. Retry after any `feedback_routing.py` / review-adapter / cycle-counter change.
-- [ ] **Scenario 6 — stage-override directives.** Prereq: a `develop` branch on smoke repo. Ticket body includes `base: develop\n---\n<body>` or `gate_merge: human`. Expect branch `agent/{N}` against `develop`, MERGE blocks on human approval despite project config `gates: {merge: auto}`. Cost ~$3. Retry after `domain/directives.py` / `preflight.py` gate-merging changes.
+- [x] **Scenario 4 — human PR review feedback loop.** Validated 2026-04-23 via smoke #36 (retry after #34's directive-syntax mistake). See `docs/test_plan.md` §4 sentinel runs. Two engine bugs surfaced (APPROVE-as-feedback routing + no auto-MERGE on human APPROVE) — logged separately above.
+- [x] **Scenario 6 — stage-override directives.** Validated 2026-04-23 via smoke #38. PR #39 opened against `develop` per `[a2sdlc base=develop]`; MERGE paused per `[a2sdlc gate:merge=human]`; manual squash-merge closed the loop. See `docs/test_plan.md` §6.
 - [ ] **Scenario 5a — review-cycle breaker live.** Lower priority — mechanism already validated by 5b (cost-ceiling) in smoke #28. Skip unless the cycle-counting logic in `breakers.py` changes.

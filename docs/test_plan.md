@@ -153,7 +153,8 @@ from the agent's self-report.
 
 **Expected:** Branch is `agent/{N}` against `develop` (not `main`). MERGE stage blocks on human approval even though project config has `gates: {merge: auto}`.
 
-**Sentinel runs:** _TBD — not yet exercised._
+**Sentinel runs:**
+- 2026-04-23 smoke #38 — ✅ PR #39 opened with **base=develop** (directive honored — `dispatch.branch_setup branch=agent/38 base=develop` visible from SPEC through REVIEW). REVIEW approved with `to:null` per `gate:merge=human`. No auto-merge — I completed the scenario with a manual squash-merge to develop at 13:52:25Z. Both directive mechanics validated in one run.
 
 **Retry after:** `domain/directives.py` changes, `preflight.py` gate merging logic.
 
