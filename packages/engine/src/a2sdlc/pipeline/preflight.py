@@ -13,13 +13,13 @@ Extracted from `dispatch.py` to keep the composition root under the
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Union
 
 from a2sdlc.config import load_stage_config
 from a2sdlc.domain.directives import parse_directives
 from a2sdlc.domain.exceptions import BlockedError, SkipEvent
 from a2sdlc.domain.models import GateConfig, StageName
+from a2sdlc.domain.run_intent import RunIntent
 from a2sdlc.domain.run_result import DispatchResult
 from a2sdlc.lifecycle.state import StateManager
 from a2sdlc.lifecycle.state_storage import GitFileStateStorage
@@ -32,28 +32,15 @@ from a2sdlc.pipeline.gating import (
 from a2sdlc.pipeline.ingress import resolve_routing as _resolve_routing
 
 if TYPE_CHECKING:
-    from a2sdlc.domain.models import TicketState
-    from a2sdlc.domain.pipeline_event import PipelineEvent
     from a2sdlc.pipeline.dispatch import DispatchContext
 
 
-@dataclass
-class PreflightOutcome:
-    """What preflight hands to stage execution. All fields resolved."""
+# Transitional alias — P4 step 4. ``PreflightOutcome`` was renamed +
+# relocated to ``domain.run_intent.RunIntent``; the alias keeps legacy
+# call sites compiling until step 9 removes it.
+PreflightOutcome = RunIntent
 
-    event: "PipelineEvent"
-    target_stage: StageName
-    clean_body: str
-    user_prompt_override: str | None
-    gates: GateConfig
-    self_answer: bool
-    state_mgr: StateManager
-    state: "TicketState | None"
-    base: str
-    branch: str
-
-
-PreflightResult = Union[PreflightOutcome, DispatchResult]
+PreflightResult = Union[RunIntent, DispatchResult]
 
 
 def run_preflight(ctx: "DispatchContext") -> PreflightResult:
@@ -141,7 +128,7 @@ def run_preflight(ctx: "DispatchContext") -> PreflightResult:
             ctx.work.mark_blocked(event.key, reason)
             return DispatchResult(stage=target_stage, blocked=True, error=reason)
 
-    return PreflightOutcome(
+    return RunIntent(
         event=event,
         target_stage=target_stage,
         clean_body=clean_body,
