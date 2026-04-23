@@ -19,22 +19,36 @@ from a2sdlc.adapters.git import GitAdapter
 from a2sdlc.adapters.review import ReviewAdapter
 from a2sdlc.adapters.runner import StageRunner
 from a2sdlc.adapters.work import WorkAdapter
-from a2sdlc.config import ProjectConfig, load_stage_config
+from a2sdlc.config import ProjectConfig, StageConfig, load_stage_config
 from a2sdlc.domain.models import StageName
 from a2sdlc.domain.progress import ProgressState, Subscriber
 from a2sdlc.domain.progress_format import context_window_for_model
 from a2sdlc.domain.run_result import DispatchResult
-from a2sdlc.evaluation.telemetry import NoopTelemetry, Telemetry
+from a2sdlc.domain.stage_outcome import StageOutcome
+from a2sdlc.evaluation.telemetry import NoopTelemetry, RunHandle, Telemetry
 from a2sdlc.lifecycle.comment import CommentManager
 from a2sdlc.lifecycle.pr import PRLifecycle
 from a2sdlc.pipeline.merge_flow import execute_merge
 from a2sdlc.pipeline.preflight import PreflightOutcome, run_preflight
 from a2sdlc.pipeline.stage_run import execute_ai_stage
+from a2sdlc.stages.spec import SpecStage
 
 
 @dataclass
 class DispatchContext:
-    """All external dependencies — injected, not constructed."""
+    """Per-dispatch run context.
+
+    Carries external dependencies (adapters, runner, config, logger) and,
+    once dispatch has built them, the per-run orchestration state that
+    ``StageHandler.execute`` needs: preflight outcome, PR lifecycle,
+    comment manager, PR number, stage config, telemetry run handle.
+
+    The per-run fields are ``None`` before dispatch populates them —
+    they're only guaranteed live once ``_run_attempted_stage`` enters
+    the telemetry envelope. P4 narrows this into a dedicated
+    ``RunContext`` type; in P2/P3 the fat context is the transitional
+    home (see ``stages/handler.py`` Protocol comment).
+    """
 
     work: WorkAdapter
     git: GitAdapter
@@ -49,6 +63,13 @@ class DispatchContext:
     telemetry: "Telemetry | None" = (
         None  # optional for back-compat; CLI always supplies
     )
+    # ── per-run orchestration state (populated by dispatch before handler.execute) ──
+    pre: PreflightOutcome | None = None
+    pr_lifecycle: PRLifecycle | None = None
+    comment: CommentManager | None = None
+    pr_number: int | None = None
+    stage_config: StageConfig | None = None
+    run: RunHandle | None = None
 
 
 async def dispatch(ctx: DispatchContext) -> DispatchResult:
@@ -78,6 +99,14 @@ async def dispatch(ctx: DispatchContext) -> DispatchResult:
     # Telemetry wraps only actually-attempted stages. Pre-execution early
     # returns intentionally produce no MLflow runs.
     telemetry = ctx.telemetry or NoopTelemetry()
+
+    # Populate per-run orchestration state on ctx so handlers can read it
+    # via a single argument. P4 narrows this into a dedicated RunContext.
+    ctx.pre = pre
+    ctx.pr_lifecycle = pr_lifecycle
+    ctx.comment = comment
+    ctx.pr_number = pr_number
+    ctx.stage_config = stage_config
 
     return await _run_attempted_stage(
         ctx,
@@ -158,6 +187,15 @@ async def _run_attempted_stage(
                 )
                 return result
 
+            # P2 step 5: SPEC routes through the SpecStage handler;
+            # IMPLEMENT/REVIEW still use the legacy execute_ai_stage path
+            # until step 6.
+            if pre.target_stage == StageName.SPEC:
+                ctx.run = run
+                outcome = await SpecStage().execute(ctx)
+                result, success, error = _outcome_to_dispatch_tuple(pre, outcome)
+                return result
+
             result, success, error = await execute_ai_stage(
                 ctx, pre, pr_lifecycle, comment, pr_number, stage_config, run
             )
@@ -170,6 +208,44 @@ async def _run_attempted_stage(
                 error=error,
                 final=ctx.progress_state.snapshot_metrics(),
             )
+
+
+def _outcome_to_dispatch_tuple(
+    pre: PreflightOutcome, outcome: StageOutcome
+) -> tuple[DispatchResult, bool, str | None]:
+    """Translate a handler's StageOutcome into dispatch's legacy tuple shape.
+
+    The ``(DispatchResult, success, error)`` shape feeds ``stage_end``
+    telemetry. P2 step 5 introduces this converter as the seam between
+    handlers (new) and dispatch's pre-handler contract. Deleted in
+    step 9 once the tuple goes away entirely.
+    """
+    stats = outcome.stats
+    if outcome.blocked:
+        return (
+            DispatchResult(
+                stage=pre.target_stage,
+                blocked=True,
+                error=outcome.error,
+                output=outcome.output_text,
+            ),
+            False,
+            outcome.error or "unknown",
+        )
+    # Happy path — status is present.
+    assert outcome.status is not None, "non-blocked StageOutcome must carry a status"  # noqa: S101
+    return (
+        DispatchResult(
+            stage=pre.target_stage,
+            status=outcome.status,
+            next_stage=outcome.next_stage_hint,
+            blocked=False,
+            stats=stats,
+            output=outcome.output_text,
+        ),
+        True,
+        None,
+    )
 
 
 __all__ = ["DispatchContext", "dispatch"]

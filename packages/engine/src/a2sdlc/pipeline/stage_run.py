@@ -1,11 +1,15 @@
-"""AI stage execution — SPEC, IMPLEMENT, REVIEW.
+"""AI stage execution — IMPLEMENT, REVIEW (legacy; SPEC moved to SpecStage in P2 step 5).
 
-Called from `dispatch.py` inside the telemetry session context. Builds
-prompts, runs the `StageExecutor`, handles three result shapes (failure,
-missing-status-block, success), persists state, and transitions labels.
+Called from `dispatch.py` inside the telemetry session context for the
+stages not yet migrated to `StageHandler`. Builds prompts, runs the
+`StageExecutor`, handles three result shapes (failure, missing-status-block,
+success), persists state, and transitions labels.
 
 Returns `(result, success, error)` so the caller can emit `stage_end`
 without re-deriving success/error from the DispatchResult.
+
+P2 step 6 migrates IMPLEMENT + REVIEW to their own handlers; step 8
+deletes this module once both are empty.
 """
 
 from __future__ import annotations
@@ -60,11 +64,8 @@ async def execute_ai_stage(
             "Focus on the feedback items below.\n\n" + system_prompt
         )
 
-    if pre.self_answer and pre.target_stage == StageName.SPEC:
-        system_prompt = (
-            "IMPORTANT: Make your best judgment for all ambiguous requirements. "
-            "Do not ask questions — produce the spec directly.\n\n" + system_prompt
-        )
+    # SPEC's self-answer prefix now lives in SpecStage.execute (P2 step 5).
+    # This path only handles IMPLEMENT / REVIEW after step 5.
 
     # 2. User prompt — override from feedback routing, else body (+PR context on REVIEW).
     if pre.user_prompt_override is not None:
