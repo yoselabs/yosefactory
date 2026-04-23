@@ -8,7 +8,17 @@ from typing import TYPE_CHECKING
 from a2sdlc.assembly.prompt import assemble_system_prompt
 from a2sdlc.config import StageConfig
 from a2sdlc.domain.block_reason import BlockReason
-from a2sdlc.domain.effects import Effect
+from a2sdlc.domain.effects import (
+    CommentFinalize,
+    CommitAndPush,
+    Effect,
+    LogMetric,
+    MarkBlocked,
+    PostInlineReview,
+    PostReview,
+    SetCurrentStage,
+    StateWrite,
+)
 from a2sdlc.domain.models import (
     StageName,
     StageStatus,
@@ -23,19 +33,17 @@ from a2sdlc.pipeline.stage_executor import StageExecutor
 if TYPE_CHECKING:
     from a2sdlc.pipeline.dispatch import DispatchContext
 
+_COMMIT_MESSAGE = "chore: stage artifacts"
+_ARTIFACT_PATHS = (".a2sdlc/state/state.json", "docs/")
+
 
 class ReviewStage:
-    """REVIEW stage handler — P2 step 6.
+    """REVIEW stage handler — P3 step 6 (effects migration).
 
-    Mirrors SpecStage's structure with two REVIEW-specific additions:
-
-    1. PR context injection — when a PR number is known, the user prompt
-       gets the diff + existing comments appended (via ``PRLifecycle``).
-    2. Native PR review posting — on success, ``post_review`` is called
-       with APPROVE / REQUEST_CHANGES, and ``post_inline_comments`` is
-       invoked (unconditionally — empty list is a no-op per the adapter
-       Protocol). The ``outcome.inline_comments`` parser itself lands in
-       step 7; step 6 just threads an empty list through.
+    Keeps REVIEW-specific prompt assembly (PR context injection) and
+    inline-comments parsing. Success-path side effects migrate to the
+    effect list: PostReview + PostInlineReview replace the direct
+    adapter calls. MergeStage-style: execute() is adapter-pure.
     """
 
     name = StageName.REVIEW
@@ -61,13 +69,11 @@ class ReviewStage:
         return None
 
     def effects(self, ctx: "DispatchContext", outcome: StageOutcome) -> list[Effect]:
-        return []
+        return list(outcome.prepared_effects)
 
     async def execute(self, ctx: "DispatchContext") -> StageOutcome:
         pre = _require(ctx.pre, "pre")
-        comment = _require(ctx.comment, "comment")
         stage_config = _require(ctx.stage_config, "stage_config")
-        run = _require(ctx.run, "run")
         pr_lifecycle = _require(ctx.pr_lifecycle, "pr_lifecycle")
         pr_number = ctx.pr_number
 
@@ -81,6 +87,8 @@ class ReviewStage:
             )
 
         # REVIEW user prompt — override wins, otherwise body (+ PR context).
+        # read_context() is a PR-diff read; it is a read-only adapter call
+        # and part of prompt assembly, not a side effect we migrate.
         if pre.user_prompt_override is not None:
             user_prompt = pre.user_prompt_override
         else:
@@ -109,19 +117,13 @@ class ReviewStage:
             exec_result.progress.context_window if exec_result.progress else None
         )
 
-        def _commit_and_push() -> None:
-            try:
-                ctx.git.commit_artifacts(
-                    "chore: stage artifacts",
-                    [".a2sdlc/state/state.json", "docs/"],
-                )
-                ctx.git.push()
-            except Exception:  # noqa: BLE001
-                ctx.logger.warning("dispatch.commit_push_failed", exc_info=True)
+        commit_and_push = CommitAndPush(message=_COMMIT_MESSAGE, paths=_ARTIFACT_PATHS)
 
+        # Failure path.
         if not exec_result.success:
+            error = exec_result.error or "unknown"
             error_comment = format_error(
-                exec_result.error or "unknown",
+                error,
                 stage=pre.target_stage.value,
                 stats=exec_result.stats,
                 milestones=milestones,
@@ -130,16 +132,20 @@ class ReviewStage:
                 max_turns=stage_config.max_turns,
                 context_window=ctx_window,
             )
-            comment.finalize(error_comment)
-            _commit_and_push()
-            ctx.work.mark_blocked(pre.event.key, exec_result.error or "unknown")
+            effects: list[Effect] = [
+                CommentFinalize(body=error_comment),
+                commit_and_push,
+                MarkBlocked(reason=error),
+            ]
             return StageOutcome(
                 output_text=exec_result.output,
                 stats=exec_result.stats,
                 blocked=True,
-                error=exec_result.error or "unknown",
+                error=error,
+                prepared_effects=effects,
             )
 
+        # No status block.
         if stage_result is None:
             partial = exec_result.output[:2000]
             no_status_footer = format_final(
@@ -156,16 +162,20 @@ class ReviewStage:
                 f"⚠️ No status block in **{pre.target_stage.value}** output."
                 f"\n\n{partial}\n\n{no_status_footer}"
             )
-            comment.finalize(error_msg)
-            _commit_and_push()
-            ctx.work.mark_blocked(pre.event.key, "no status block in output")
+            effects = [
+                CommentFinalize(body=error_msg),
+                commit_and_push,
+                MarkBlocked(reason="no status block in output"),
+            ]
             return StageOutcome(
                 output_text=exec_result.output,
                 stats=exec_result.stats,
                 blocked=True,
                 error="no_status_block",
+                prepared_effects=effects,
             )
 
+        # Success path.
         comment_body = strip_status_block(exec_result.output)
         tasks = exec_result.progress.tasks if exec_result.progress else None
         final_comment = format_final(
@@ -180,18 +190,8 @@ class ReviewStage:
             tasks=tasks,
             status=stage_result.status.value,
         )
-        comment.finalize(final_comment)
 
-        # REVIEW side effects — native PR review + inline comments.
         inline_comments = extract_inline_comments(exec_result.output, ctx.logger)
-        if pr_number is not None:
-            verdict = (
-                "APPROVE"
-                if stage_result.status == StageStatus.APPROVED
-                else "REQUEST_CHANGES"
-            )
-            pr_lifecycle.post_review(pr_number, comment_body, verdict)
-            ctx.review.post_inline_comments(pr_number, inline_comments)
 
         review_cycles = pre.state.review_cycles if pre.state else 0
         if stage_result.status == StageStatus.CHANGES_REQUESTED:
@@ -218,8 +218,6 @@ class ReviewStage:
             + exec_result.stats.duration_ms,
             last_updated=datetime.now(timezone.utc).isoformat(),
         )
-        pre.state_mgr.write_state(new_state)
-        _commit_and_push()
 
         from a2sdlc.stages import next_stage  # local import to avoid cycle
 
@@ -232,16 +230,41 @@ class ReviewStage:
                 "to": next_st.value if next_st else None,
             },
         )
-        # REVIEW.valid_statuses = {APPROVED, CHANGES_REQUESTED} — QUESTIONS
-        # never surfaces, so there is no mark_needs_input path here.
-        if next_st is not None:
-            ctx.work.set_current_stage(pre.event.key, next_st)
 
-        run.log_metric("tokens_in", exec_result.stats.tokens_in)
-        run.log_metric("tokens_out", exec_result.stats.tokens_out)
-        run.log_metric("cost_usd", exec_result.stats.cost_usd)
-        run.log_metric("turns", exec_result.stats.num_turns)
-        run.log_metric("duration_ms", exec_result.stats.duration_ms)
+        effects: list[Effect] = [
+            CommentFinalize(body=final_comment),
+            StateWrite(state=new_state),
+            commit_and_push,
+        ]
+        # Native PR review + inline comments (REVIEW-specific). Only when a
+        # PR exists — matches the pre-migration conditional.
+        if pr_number is not None:
+            verdict = (
+                "APPROVE"
+                if stage_result.status == StageStatus.APPROVED
+                else "REQUEST_CHANGES"
+            )
+            effects.append(
+                PostReview(pr_number=pr_number, verdict=verdict, body=comment_body)
+            )
+            effects.append(
+                PostInlineReview(pr_number=pr_number, comments=inline_comments)
+            )
+        # REVIEW.valid_statuses = {APPROVED, CHANGES_REQUESTED} — QUESTIONS
+        # never surfaces, so no MarkNeedsInput branch here.
+        if next_st is not None:
+            effects.append(SetCurrentStage(stage=next_st))
+        effects.extend(
+            [
+                LogMetric(key="tokens_in", value=float(exec_result.stats.tokens_in)),
+                LogMetric(key="tokens_out", value=float(exec_result.stats.tokens_out)),
+                LogMetric(key="cost_usd", value=float(exec_result.stats.cost_usd)),
+                LogMetric(key="turns", value=float(exec_result.stats.num_turns)),
+                LogMetric(
+                    key="duration_ms", value=float(exec_result.stats.duration_ms)
+                ),
+            ]
+        )
 
         return StageOutcome(
             status=stage_result.status,
@@ -249,6 +272,7 @@ class ReviewStage:
             stats=exec_result.stats,
             inline_comments=inline_comments,
             next_stage_hint=next_st,
+            prepared_effects=effects,
         )
 
 

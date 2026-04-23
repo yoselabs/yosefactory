@@ -23,6 +23,7 @@ from a2sdlc.domain.run_result import RunResult
 from a2sdlc.domain.stage_outcome import StageOutcome
 from a2sdlc.lifecycle.comment import CommentManager
 from a2sdlc.lifecycle.pr import PRLifecycle
+from a2sdlc.pipeline.effects_apply import apply as apply_effects
 from a2sdlc.pipeline.preflight import PreflightOutcome, run_preflight
 from a2sdlc.stages.review import ReviewStage
 from tests.fakes import FakeRunner, default_run_result, make_dispatch_context
@@ -54,14 +55,86 @@ def _review_ctx(**kwargs: Any) -> Any:
 
 
 @pytest.mark.asyncio
+async def test_review_stage_happy_path_emits_effects_without_calling_adapters() -> None:
+    """P3 step 6: execute() is adapter-pure; effects carry PostReview + PostInlineReview."""
+    from a2sdlc.domain.effects import (
+        CommentFinalize,
+        CommitAndPush,
+        LogMetric,
+        PostInlineReview,
+        PostReview,
+        StateWrite,
+    )
+
+    ctx, _work, _git, review, _runner = _review_ctx(
+        project_root=Path("/tmp/test_review_stage_effects_happy")
+    )
+    _populate_per_run_state(ctx, _APPROVED_OUTPUT)
+
+    stage = ReviewStage()
+    outcome = await stage.execute(ctx)
+    effects = stage.effects(ctx, outcome)
+
+    # execute() did not touch adapters.
+    assert review.reviews == []
+    assert review.inline_comments == []
+
+    types_ = [type(e) for e in effects]
+    assert CommentFinalize in types_
+    assert StateWrite in types_
+    assert CommitAndPush in types_
+    assert PostReview in types_
+    assert PostInlineReview in types_
+    # SetCurrentStage only emitted when gates.merge=AUTO (default is HUMAN →
+    # next_stage returns None, so no label transition).
+    assert types_.count(LogMetric) == 5
+
+
+@pytest.mark.asyncio
+async def test_review_stage_failure_emits_blocked_effects_no_post_review() -> None:
+    """Failure → MarkBlocked effect, no PostReview/PostInlineReview."""
+    from a2sdlc.domain.effects import (
+        CommentFinalize,
+        CommitAndPush,
+        MarkBlocked,
+        PostInlineReview,
+        PostReview,
+        StateWrite,
+    )
+
+    ctx, work, _git, review, _runner = _review_ctx(
+        runner_results=[RunResult(success=False, error="timeout")],
+        project_root=Path("/tmp/test_review_stage_effects_fail"),
+    )
+    _populate_per_run_state(ctx, _APPROVED_OUTPUT)
+    ctx.runner = FakeRunner([RunResult(success=False, error="timeout")])
+
+    stage = ReviewStage()
+    outcome = await stage.execute(ctx)
+    effects = stage.effects(ctx, outcome)
+
+    assert work.blocked == []
+    assert review.reviews == []
+    types_ = [type(e) for e in effects]
+    assert CommentFinalize in types_
+    assert CommitAndPush in types_
+    assert MarkBlocked in types_
+    assert StateWrite not in types_
+    assert PostReview not in types_
+    assert PostInlineReview not in types_
+
+
+@pytest.mark.asyncio
 async def test_review_stage_execute_approve_posts_native_review() -> None:
-    """Success path with APPROVED → post_review called with APPROVE."""
+    """Success path with APPROVED → PostReview effect with APPROVE verdict, applied via interpreter."""
     ctx, _work, _git, review, _runner = _review_ctx(
         project_root=Path("/tmp/test_review_stage_approve")
     )
     _populate_per_run_state(ctx, _APPROVED_OUTPUT)
 
-    outcome = await ReviewStage().execute(ctx)
+    stage = ReviewStage()
+    outcome = await stage.execute(ctx)
+    await apply_effects(ctx, stage.effects(ctx, outcome))
 
     assert isinstance(outcome, StageOutcome)
     assert outcome.status == StageStatus.APPROVED
@@ -83,7 +156,9 @@ async def test_review_stage_execute_changes_requested_posts_request_changes() ->
     )
     _populate_per_run_state(ctx, _CHANGES_OUTPUT)
 
-    outcome = await ReviewStage().execute(ctx)
+    stage = ReviewStage()
+    outcome = await stage.execute(ctx)
+    await apply_effects(ctx, stage.effects(ctx, outcome))
 
     assert outcome.status == StageStatus.CHANGES_REQUESTED
     assert len(review.reviews) == 1
@@ -100,7 +175,9 @@ async def test_review_stage_execute_failure_returns_blocked_outcome() -> None:
     _populate_per_run_state(ctx, _APPROVED_OUTPUT)
     ctx.runner = FakeRunner([RunResult(success=False, error="timeout")])
 
-    outcome = await ReviewStage().execute(ctx)
+    stage = ReviewStage()
+    outcome = await stage.execute(ctx)
+    await apply_effects(ctx, stage.effects(ctx, outcome))
 
     assert outcome.blocked is True
     assert outcome.error == "timeout"
@@ -117,7 +194,9 @@ async def test_review_stage_execute_no_status_block_returns_blocked() -> None:
     )
     _populate_per_run_state(ctx, "plain text, no fenced a2sdlc block")
 
-    outcome = await ReviewStage().execute(ctx)
+    stage = ReviewStage()
+    outcome = await stage.execute(ctx)
+    await apply_effects(ctx, stage.effects(ctx, outcome))
 
     assert outcome.blocked is True
     assert outcome.error == "no_status_block"
@@ -127,7 +206,7 @@ async def test_review_stage_execute_no_status_block_returns_blocked() -> None:
 
 @pytest.mark.asyncio
 async def test_review_stage_execute_threads_parsed_inline_comments() -> None:
-    """Step 7: ReviewStage parses inline_comments out of agent output and posts them."""
+    """ReviewStage parses inline_comments and emits them via PostInlineReview effect."""
     output_with_comments = (
         "```a2sdlc\n"
         "{\n"
@@ -144,7 +223,9 @@ async def test_review_stage_execute_threads_parsed_inline_comments() -> None:
     )
     _populate_per_run_state(ctx, output_with_comments)
 
-    outcome = await ReviewStage().execute(ctx)
+    stage = ReviewStage()
+    outcome = await stage.execute(ctx)
+    await apply_effects(ctx, stage.effects(ctx, outcome))
 
     assert outcome.status == StageStatus.CHANGES_REQUESTED
     assert len(outcome.inline_comments) == 1
@@ -164,11 +245,11 @@ async def test_review_stage_execute_feedback_event_prepends_prefix() -> None:
         project_root=Path("/tmp/test_review_stage_feedback")
     )
     pre = _populate_per_run_state(ctx, _APPROVED_OUTPUT)
-    # Force the feedback branch (preflight's feedback flow has its own
-    # routing cost; flipping the flag here exercises the handler branch).
     pre.event.is_feedback = True
 
-    outcome = await ReviewStage().execute(ctx)
+    stage = ReviewStage()
+    outcome = await stage.execute(ctx)
+    await apply_effects(ctx, stage.effects(ctx, outcome))
 
     assert outcome.status == StageStatus.APPROVED
 
@@ -180,14 +261,13 @@ async def test_review_stage_execute_uses_user_prompt_override() -> None:
         project_root=Path("/tmp/test_review_stage_override")
     )
     pre = _populate_per_run_state(ctx, _APPROVED_OUTPUT)
-    # PreflightOutcome is a dataclass; mutate the override after population.
     pre.user_prompt_override = "pre-rendered prompt from feedback routing"
 
-    outcome = await ReviewStage().execute(ctx)
+    stage = ReviewStage()
+    outcome = await stage.execute(ctx)
+    await apply_effects(ctx, stage.effects(ctx, outcome))
 
     assert outcome.status == StageStatus.APPROVED
-    # PR context reader is NOT called when override wins — verify via
-    # the runner having been called once with the override text.
     assert len(review.reviews) == 1
 
 
