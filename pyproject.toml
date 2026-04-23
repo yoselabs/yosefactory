@@ -20,60 +20,72 @@ env = ["A2SDLC_TEST=1"]
 asyncio_mode = "auto"
 
 [tool.importlinter]
-root_packages = ["a2sdlc"]
+root_package = "a2sdlc"
 
+# Main layered contract — inward-only deps.
 [[tool.importlinter.contracts]]
-name = "domain is pure (no imports from other a2sdlc packages)"
+name = "Hexagonal layers (a2sdlc)"
+type = "layers"
+layers = [
+    "a2sdlc.cli",
+    "a2sdlc.pipeline",
+    "a2sdlc.composition",
+    "a2sdlc.ingress | a2sdlc.gating | a2sdlc.effects | a2sdlc.middleware | a2sdlc.stages",
+    "a2sdlc.lifecycle | a2sdlc.observability | a2sdlc.evaluation | a2sdlc.assembly",
+    "a2sdlc.adapters",
+    "a2sdlc.config",
+    "a2sdlc.domain",
+]
+# Pre-existing legitimate cross-layer imports. Each is either architecturally
+# sanctioned by docs/architecture.md §2 or a known peer-tier-B cross the spec
+# non-goal ("no 'while we're here' reshape") tells us to leave in place.
+ignore_imports = [
+    # config.py's lazy stage-registry lookup (get_stage inside a function).
+    "a2sdlc.config -> a2sdlc.stages",
+    # Subscriber renders progress using the format helper. Pre-P8.
+    "a2sdlc.adapters.subscriber.gh_comment -> a2sdlc.observability.progress_format",
+    # Arch §2: "Middleware may also import gating/" (idempotency → duplicate-run check).
+    "a2sdlc.middleware.idempotency -> a2sdlc.gating",
+    # Ingress orchestrates pre-stage breakers — peer-tier-B sanctioned call.
+    "a2sdlc.ingress -> a2sdlc.gating",
+    # Stage handlers receive StageExecutor/ExecutionResult from the pipeline layer.
+    "a2sdlc.stages.spec -> a2sdlc.pipeline.stage_executor",
+    "a2sdlc.stages.implement -> a2sdlc.pipeline.stage_executor",
+    "a2sdlc.stages.review -> a2sdlc.pipeline.stage_executor",
+    "a2sdlc.stages._shared -> a2sdlc.pipeline.stage_executor",
+]
+
+# Peer-tier-A mutual isolation: lifecycle/assembly/evaluation/observability.
+[[tool.importlinter.contracts]]
+name = "lifecycle/assembly/evaluation/observability don't import from each other"
+type = "independence"
+modules = [
+    "a2sdlc.lifecycle",
+    "a2sdlc.assembly",
+    "a2sdlc.evaluation",
+    "a2sdlc.observability",
+]
+
+# Domain purity (non-negotiable).
+[[tool.importlinter.contracts]]
+name = "domain imports nothing from a2sdlc"
 type = "forbidden"
 source_modules = ["a2sdlc.domain"]
 forbidden_modules = [
+    "a2sdlc.cli",
+    "a2sdlc.pipeline",
+    "a2sdlc.composition",
+    "a2sdlc.ingress",
+    "a2sdlc.gating",
+    "a2sdlc.effects",
+    "a2sdlc.middleware",
+    "a2sdlc.stages",
+    "a2sdlc.lifecycle",
+    "a2sdlc.observability",
+    "a2sdlc.evaluation",
+    "a2sdlc.assembly",
     "a2sdlc.adapters",
-    "a2sdlc.pipeline",
-    "a2sdlc.lifecycle",
-    "a2sdlc.assembly",
-    "a2sdlc.evaluation",
-    "a2sdlc.stages",
-    "a2sdlc.cli",
-    "a2sdlc.config",
 ]
-
-[[tool.importlinter.contracts]]
-name = "adapters do not import application layer"
-type = "forbidden"
-source_modules = ["a2sdlc.adapters"]
-forbidden_modules = [
-    "a2sdlc.pipeline",
-    "a2sdlc.lifecycle",
-    "a2sdlc.assembly",
-    "a2sdlc.evaluation",
-    "a2sdlc.stages",
-    "a2sdlc.cli",
-]
-ignore_imports = ["a2sdlc.config -> a2sdlc.stages"]
-
-[[tool.importlinter.contracts]]
-name = "lifecycle, assembly, evaluation do not import each other or pipeline"
-type = "forbidden"
-source_modules = ["a2sdlc.lifecycle", "a2sdlc.assembly", "a2sdlc.evaluation"]
-forbidden_modules = ["a2sdlc.pipeline", "a2sdlc.cli"]
-
-[[tool.importlinter.contracts]]
-name = "lifecycle does not import assembly or evaluation"
-type = "forbidden"
-source_modules = ["a2sdlc.lifecycle"]
-forbidden_modules = ["a2sdlc.assembly", "a2sdlc.evaluation"]
-
-[[tool.importlinter.contracts]]
-name = "assembly does not import lifecycle or evaluation"
-type = "forbidden"
-source_modules = ["a2sdlc.assembly"]
-forbidden_modules = ["a2sdlc.lifecycle", "a2sdlc.evaluation"]
-
-[[tool.importlinter.contracts]]
-name = "evaluation does not import lifecycle or assembly"
-type = "forbidden"
-source_modules = ["a2sdlc.evaluation"]
-forbidden_modules = ["a2sdlc.lifecycle", "a2sdlc.assembly"]
 
 [dependency-groups]
 dev = [
