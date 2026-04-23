@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from a2sdlc.adapters.review.local_noop import LocalNoopReviewAdapter
 from a2sdlc.adapters.review import Approval
+from a2sdlc.domain.stage_outcome import InlineComment
 
 
 def test_create_draft_pr_writes_pr_json(tmp_path):
@@ -231,3 +232,42 @@ def test_collect_pr_feedback_promotes_naive_since_to_utc(tmp_path):
     items = adapter.collect_pr_feedback(1, naive_future)
 
     assert items == []
+
+
+def test_post_inline_comments_empty_list_is_noop(tmp_path):
+    """Empty list must not touch pr.json."""
+    (tmp_path / ".a2sdlc" / "state").mkdir(parents=True)
+    adapter = LocalNoopReviewAdapter(project_root=tmp_path)
+    adapter.create_draft_pr("a2sdlc/sid", "main", "t", "sid")
+    before = (tmp_path / ".a2sdlc" / "state" / "pr.json").read_text()
+
+    adapter.post_inline_comments(1, [])
+
+    after = (tmp_path / ".a2sdlc" / "state" / "pr.json").read_text()
+    assert before == after
+
+
+def test_post_inline_comments_appends_to_pr_json(tmp_path):
+    """Comments land under pr.json['inline_comments'] with shape fields."""
+    (tmp_path / ".a2sdlc" / "state").mkdir(parents=True)
+    adapter = LocalNoopReviewAdapter(project_root=tmp_path)
+    adapter.create_draft_pr("a2sdlc/sid", "main", "t", "sid")
+
+    adapter.post_inline_comments(
+        1,
+        [
+            InlineComment(
+                file="src/app.py", line_start=1, line_end=3, body="trim", side="RIGHT"
+            )
+        ],
+    )
+
+    data = json.loads((tmp_path / ".a2sdlc" / "state" / "pr.json").read_text())
+    assert len(data["inline_comments"]) == 1
+    rec = data["inline_comments"][0]
+    assert rec["file"] == "src/app.py"
+    assert rec["line_start"] == 1
+    assert rec["line_end"] == 3
+    assert rec["side"] == "RIGHT"
+    assert rec["body"] == "trim"
+    assert "created_at" in rec

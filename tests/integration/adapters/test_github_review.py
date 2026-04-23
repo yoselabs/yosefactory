@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 import pytest
 
 from a2sdlc.adapters.review.github import GitHubReviewAdapter
+from a2sdlc.domain.stage_outcome import InlineComment
 from github import Github
 
 
@@ -63,6 +64,37 @@ def test_collect_pr_feedback_accepts_since(gh_token: str, smoke_repo: str) -> No
     since = datetime(2020, 1, 1, tzinfo=UTC)
     items = adapter.collect_pr_feedback(KNOWN_PR, since)
     assert isinstance(items, list)
+
+
+def test_post_inline_comments_against_open_pr(gh_token: str, smoke_repo: str) -> None:
+    """L4: record a real `create_review(event=COMMENT, comments=[...])` call.
+
+    Requires a cassette recorded against an OPEN PR in the smoke repo
+    (closed/merged PRs reject inline-review submissions with 422). Pick
+    a stable open PR in iorlas/a2sdlc-smoke kept around specifically for
+    inline-comment recording; adjust the number + file/line on re-record.
+
+    Replay asserts the call doesn't raise — the cassette proves the
+    PyGithub + PR-diff auth path works end-to-end under installation
+    token auth.
+    """
+    open_pr = 29  # open draft PR in smoke repo — adjust on re-record
+    target_file = (
+        "docs/superpowers/specs/2026-04-22-28-input-validation.md"
+        # File present in PR #29's diff — adjust on re-record if the PR changes
+    )
+    adapter = _adapter(gh_token, smoke_repo)
+    adapter.post_inline_comments(
+        open_pr,
+        [
+            InlineComment(
+                file=target_file,
+                line_start=1,
+                line_end=1,
+                body="a2sdlc cassette probe — safe to ignore",
+            )
+        ],
+    )
 
 
 def test_find_last_handover_returns_none_or_handover(

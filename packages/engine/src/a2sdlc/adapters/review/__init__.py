@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Protocol
 
 from a2sdlc.domain.handover import FeedbackItem, HandoverComment
+from a2sdlc.domain.stage_outcome import InlineComment
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,20 @@ class ReviewAdapter(Protocol):
     def merge_pr(self, pr_number: int, method: str = "squash") -> None: ...
     def get_approvals(self, pr_number: int) -> list[Approval]: ...
     def post_review(self, pr_number: int, body: str, verdict: str) -> None: ...
+    def post_inline_comments(
+        self, pr_number: int, comments: list[InlineComment]
+    ) -> None:
+        """Post per-line review comments on a PR (N1).
+
+        Empty list must be a no-op — the REVIEW handler calls this
+        unconditionally once it lands (P2 step 6), and the agent may
+        legitimately produce zero inline comments. Implementations
+        must validate comment file paths against the PR diff before
+        submitting (N9 interim posture); out-of-diff entries are
+        dropped with a warning, not fatal.
+        """
+        ...
+
     def read_pr_diff(self, pr_number: int) -> str: ...
     def read_pr_comments(self, pr_number: int) -> list[ReviewComment]: ...
     def collect_pr_feedback(

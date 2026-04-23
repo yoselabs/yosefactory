@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
+from github.PullRequest import ReviewComment as GhReviewCommentPayload
 from github.Repository import Repository
 
 from a2sdlc.adapters.review import Approval, ReviewComment
@@ -13,6 +14,7 @@ from a2sdlc.domain.handover import (
     HandoverComment,
     parse_handover,
 )
+from a2sdlc.domain.stage_outcome import InlineComment
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +139,57 @@ class GitHubReviewAdapter:
             except Exception:  # noqa: BLE001
                 pass
             pull.create_issue_comment(f"{marker}\n\n{body}")
+
+    def post_inline_comments(
+        self, pr_number: int, comments: list[InlineComment]
+    ) -> None:
+        """Post per-line review comments via a single GitHub review (N1).
+
+        Empty list is a no-op — `create_review` with zero comments and
+        no body would emit an empty COMMENT review, which is spammy and
+        matches no product intent.
+
+        N9 interim-posture guard: each comment's ``file`` must appear
+        in the PR's diff file list. Out-of-diff entries are dropped
+        with a warning — a malicious or hallucinated path cannot cause
+        a comment to post against a file the PR doesn't touch.
+        """
+        if not comments:
+            return
+
+        pull = self._repo.get_pull(pr_number)
+        diff_files = {f.filename for f in pull.get_files()}
+
+        payload: list[GhReviewCommentPayload] = []
+        for c in comments:
+            if c.file not in diff_files:
+                logger.warning(
+                    "post_inline_comments: dropping comment on %s — not in PR #%d diff",
+                    c.file,
+                    pr_number,
+                )
+                continue
+            entry: GhReviewCommentPayload = {
+                "path": c.file,
+                "body": c.body,
+                "line": c.line_end,
+                "side": c.side,
+            }
+            if c.line_end != c.line_start:
+                entry["start_line"] = c.line_start
+                entry["start_side"] = c.side
+            payload.append(entry)
+
+        if not payload:
+            logger.info(
+                "post_inline_comments: no valid comments after diff-path "
+                "filter on PR #%d — skipping review submission",
+                pr_number,
+            )
+            return
+
+        pull.create_review(event="COMMENT", comments=payload)
+        logger.debug("posted %d inline comment(s) on PR #%d", len(payload), pr_number)
 
     def read_pr_diff(self, pr_number: int) -> str:
         pull = self._repo.get_pull(pr_number)

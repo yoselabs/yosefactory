@@ -19,6 +19,7 @@ from typing import Any
 
 from a2sdlc.adapters.review import Approval, ReviewComment
 from a2sdlc.domain.handover import FeedbackItem, HandoverComment
+from a2sdlc.domain.stage_outcome import InlineComment
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +124,33 @@ class LocalNoopReviewAdapter:
                 "created_at": created_at,
             }
             self._feedback_path.write_text(json.dumps(feedback_record, indent=2))
+
+    def post_inline_comments(
+        self, pr_number: int, comments: list[InlineComment]
+    ) -> None:
+        """Append inline comments to pr.json under `inline_comments`.
+
+        Local mode has no PR to anchor to, so we just persist the
+        payload for test inspection / parity with the real adapter.
+        Empty list is a no-op.
+        """
+        if not comments:
+            return
+        data = self._read_pr()
+        inline: list[dict[str, Any]] = data.setdefault("inline_comments", [])
+        created_at = datetime.now(timezone.utc).isoformat()
+        for c in comments:
+            inline.append(
+                {
+                    "file": c.file,
+                    "line_start": c.line_start,
+                    "line_end": c.line_end,
+                    "body": c.body,
+                    "side": c.side,
+                    "created_at": created_at,
+                }
+            )
+        self._write_pr(data)
 
     def read_pr_diff(self, pr_number: int) -> str:
         """Shell out to `git diff <base>..HEAD` in project_root."""

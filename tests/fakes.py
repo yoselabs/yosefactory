@@ -21,6 +21,7 @@ from a2sdlc.domain.models import StageName
 from a2sdlc.domain.pipeline_event import PipelineEvent
 from a2sdlc.domain.progress import ProgressEvent, ProgressState
 from a2sdlc.domain.run_result import RunResult
+from a2sdlc.domain.stage_outcome import InlineComment
 from a2sdlc.pipeline.dispatch import DispatchContext
 
 
@@ -167,6 +168,9 @@ class FakeReviewAdapter:
         self.ready_prs: list[int] = []  # pr_numbers
         self.merged_prs: list[tuple[int, str]] = []  # (pr_number, method)
         self.reviews: list[tuple[int, str, str]] = []  # (pr_number, body, verdict)
+        self.inline_comments: list[
+            tuple[int, list[InlineComment]]
+        ] = []  # (pr_number, comments)
 
         self._pr_counter = 0
 
@@ -198,6 +202,11 @@ class FakeReviewAdapter:
 
     def post_review(self, pr_number: int, body: str, verdict: str) -> None:
         self.reviews.append((pr_number, body, verdict))
+
+    def post_inline_comments(
+        self, pr_number: int, comments: list[InlineComment]
+    ) -> None:
+        self.inline_comments.append((pr_number, list(comments)))
 
     def read_pr_diff(self, pr_number: int) -> str:
         return self._pr_diff
