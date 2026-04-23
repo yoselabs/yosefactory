@@ -18,7 +18,7 @@ from a2sdlc.config import StageConfig, get_session_id
 from a2sdlc.domain.models import StageName
 from a2sdlc.domain.run_result import RunResult
 from a2sdlc.domain.progress import ProgressState
-from a2sdlc.domain.progress_format import extract_target
+from a2sdlc.observability.progress_format import extract_target
 
 logger = logging.getLogger("a2sdlc.pipeline.runner")
 

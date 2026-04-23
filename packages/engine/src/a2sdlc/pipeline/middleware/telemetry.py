@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import uuid
 
-from a2sdlc.domain.progress_format import context_window_for_model
+from a2sdlc.observability.progress_format import context_window_for_model
 from a2sdlc.domain.run_context import RunContext
 from a2sdlc.domain.run_intent import RunIntent
 from a2sdlc.domain.run_result import DispatchResult

@@ -20,7 +20,7 @@ from a2sdlc.domain.effects import (
     Effect,
     MarkBlocked,
 )
-from a2sdlc.domain.progress_format import format_error, format_final
+from a2sdlc.observability.progress_format import format_error, format_final
 from a2sdlc.domain.stage_outcome import StageOutcome
 
 if TYPE_CHECKING:

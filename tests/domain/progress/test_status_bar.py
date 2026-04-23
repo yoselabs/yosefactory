@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from a2sdlc.domain.progress import Milestone
-from a2sdlc.domain.progress_format import (
+from a2sdlc.observability.progress_format import (
     _format_duration,
     _format_milestones,
     _format_status_bar,

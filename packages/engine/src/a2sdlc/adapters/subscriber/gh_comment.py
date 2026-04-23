@@ -10,7 +10,7 @@ from a2sdlc.domain.progress import (
     StageEnd,
     StageStart,
 )
-from a2sdlc.domain.progress_format import format_progress
+from a2sdlc.observability.progress_format import format_progress
 from a2sdlc.adapters.subscriber._throttle import Throttle
 
 

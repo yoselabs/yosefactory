@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from a2sdlc.domain.progress_format import (
+from a2sdlc.observability.progress_format import (
     _shorten_path,
     context_window_for_model,
     extract_target,
