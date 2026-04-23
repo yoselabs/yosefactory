@@ -20,19 +20,45 @@ src/a2sdlc/
 │   ├── models.py                # StageName, StageStatus, TicketState, GateConfig, ...
 │   ├── handover.py              # parse/format handover comments
 │   ├── directives.py            # parse [a2sdlc ...] directives
+│   ├── effects.py               # Effect ADT (side-effect descriptors)
 │   ├── exceptions.py            # typed pipeline errors
 │   ├── pipeline_event.py        # PipelineEvent — external trigger shape
-│   ├── run_result.py            # RunResult — stage execution result
+│   ├── run_context.py           # RunContext — per-run ambient state
+│   ├── run_intent.py            # RunIntent — resolved per-run routing
+│   ├── run_result.py            # DispatchResult — stage execution result
 │   ├── progress.py              # events + Subscriber Protocol + ProgressState bus
-│   ├── progress_format.py       # pure format/extract helpers on progress data
+│   ├── stage_outcome.py         # StageOutcome — handler return shape
 │   └── stats.py                 # StageRunStats — cost/tokens/duration accumulator
 │
-├── pipeline/                    # application layer — orchestration
-│   ├── dispatch.py              # composition root (the hub)
+├── ingress/                     # event parsing + intent resolution (P7)
+│   ├── __init__.py              # parse_event, resolve_intent, resolve_routing
+│   ├── context.py               # assemble_context, pick_handover
+│   └── feedback_routing.py      # map feedback event → target stage
+│
+├── gating/                      # pre-stage admission checks (P7)
+│   ├── __init__.py              # check, check_ticket_active, check_duplicate_run_id
+│   └── breakers.py              # review-cycles + cost-ceiling breakers
+│
+├── effects/                     # Effect interpreter + outcome translators (P7)
+│   ├── apply.py                 # interpreter — Effect list → adapter calls
+│   └── stage_finish.py          # outcome_to_dispatch_result + pause-reason helpers
+│
+├── middleware/                  # cross-cutting onion (P7)
+│   ├── __init__.py              # StageAttempt / Middleware type aliases
+│   ├── idempotency.py           # with_idempotency
+│   └── telemetry.py             # with_telemetry (MLflow + progress envelope)
+│
+├── composition/                 # profile + adapter/subscriber builders (P7)
+│   └── __init__.py              # CompositionProfile, resolve_*, validate_*, build_*
+│
+├── observability/               # progress rendering + wire setup (P7)
+│   ├── progress_format.py       # pure format/extract helpers on progress data
+│   └── wire.py                  # build_progress_state
+│
+├── pipeline/                    # composition-plus-agent-runner residuals
+│   ├── dispatch.py              # composition root (the hub) — ~125 LOC post-P7
 │   ├── stage_executor.py        # run a single stage
-│   ├── runner.py                # Claude Agent SDK wrapper
-│   ├── feedback_routing.py      # map feedback event → target stage
-│   └── context.py               # build agent context from handover + feedback
+│   └── runner.py                # Claude Agent SDK wrapper
 │
 ├── lifecycle/                   # "manage X over time"
 │   ├── comment.py               # one-comment-per-stage-run lifecycle
@@ -43,9 +69,9 @@ src/a2sdlc/
 │   └── prompt.py                # load + concatenate stage prompt files
 │
 ├── evaluation/                  # measure what happened (first-class concern)
-│   ├── mlflow_sink.py           # MLflow run/metric sink
+│   ├── telemetry.py             # Telemetry Protocol + MLflow impl
+│   ├── tracked_run.py           # dispatch-fn wrapper that feeds telemetry
 │   └── quality_gate.py          # post-implement make-check wrapper
-│                                # (future: eval harness, scorers, run comparison)
 │
 ├── config.py                    # stays flat — small, stable, imported everywhere
 │
@@ -67,10 +93,12 @@ src/a2sdlc/
 | Package | Can import from |
 |---|---|
 | `domain/` | **nothing** inside a2sdlc. Third-party types only (Pydantic, stdlib). |
-| `adapters/` | `domain/`, `config.py`. Never from `pipeline/`, `lifecycle/`, `assembly/`, `evaluation/`. |
-| `lifecycle/`, `assembly/`, `evaluation/` | `domain/`, `config.py`, `adapters/`. Not from each other. Not from `pipeline/`. |
+| `adapters/` | `domain/`, `config.py`. Never from `pipeline/`, `lifecycle/`, `assembly/`, `evaluation/`, `ingress/`, `gating/`, `effects/`, `middleware/`, `composition/`, `observability/`. |
+| `lifecycle/`, `assembly/`, `evaluation/`, `observability/` | `domain/`, `config.py`, `adapters/`. Not from each other. Not from `pipeline/`. |
+| `ingress/`, `gating/`, `effects/`, `middleware/` | `domain/`, `config.py`, `adapters/`, `lifecycle/`. Not from `pipeline/`. Middleware may also import `gating/` (idempotency calls `gating.check_duplicate_run_id`). |
+| `composition/` | `domain/`, `config.py`, `adapters/`, `observability/`. Not from `pipeline/`. |
 | `pipeline/` | everything else. This is the composition layer. |
-| `cli/` | `pipeline/`, `config.py`, `domain/`, `adapters/` (one composition point per subcommand). |
+| `cli/` | `pipeline/`, `composition/`, `observability/`, `config.py`, `domain/`, `adapters/` (one composition point per subcommand). |
 | `stages/` | `domain/`, `config.py`. Stage definitions are data, not orchestration. |
 
 **Invariant:** dependency arrows point inward (`adapters` → `domain`), never outward.

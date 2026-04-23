@@ -6,7 +6,7 @@ AI agent pipeline engine. Routes ticket board events through stages (Spec, Imple
 
 Hexagonal-lite layout. Read `docs/architecture.md` before adding modules. Summary of the rules:
 
-- **Layers:** `domain/` (pure types, zero I/O) ← `adapters/` ← `lifecycle/` · `assembly/` · `evaluation/` ← `pipeline/` (composition). Dependency arrows point inward.
+- **Layers:** `domain/` (pure types, zero I/O) ← `adapters/` ← `lifecycle/` · `assembly/` · `evaluation/` · `observability/` ← `ingress/` · `gating/` · `effects/` · `middleware/` · `composition/` ← `pipeline/` (slim composition — dispatch + runner + stage_executor). Dependency arrows point inward.
 - **Folders are product concerns, not tech concerns.** `evaluation/` not `telemetry/`, `lifecycle/` not `managers/`, `pipeline/` not `core/`.
 - **Extract a package the moment two sibling-suffixed files appear** (`*_lifecycle`, `*_assembly`, `*_routing`). The suffix is the package name.
 - **Only `pipeline/dispatch.py` may import from 5+ other a2sdlc packages.** It's the one composition root.
