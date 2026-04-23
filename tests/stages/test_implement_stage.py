@@ -20,7 +20,7 @@ from a2sdlc.domain.run_result import RunResult
 from a2sdlc.domain.stage_outcome import StageOutcome
 from a2sdlc.lifecycle.comment import CommentManager
 from a2sdlc.lifecycle.pr import PRLifecycle
-from a2sdlc.pipeline.effects_apply import apply as apply_effects
+from a2sdlc.effects.apply import apply as apply_effects
 from a2sdlc.domain.run_intent import RunIntent
 from a2sdlc.stages.implement import ImplementStage
 from tests.fakes import (

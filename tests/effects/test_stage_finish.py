@@ -14,7 +14,7 @@ from a2sdlc.domain.models import GateConfig, StageName, StageStatus
 from a2sdlc.domain.pipeline_event import PipelineEvent
 from a2sdlc.domain.run_intent import RunIntent
 from a2sdlc.domain.stage_outcome import StageOutcome
-from a2sdlc.pipeline.stage_finish import (
+from a2sdlc.effects.stage_finish import (
     outcome_to_dispatch_result,
     pipeline_pause_reason,
 )
