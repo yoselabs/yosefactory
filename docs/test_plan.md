@@ -104,7 +104,9 @@ from the agent's self-report.
 
 **Expected:** Post-merge clean with `review_cycles >= 1` in the pre-strip `state.json`.
 
-**Sentinel runs:** _TBD — not yet exercised._
+**Sentinel runs:**
+- 2026-04-23 smoke #34 — ❌ first attempt: `gate_merge: human` directive was written in obsolete YAML form, parser silently ignored it, PR auto-merged on REVIEW approval. Wasted ~$1.50. Root cause: test_plan directive-syntax drift (fixed in the same session).
+- 2026-04-23 smoke #36 — ✅ retry with correct `[a2sdlc gate:merge=human]` bracket syntax. `dispatch.transition from=review status=approved to=null` — gate honored. CHANGES_REQUESTED → IMPLEMENT routing worked (the primary scenario-4 mechanic); IMPLEMENT addressed the feedback within ~1 min; REVIEW re-approved at cycle 2. **Bugs surfaced:** (1) human APPROVE also routed to IMPLEMENT (feedback_routing doesn't check verdict), burned a spurious cycle; (2) no code path auto-triggers MERGE after human approval lands on the PR — manual merge is required. Both logged in TODO.md.
 
 **Retry after:** feedback routing changes, review adapter changes, circuit-breaker-cycle logic.
 

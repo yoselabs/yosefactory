@@ -132,6 +132,11 @@ Fixed this session (2026-04-21):
 - [x] `mark_pr_ready` uses GraphQL, not REST PATCH (43f3832)
 - [x] `set_done_label` replaces prior stage labels (f93cc0e)
 
+## Bugs caught in smoke #36 (scenario 4 retry, 2026-04-23)
+
+- [ ] **APPROVE reviews route to IMPLEMENT as if they were CHANGES_REQUESTED.** `ingress/feedback_routing.py:resolve_target_stage` only inspects the current pipeline stage, not the review verdict. When a human clears a `gate:merge=human` gate by submitting an APPROVE review, the engine fires `pull_request_review`, the routing promotes it to IMPLEMENT feedback, another review cycle fires, and the pipeline never actually progresses to MERGE. In smoke #36 this burned ~$1.20 + ~5 min in a spurious IMPLEMENT → REVIEW loop before I manually merged the PR to break out. **Fix:** inspect the review state in the event; skip the IMPLEMENT route when `state == "approved"` and instead surface the approval to the MERGE gate check.
+- [ ] **Manual merge is the only way to clear `gate:merge=human`.** Corollary of the above — even if feedback-routing ignored APPROVE, the engine currently has no code path that notices "human approval exists on PR + pipeline is paused on human gate → re-dispatch MERGE." MERGE only runs as a transition from REVIEW; once REVIEW returns `to: null`, nothing re-triggers it. Options: (a) add a `pull_request_review.submitted` handler that re-dispatches MERGE when `check_human_approval()` newly returns True; (b) document that `gate:merge=human` means "human performs the merge manually" and update scenario 4 in `docs/test_plan.md` to say so.
+
 ## Architecture follow-ups (from P8 — 2026-04-23)
 
 - [ ] **`stages/` is heavier than `docs/architecture.md` §2 claims.** The doc says stages import only `domain/` + `config.py` ("data, not behavior"), but `stages/{spec,implement,review}.py` each import from 5 packages (assembly, config, domain, pipeline, stages) and had to be added to the cap-test `EXEMPT` set in `tests/architecture/test_composition_cap.py`. Decide: update the doc to name stage handlers as per-stage composition roots, OR split `StageExecutor` into a protocol in `domain/` + impl in `pipeline/` so stages only import the protocol. The second option would also let `ExecutionResult` move to `domain/` and retire the four `stages.* -> a2sdlc.pipeline.stage_executor` `ignore_imports` entries in `pyproject.toml`.
