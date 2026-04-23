@@ -1,4 +1,4 @@
-"""WorkflowInputReader — WorkAdapter impl for Mode 1 (dispatcher-driven).
+"""WorkflowInputReader — WorkAdapter impl for the ``ci-dispatcher`` profile (dispatcher-driven).
 
 Reads ticket context from env vars that the dispatcher set via workflow_dispatch
 inputs. Does not call Jira. Engine remains ticket-system-agnostic.
@@ -6,7 +6,7 @@ inputs. Does not call Jira. Engine remains ticket-system-agnostic.
 Writes (comments, transitions) are NOT performed here — those go over HTTP
 via DispatcherEventSubscriber. The write methods below are NO-OPS returning
 sentinel values, not NotImplementedError, because CommentManager invokes them
-in the engine's normal path and we must not crash Mode 1 runs.
+in the engine's normal path and we must not crash the ``ci-dispatcher`` profile runs.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ class WorkflowInputReader:
         return PipelineEvent(key=key, trigger_stage=stage)
 
     def is_ticket_active(self, key: str) -> bool:
-        # In dispatcher (Mode 1) the dispatcher upstream-filters terminal
+        # In dispatcher (the ``ci-dispatcher`` profile) the dispatcher upstream-filters terminal
         # tickets before triggering the engine. Trust that contract.
         return True
 
