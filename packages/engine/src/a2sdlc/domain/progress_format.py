@@ -136,13 +136,12 @@ _TASK_ICONS: dict[str, str] = {
 }
 
 
-# Raw.githubusercontent URL for the committed animated spinner. Pinned
-# at `main` so the engine tracks whatever asset ships with the current
-# release. GitHub's Camo image proxy preserves GIF animation for raw
-# URLs on this host, so the spinner actually moves in issue comments.
-_SPINNER_URL = (
-    "https://raw.githubusercontent.com/yoselabs/a2sdlc/main/assets/spinner.svg"
-)
+# Unicode hourglass — renders everywhere, no hosting dependency.
+# Previously pointed at raw.githubusercontent.com/yoselabs/a2sdlc/main/assets/spinner.svg
+# which 404s for non-members once the engine repo went private; GitHub's
+# Camo proxy doesn't pass through private-repo raw URLs to unauthenticated
+# viewers, so the icon never rendered in practice.
+_SPINNER = "⏳"
 
 # Header icon per terminal status. The QUESTIONS icon ❓ calls out "human
 # input required" — distinct from a normal ✅ completion so watchers
@@ -178,6 +177,19 @@ def _format_milestones(milestones: list[Milestone]) -> str:
     return "\n".join(lines)
 
 
+def _escape_table_cell(value: str, *, max_len: int = 80) -> str:
+    """Keep a markdown-table cell on one line and intact.
+
+    Multi-line bash commands (heredocs) and pipe characters otherwise
+    break the table — rows collapse when GitHub's renderer hits a raw
+    newline or an unescaped ``|``.
+    """
+    first_line = value.split("\n", 1)[0]
+    if len(first_line) > max_len:
+        first_line = first_line[: max_len - 1] + "…"
+    return first_line.replace("|", "\\|")
+
+
 # ── Public rendering functions ────────────────────────────────────
 
 
@@ -188,10 +200,7 @@ def format_progress(
     if elapsed is None:
         elapsed = time.monotonic() - progress.start_time
 
-    parts = [
-        f'<img src="{_SPINNER_URL}" width="18" align="absmiddle" alt="\u23f3"> '
-        f"**a2sdlc:{stage}** in progress...\n"
-    ]
+    parts = [f"{_SPINNER} **a2sdlc:{stage}** in progress...\n"]
 
     parts.append(
         _format_status_bar(
@@ -228,7 +237,7 @@ def format_progress(
             parts.append(f"| ... | | *({total - 10} earlier)* |")
         for entry in progress.tool_log[-10:]:
             t = _format_milestone_time(entry.timestamp)
-            parts.append(f"| {t} | {entry.name} | {entry.target} |")
+            parts.append(f"| {t} | {entry.name} | {_escape_table_cell(entry.target)} |")
 
     return "\n".join(parts)
 

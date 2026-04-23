@@ -57,11 +57,38 @@ class TestFormatProgress:
         ]
         text = format_progress("implement", ps, elapsed=135.0)
         assert "**a2sdlc:implement** in progress..." in text
-        assert "spinner.svg" in text
+        assert "⏳" in text
         assert "claude-sonnet-4-6" in text
         assert "feat/T-1" in text
         assert "| Read | src/app.py |" in text
         assert "| Edit | src/app.py |" in text
+
+    def test_tool_log_target_with_pipes_and_newlines_stays_on_one_row(self) -> None:
+        """Heredocs and piped commands otherwise collapse the table."""
+        ps = _make_progress()
+        ps.tool_log = [
+            ToolEntry(
+                timestamp=1.0,
+                name="Bash",
+                target="cd /tmp && python3 - <<'EOF'\nprint('x' | y)\nEOF",
+            ),
+        ]
+        text = format_progress("implement", ps, elapsed=10.0)
+        # Row lives on one physical line, pipe escaped.
+        assert "| Bash | cd /tmp && python3 - <<'EOF' |" in text
+        # No raw newline leaked into the cell (the row would split otherwise).
+        rows = [line for line in text.splitlines() if line.startswith("| ")]
+        assert any(r.count("|") == 4 and "Bash" in r for r in rows)
+
+    def test_tool_log_target_truncates_long_values(self) -> None:
+        ps = _make_progress()
+        ps.tool_log = [
+            ToolEntry(timestamp=1.0, name="Bash", target="x" * 200),
+        ]
+        text = format_progress("implement", ps, elapsed=10.0)
+        # Max-len cap leaves ≤ 80 printable chars in the target cell.
+        assert "…" in text
+        assert "x" * 200 not in text
 
     def test_tool_log_truncation(self) -> None:
         ps = _make_progress()
@@ -84,7 +111,7 @@ class TestFormatProgress:
         ps = _make_progress()
         text = format_progress("spec", ps, elapsed=0.0)
         assert "**a2sdlc:spec** in progress..." in text
-        assert "spinner.svg" in text
+        assert "⏳" in text
 
 
 @pytest.mark.unit
