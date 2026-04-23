@@ -139,13 +139,15 @@ from the agent's self-report.
 
 **What it validates:** `parse_directives` extracts `base:` and `gate_spec:` / `gate_merge:` from ticket body and they override project config.
 
-**Ticket shape:** Include YAML-style directives in the body:
+**Ticket shape:** include the engine's bracket-form directives at the top of the body (one per line). Keys use `:` (see `domain/directives.py`), values must be whitespace-free:
 ```
-base: develop
-gate_merge: human
----
+[a2sdlc base=develop]
+[a2sdlc gate:merge=human]
+
 <normal ticket body>
 ```
+
+(Not YAML front-matter. Earlier drafts of this plan and inline ticket templates used `gate_merge: human` under a `---` separator — that never parsed; the first run of scenario 4 auto-merged because the directive was silently ignored.)
 
 **Expected:** Branch is `agent/{N}` against `develop` (not `main`). MERGE stage blocks on human approval even though project config has `gates: {merge: auto}`.
 
