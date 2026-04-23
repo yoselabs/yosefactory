@@ -132,6 +132,10 @@ Fixed this session (2026-04-21):
 - [x] `mark_pr_ready` uses GraphQL, not REST PATCH (43f3832)
 - [x] `set_done_label` replaces prior stage labels (f93cc0e)
 
+## Architecture follow-ups (from P8 — 2026-04-23)
+
+- [ ] **`stages/` is heavier than `docs/architecture.md` §2 claims.** The doc says stages import only `domain/` + `config.py` ("data, not behavior"), but `stages/{spec,implement,review}.py` each import from 5 packages (assembly, config, domain, pipeline, stages) and had to be added to the cap-test `EXEMPT` set in `tests/architecture/test_composition_cap.py`. Decide: update the doc to name stage handlers as per-stage composition roots, OR split `StageExecutor` into a protocol in `domain/` + impl in `pipeline/` so stages only import the protocol. The second option would also let `ExecutionResult` move to `domain/` and retire the four `stages.* -> a2sdlc.pipeline.stage_executor` `ignore_imports` entries in `pyproject.toml`.
+
 ## Test infrastructure follow-ups
 
 - [ ] `make test` wall-clock is 18-34s under xdist; pytest itself is ~11s. The extra time is coverage finalization + the serial pass exit-5 dance. If the gap becomes painful, drop coverage from the default dev loop (keep it in `make check`) or skip the serial pass when no `@pytest.mark.serial` tests exist.
