@@ -8,7 +8,16 @@ from typing import TYPE_CHECKING
 from a2sdlc.assembly.prompt import assemble_system_prompt
 from a2sdlc.config import StageConfig
 from a2sdlc.domain.block_reason import BlockReason
-from a2sdlc.domain.effects import Effect
+from a2sdlc.domain.effects import (
+    CommentFinalize,
+    CommitAndPush,
+    Effect,
+    LogMetric,
+    MarkBlocked,
+    MarkNeedsInput,
+    SetCurrentStage,
+    StateWrite,
+)
 from a2sdlc.domain.models import (
     StageName,
     StageStatus,
@@ -35,14 +44,18 @@ _DEFAULT_TOOLS = [
     "Skill",
 ]
 
+_COMMIT_MESSAGE = "chore: stage artifacts"
+_ARTIFACT_PATHS = (".a2sdlc/state/state.json", "docs/")
+
 
 class SpecStage:
-    """SPEC stage handler — P2 step 5.
+    """SPEC stage handler — P3 step 4 (effects migration).
 
-    Owns the SPEC-path body previously held in ``pipeline.stage_run.execute_ai_stage``.
-    ``execute()`` produces a ``StageOutcome`` and performs the side effects (comment,
-    state write, commit+push, label transition, metrics) inline. P3 will lift those
-    side effects into ``effects()`` once the Effect ADT lands.
+    ``execute()`` runs the agent and computes the outcome + the full
+    effect list; it does not touch adapters directly. The
+    ``StageOutcome.prepared_effects`` field carries the list into
+    ``effects()`` which returns it unchanged. Dispatch's interpreter
+    applies the effects against adapters in list order.
     """
 
     name = StageName.SPEC
@@ -63,24 +76,19 @@ class SpecStage:
         return None
 
     def effects(self, ctx: "DispatchContext", outcome: StageOutcome) -> list[Effect]:
-        """No-op in P2 — execute() still emits side effects inline.
-
-        P3 swaps to ``list[Effect]`` and moves emission here.
-        """
-        return []
+        """Return the effect list ``execute()`` prepared on the outcome."""
+        return list(outcome.prepared_effects)
 
     async def execute(self, ctx: "DispatchContext") -> StageOutcome:
         """Run the SPEC stage end-to-end against the agent.
 
         Reads per-run state from ``ctx`` (pre, pr_lifecycle, comment, pr_number,
         stage_config, run) populated by dispatch before invocation. Returns a
-        ``StageOutcome`` capturing status, output, stats, and blocked/error for
-        the stage_end telemetry contract.
+        ``StageOutcome`` carrying status, output, stats, blocked/error, and a
+        ``prepared_effects`` list that dispatch applies via the interpreter.
         """
         pre = _require(ctx.pre, "pre")
-        comment = _require(ctx.comment, "comment")
         stage_config = _require(ctx.stage_config, "stage_config")
-        run = _require(ctx.run, "run")
 
         # 1. Assemble prompts — SPEC gets the self-answer prefix when requested.
         system_prompt = assemble_system_prompt(
@@ -125,20 +133,13 @@ class SpecStage:
             exec_result.progress.context_window if exec_result.progress else None
         )
 
-        def _commit_and_push() -> None:
-            try:
-                ctx.git.commit_artifacts(
-                    "chore: stage artifacts",
-                    [".a2sdlc/state/state.json", "docs/"],
-                )
-                ctx.git.push()
-            except Exception:  # noqa: BLE001
-                ctx.logger.warning("dispatch.commit_push_failed", exc_info=True)
+        commit_and_push = CommitAndPush(message=_COMMIT_MESSAGE, paths=_ARTIFACT_PATHS)
 
         # 4. Failure path.
         if not exec_result.success:
+            error = exec_result.error or "unknown"
             error_comment = format_error(
-                exec_result.error or "unknown",
+                error,
                 stage=pre.target_stage.value,
                 stats=exec_result.stats,
                 milestones=milestones,
@@ -147,14 +148,17 @@ class SpecStage:
                 max_turns=stage_config.max_turns,
                 context_window=ctx_window,
             )
-            comment.finalize(error_comment)
-            _commit_and_push()
-            ctx.work.mark_blocked(pre.event.key, exec_result.error or "unknown")
+            effects: list[Effect] = [
+                CommentFinalize(body=error_comment),
+                commit_and_push,
+                MarkBlocked(reason=error),
+            ]
             return StageOutcome(
                 output_text=exec_result.output,
                 stats=exec_result.stats,
                 blocked=True,
-                error=exec_result.error or "unknown",
+                error=error,
+                prepared_effects=effects,
             )
 
         # 5. No status block even after follow-ups.
@@ -174,14 +178,17 @@ class SpecStage:
                 f"⚠️ No status block in **{pre.target_stage.value}** output."
                 f"\n\n{partial}\n\n{no_status_footer}"
             )
-            comment.finalize(error_msg)
-            _commit_and_push()
-            ctx.work.mark_blocked(pre.event.key, "no status block in output")
+            effects = [
+                CommentFinalize(body=error_msg),
+                commit_and_push,
+                MarkBlocked(reason="no status block in output"),
+            ]
             return StageOutcome(
                 output_text=exec_result.output,
                 stats=exec_result.stats,
                 blocked=True,
                 error="no_status_block",
+                prepared_effects=effects,
             )
 
         # 6. Success path.
@@ -199,9 +206,8 @@ class SpecStage:
             tasks=tasks,
             status=stage_result.status.value,
         )
-        comment.finalize(final_comment)
 
-        # 7. Write state.
+        # 7. Build state.
         review_cycles = pre.state.review_cycles if pre.state else 0
         if stage_result.status == StageStatus.CHANGES_REQUESTED:
             review_cycles += 1
@@ -227,8 +233,6 @@ class SpecStage:
             + exec_result.stats.duration_ms,
             last_updated=datetime.now(timezone.utc).isoformat(),
         )
-        pre.state_mgr.write_state(new_state)
-        _commit_and_push()
 
         # 8. Transition labels.
         from a2sdlc.stages import next_stage  # local import to avoid cycle
@@ -242,23 +246,37 @@ class SpecStage:
                 "to": next_st.value if next_st else None,
             },
         )
-        if next_st is not None:
-            ctx.work.set_current_stage(pre.event.key, next_st)
-        elif stage_result.status == StageStatus.QUESTIONS:
-            ctx.work.mark_needs_input(pre.event.key)
 
-        # 9. Metrics (logged before the telemetry context manager exits).
-        run.log_metric("tokens_in", exec_result.stats.tokens_in)
-        run.log_metric("tokens_out", exec_result.stats.tokens_out)
-        run.log_metric("cost_usd", exec_result.stats.cost_usd)
-        run.log_metric("turns", exec_result.stats.num_turns)
-        run.log_metric("duration_ms", exec_result.stats.duration_ms)
+        # 9. Assemble the full effect list in apply-order.
+        effects: list[Effect] = [
+            CommentFinalize(body=final_comment),
+            StateWrite(state=new_state),
+            commit_and_push,
+        ]
+        if next_st is not None:
+            effects.append(SetCurrentStage(stage=next_st))
+        elif stage_result.status == StageStatus.QUESTIONS:
+            effects.append(MarkNeedsInput())
+        # Metrics last — they feed stage_end telemetry; other effects
+        # should land before a partial failure could crash the run.
+        effects.extend(
+            [
+                LogMetric(key="tokens_in", value=float(exec_result.stats.tokens_in)),
+                LogMetric(key="tokens_out", value=float(exec_result.stats.tokens_out)),
+                LogMetric(key="cost_usd", value=float(exec_result.stats.cost_usd)),
+                LogMetric(key="turns", value=float(exec_result.stats.num_turns)),
+                LogMetric(
+                    key="duration_ms", value=float(exec_result.stats.duration_ms)
+                ),
+            ]
+        )
 
         return StageOutcome(
             status=stage_result.status,
             output_text=exec_result.output,
             stats=exec_result.stats,
             next_stage_hint=next_st,
+            prepared_effects=effects,
         )
 
 

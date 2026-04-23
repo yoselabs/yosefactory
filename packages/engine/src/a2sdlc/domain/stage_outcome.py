@@ -77,10 +77,17 @@ class StageOutcome(BaseModel):
       Null means "use the transition table" (the normal case). Non-null
       lets a handler carry explicit hand-off info (rare — used by N2
       EPIC_ORCHESTRATE once it lands).
+    - ``prepared_effects`` — transitional carrier (P3). ``execute()``
+      precomputes the full effect list because the data for it (final
+      comment body, TicketState, metrics) is produced mid-execution.
+      ``effects(ctx, outcome)`` returns this list unchanged. A later
+      phase can normalize this by enriching StageOutcome with enough
+      structured fields for ``effects()`` to compute the list purely.
     """
 
     # ``stats`` is a StageRunStats dataclass at runtime; allow arbitrary
     # types so Pydantic doesn't try to validate it as a BaseModel.
+    # ``prepared_effects`` holds ``Effect`` dataclasses, also non-Pydantic.
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
     status: StageStatus | None = None
@@ -91,6 +98,7 @@ class StageOutcome(BaseModel):
     blocked: bool = False
     error: str | None = None
     next_stage_hint: StageName | None = None
+    prepared_effects: list[Any] = Field(default_factory=list)
 
 
 __all__ = ["InlineComment", "StageOutcome"]
