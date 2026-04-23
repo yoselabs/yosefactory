@@ -1,10 +1,10 @@
 ---
 title: "P4 — Pipe-and-filter dispatch"
 type: spec
-status: Draft
+status: Executed
 owner: "@iorlas"
 created: 2026-04-25
-updated: 2026-04-25
+updated: 2026-04-23
 rfc: "../../rfcs/0001-v1-scope.md"
 pitch: "../../pitches/2026-04-23-v1-scope.md"
 author:
