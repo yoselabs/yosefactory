@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from a2sdlc.assembly.prompt import assemble_system_prompt
 from a2sdlc.config import StageConfig
 from a2sdlc.domain.block_reason import BlockReason
+from a2sdlc.domain.effects import Effect
 from a2sdlc.domain.models import (
     StageName,
     StageStatus,
@@ -61,7 +62,7 @@ class SpecStage:
         """
         return None
 
-    def effects(self, ctx: "DispatchContext", outcome: StageOutcome) -> list[object]:
+    def effects(self, ctx: "DispatchContext", outcome: StageOutcome) -> list[Effect]:
         """No-op in P2 — execute() still emits side effects inline.
 
         P3 swaps to ``list[Effect]`` and moves emission here.

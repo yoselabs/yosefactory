@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from a2sdlc.domain.block_reason import BlockReason, Generic
+from a2sdlc.domain.effects import Effect
 from a2sdlc.domain.models import StageName, StageStatus
 from a2sdlc.domain.stage_outcome import StageOutcome
 from a2sdlc.stages.handler import StageHandler
@@ -24,7 +25,7 @@ class _MinimalHandler:
     async def execute(self, ctx: Any) -> StageOutcome:
         return StageOutcome(status=StageStatus.COMPLETE, output_text="ok")
 
-    def effects(self, ctx: Any, outcome: StageOutcome) -> list[object]:
+    def effects(self, ctx: Any, outcome: StageOutcome) -> list[Effect]:
         return []
 
 
@@ -40,7 +41,7 @@ class _BlockingHandler:
     async def execute(self, ctx: Any) -> StageOutcome:  # pragma: no cover
         raise AssertionError("execute must not run when preconditions block")
 
-    def effects(self, ctx: Any, outcome: StageOutcome) -> list[object]:
+    def effects(self, ctx: Any, outcome: StageOutcome) -> list[Effect]:
         return []
 
 

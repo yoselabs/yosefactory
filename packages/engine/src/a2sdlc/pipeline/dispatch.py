@@ -28,6 +28,7 @@ from a2sdlc.domain.stage_outcome import StageOutcome
 from a2sdlc.evaluation.telemetry import NoopTelemetry, RunHandle, Telemetry
 from a2sdlc.lifecycle.comment import CommentManager
 from a2sdlc.lifecycle.pr import PRLifecycle
+from a2sdlc.pipeline.effects_apply import apply as apply_effects
 from a2sdlc.pipeline.preflight import PreflightOutcome, run_preflight
 from a2sdlc.stages import get_stage
 
@@ -182,6 +183,11 @@ async def _run_attempted_stage(
             ctx.run = run
             handler = get_stage(pre.target_stage)
             outcome = await handler.execute(ctx)
+            # P3 step 3: handlers return ``effects()==[]`` today — the
+            # call is a no-op seam. Per-handler migration in steps 4–7
+            # populates these lists; the interpreter handles them
+            # uniformly in list order.
+            await apply_effects(ctx, handler.effects(ctx, outcome))
             result, success, error = _outcome_to_dispatch_tuple(pre, outcome)
             return result
 

@@ -27,6 +27,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol
 
 from a2sdlc.domain.block_reason import BlockReason
+from a2sdlc.domain.effects import Effect
 from a2sdlc.domain.models import StageName, StageStatus
 from a2sdlc.domain.stage_outcome import StageOutcome
 
@@ -57,11 +58,12 @@ class StageHandler(Protocol):
     async def execute(self, ctx: Context) -> StageOutcome:
         """I/O boundary — do the work and return a structured outcome."""
 
-    def effects(self, ctx: Context, outcome: StageOutcome) -> list[object]:
+    def effects(self, ctx: Context, outcome: StageOutcome) -> list[Effect]:
         """Pure mapping from outcome to list of Effects.
 
-        Return type is ``list[object]`` in P2; P3 tightens it to
-        ``list[Effect]`` once the Effect ADT exists.
+        Return type tightened to ``list[Effect]`` in P3 step 3 alongside
+        the interpreter wire-up. Per-handler migration (P3 steps 4–7)
+        populates these lists; until then each handler returns ``[]``.
         """
 
 

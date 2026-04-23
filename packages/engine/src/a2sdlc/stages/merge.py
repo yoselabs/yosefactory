@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from a2sdlc.config import StageConfig
 from a2sdlc.domain.block_reason import BlockReason
+from a2sdlc.domain.effects import Effect
 from a2sdlc.domain.models import GateMode, StageName, StageStatus
 from a2sdlc.domain.stage_outcome import StageOutcome
 
@@ -34,7 +35,7 @@ class MergeStage:
     def preconditions(self, ctx: "DispatchContext") -> BlockReason | None:
         return None
 
-    def effects(self, ctx: "DispatchContext", outcome: StageOutcome) -> list[object]:
+    def effects(self, ctx: "DispatchContext", outcome: StageOutcome) -> list[Effect]:
         return []
 
     async def execute(self, ctx: "DispatchContext") -> StageOutcome:
