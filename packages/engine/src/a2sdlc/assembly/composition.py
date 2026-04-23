@@ -24,6 +24,7 @@ it.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -39,4 +40,66 @@ class CompositionProfile:
     credential_profile: Literal["github_token", "dual_app"]
 
 
-__all__ = ["CompositionProfile"]
+def resolve_composition_profile(
+    env: Mapping[str, str],
+    *,
+    mode: Literal["dispatch", "run-stage"],
+) -> CompositionProfile:
+    """Resolve the profile from env + the invoking CLI subcommand.
+
+    Three V1.0 resolutions:
+
+    - ``mode="run-stage"`` → ``local-file`` profile. File-backed
+      tickets, no-op review, scratch-branch git.
+    - ``mode="dispatch"`` + ``DISPATCHER_URL`` set → ``ci-dispatcher``
+      profile. Workflow-input work, GH review, local git, dispatcher
+      event subscriber + console.
+    - ``mode="dispatch"`` otherwise → ``ci-github-native`` profile.
+      GH-issue work, GH review, local git, gh-comment subscriber.
+    """
+    if mode == "run-stage":
+        return CompositionProfile(
+            work="local_file",
+            review="local_noop",
+            git="local_branch",
+            progress_subscribers=("gh_comment",),
+            credential_profile="github_token",
+        )
+    if env.get("DISPATCHER_URL"):
+        return CompositionProfile(
+            work="workflow_input",
+            review="github",
+            git="local",
+            progress_subscribers=("dispatcher_event", "console"),
+            credential_profile="github_token",
+        )
+    return CompositionProfile(
+        work="github_issue",
+        review="github",
+        git="local",
+        progress_subscribers=("gh_comment",),
+        credential_profile="github_token",
+    )
+
+
+def validate_profile(profile: CompositionProfile) -> None:
+    """Assert legal combinations; raise on misconfiguration.
+
+    Rules today:
+    - ``workflow_input`` work requires the ``dispatcher_event``
+      subscriber to be attached (comments otherwise silently drop).
+    - ``credential_profile="dual_app"`` is the N8 slot and has no
+      runtime wiring yet — raises ``NotImplementedError``.
+    """
+    if (
+        profile.work == "workflow_input"
+        and "dispatcher_event" not in profile.progress_subscribers
+    ):
+        msg = "workflow_input work adapter requires dispatcher_event subscriber"
+        raise ValueError(msg)
+    if profile.credential_profile == "dual_app":
+        msg = "dual_app credential profile is N8 — not wired in P6"
+        raise NotImplementedError(msg)
+
+
+__all__ = ["CompositionProfile", "resolve_composition_profile", "validate_profile"]
