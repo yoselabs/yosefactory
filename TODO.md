@@ -144,6 +144,11 @@ Fixed this session (2026-04-21):
   2. Update `docs/test_plan.md` scenarios 4 + 6 ticket shape to use labels by default.
   3. Keep bracket parsing intact — we want zero migration pain for anyone already using it.
 
+## SPEC-stage prompt leaks surfaced in smoke #38 (2026-04-23)
+
+- [ ] **SPEC agent authors `gh pr create` steps the engine is supposed to own.** In smoke #38, the SPEC agent's plan included `Task 2: gh pr create --base develop` and the agent ran it. PR #39 ended up created by `a2sdlc[bot]` (the agent identity) with `draft: false`, bypassing `_ensure_draft_pr` in `pipeline/dispatch.py`. The engine's draft-PR lifecycle (draft → ready-on-merge, title promotion) gets skipped. Fix direction: tighten `prompts/stages/spec.md` to state that PR creation is off-limits (engine's concern), and/or revoke the `gh`/`pr` tools from the SPEC stage's `_DEFAULT_TOOLS`.
+- [ ] **SPEC self-review hallucinated a "missing" directive value.** The #38 comment reads *"Critical issue — `gate:merge=` directive value was missing. Fixed by adding a directive table with value `human`."* — the ticket body had `[a2sdlc gate:merge=human]` literally. The self-review invented a gap, then "fixed" it in a spec document (at cost). The review-loop prompt is producing false positives. Fix direction: require the self-review to quote the exact text it believes is missing/wrong before declaring an issue; reject issues whose premise isn't grounded in the actual artifacts.
+
 ## Bugs caught in smoke #36 (scenario 4 retry, 2026-04-23)
 
 - [ ] **APPROVE reviews route to IMPLEMENT as if they were CHANGES_REQUESTED.** `ingress/feedback_routing.py:resolve_target_stage` only inspects the current pipeline stage, not the review verdict. When a human clears a `gate:merge=human` gate by submitting an APPROVE review, the engine fires `pull_request_review`, the routing promotes it to IMPLEMENT feedback, another review cycle fires, and the pipeline never actually progresses to MERGE. In smoke #36 this burned ~$1.20 + ~5 min in a spurious IMPLEMENT → REVIEW loop before I manually merged the PR to break out. **Fix:** inspect the review state in the event; skip the IMPLEMENT route when `state == "approved"` and instead surface the approval to the MERGE gate check.
