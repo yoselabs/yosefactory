@@ -27,7 +27,7 @@ from a2sdlc.assembly.composition import (
     build_subscribers,
     validate_profile,
 )
-from a2sdlc.assembly.wire import build_progress_state
+from a2sdlc.observability.wire import build_progress_state
 from a2sdlc.config import load_config_file
 from a2sdlc.domain.exceptions import BlockedError
 from a2sdlc.domain.models import StageName

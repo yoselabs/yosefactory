@@ -189,7 +189,7 @@ def dispatch_command(
         resolve_composition_profile,
         validate_profile,
     )
-    from a2sdlc.assembly.wire import build_progress_state  # noqa: PLC0415
+    from a2sdlc.observability.wire import build_progress_state  # noqa: PLC0415
     from a2sdlc.config import load_config_file  # noqa: PLC0415
     from a2sdlc.domain.models import StageName  # noqa: PLC0415
     from a2sdlc.domain.run_context import RunContext  # noqa: PLC0415
