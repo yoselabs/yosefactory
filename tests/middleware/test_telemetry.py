@@ -17,8 +17,8 @@ from a2sdlc.domain.models import StageName
 from a2sdlc.domain.pipeline_event import PipelineEvent
 from a2sdlc.domain.run_context import RunContext
 from a2sdlc.domain.run_result import DispatchResult
-from a2sdlc.pipeline.middleware import StageAttempt
-from a2sdlc.pipeline.middleware.telemetry import with_telemetry
+from a2sdlc.middleware import StageAttempt
+from a2sdlc.middleware.telemetry import with_telemetry
 from tests.fakes import make_dispatch_context, populate_run_intent
 
 

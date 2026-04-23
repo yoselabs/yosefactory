@@ -19,8 +19,8 @@ from a2sdlc.lifecycle.comment import CommentManager
 from a2sdlc.lifecycle.pr import PRLifecycle
 from a2sdlc.pipeline import gating, ingress
 from a2sdlc.pipeline.effects_apply import apply as apply_effects
-from a2sdlc.pipeline.middleware.idempotency import with_idempotency
-from a2sdlc.pipeline.middleware.telemetry import with_telemetry
+from a2sdlc.middleware.idempotency import with_idempotency
+from a2sdlc.middleware.telemetry import with_telemetry
 from a2sdlc.pipeline.stage_finish import outcome_to_dispatch_result
 from a2sdlc.stages import get_stage
 

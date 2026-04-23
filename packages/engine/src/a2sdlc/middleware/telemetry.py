@@ -19,7 +19,7 @@ from a2sdlc.domain.run_context import RunContext
 from a2sdlc.domain.run_intent import RunIntent
 from a2sdlc.domain.run_result import DispatchResult
 from a2sdlc.evaluation.telemetry import NoopTelemetry
-from a2sdlc.pipeline.middleware import StageAttempt
+from a2sdlc.middleware import StageAttempt
 
 
 def with_telemetry(next_: StageAttempt) -> StageAttempt:

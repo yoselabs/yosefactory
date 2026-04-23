@@ -16,8 +16,8 @@ from a2sdlc.config import load_stage_config
 from a2sdlc.domain.models import StageName, TicketState
 from a2sdlc.domain.run_context import RunContext
 from a2sdlc.domain.run_result import DispatchResult
-from a2sdlc.pipeline.middleware.idempotency import with_idempotency
-from a2sdlc.pipeline.middleware.telemetry import with_telemetry
+from a2sdlc.middleware.idempotency import with_idempotency
+from a2sdlc.middleware.telemetry import with_telemetry
 from tests.fakes import make_dispatch_context, populate_run_intent
 
 

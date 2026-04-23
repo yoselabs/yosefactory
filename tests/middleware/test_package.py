@@ -7,7 +7,7 @@ import pytest
 
 @pytest.mark.unit
 def test_aliases_importable() -> None:
-    from a2sdlc.pipeline.middleware import Middleware, StageAttempt
+    from a2sdlc.middleware import Middleware, StageAttempt
 
     # Alias identities aren't load-bearing; this test pins that both
     # names resolve + survive refactors that rename the module path.
