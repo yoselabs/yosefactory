@@ -75,28 +75,107 @@ def test_build_git_adapter_unknown_raises(tmp_path):
         build_git_adapter("nonsense", project_root=tmp_path)
 
 
-def test_build_work_adapter_jira_deferred(tmp_path):
-    """GIVEN name='jira' WHEN build_work_adapter is called THEN NotImplementedError signals deferred wiring."""
-    with pytest.raises(NotImplementedError, match="jira work adapter"):
-        build_work_adapter(
-            "jira",
-            project_root=tmp_path,
-            session_id="s",
-            stage=StageName.SPEC,
-            ticket_path=None,
-        )
+def test_build_work_adapter_github_issue_uses_env_token(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    """github_issue arm pulls GITHUB_TOKEN + GITHUB_REPOSITORY from env."""
+    captured: dict[str, str] = {}
+
+    def _fake_from_token(cls, token, repo_name, trigger_mention="@a2sdlc"):
+        captured["token"] = token
+        captured["repo_name"] = repo_name
+        return object()
+
+    from a2sdlc.adapters.work import GitHubWorkAdapter
+
+    monkeypatch.setattr(GitHubWorkAdapter, "from_token", classmethod(_fake_from_token))
+    build_work_adapter(
+        "github_issue",
+        project_root=tmp_path,
+        session_id="s",
+        stage=StageName.SPEC,
+        env={"GITHUB_TOKEN": "tok-1", "GITHUB_REPOSITORY": "o/r"},
+    )
+    assert captured == {"token": "tok-1", "repo_name": "o/r"}
 
 
-def test_build_review_adapter_github_deferred(tmp_path):
-    """GIVEN name='github' WHEN build_review_adapter is called THEN NotImplementedError signals deferred wiring."""
-    with pytest.raises(NotImplementedError, match="github review adapter"):
-        build_review_adapter("github", project_root=tmp_path)
+def test_build_work_adapter_github_issue_falls_back_to_gh_token(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    captured: dict[str, str] = {}
+
+    def _fake_from_token(cls, token, repo_name, trigger_mention="@a2sdlc"):
+        captured["token"] = token
+        return object()
+
+    from a2sdlc.adapters.work import GitHubWorkAdapter
+
+    monkeypatch.setattr(GitHubWorkAdapter, "from_token", classmethod(_fake_from_token))
+    build_work_adapter(
+        "github_issue",
+        project_root=tmp_path,
+        session_id="s",
+        stage=StageName.SPEC,
+        env={"GH_TOKEN": "fallback-tok", "GITHUB_REPOSITORY": "o/r"},
+    )
+    assert captured["token"] == "fallback-tok"
 
 
-def test_build_git_adapter_github_returns_local_git(tmp_path):
-    """GIVEN name='github' WHEN build_git_adapter is called THEN the CI-side LocalGitAdapter is returned."""
+def test_build_review_adapter_github(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """github review arm constructs a Github client + wraps it in GitHubReviewAdapter."""
+    from a2sdlc.adapters.review import GitHubReviewAdapter
+
+    captured: dict[str, str] = {}
+
+    class _FakeRepo:
+        pass
+
+    class _FakeGithub:
+        def __init__(self, token):
+            captured["token"] = token
+
+        def get_repo(self, name):
+            captured["repo_name"] = name
+            return _FakeRepo()
+
+    # The factory does a local `from github import Github`. Patch the
+    # symbol on the adapters.review module that the adapter imports, and
+    # replace the factory's lazy import by patching sys.modules.
+    import sys
+    import types
+
+    fake_module = types.ModuleType("github")
+    setattr(fake_module, "Github", _FakeGithub)  # noqa: B010
+    monkeypatch.setitem(sys.modules, "github", fake_module)
+
+    r = build_review_adapter(
+        "github",
+        project_root=tmp_path,
+        env={"GITHUB_TOKEN": "tok-r", "GITHUB_REPOSITORY": "o/r"},
+    )
+    assert isinstance(r, GitHubReviewAdapter)
+    assert captured == {"token": "tok-r", "repo_name": "o/r"}
+
+
+def test_build_work_adapter_workflow_input(tmp_path):
+    """GIVEN name='workflow_input' THEN a WorkflowInputReader is returned."""
+    from a2sdlc.adapters.work.workflow_input import WorkflowInputReader
+
+    w = build_work_adapter(
+        "workflow_input",
+        project_root=tmp_path,
+        session_id="s",
+        stage=StageName.SPEC,
+    )
+    assert isinstance(w, WorkflowInputReader)
+
+
+def test_build_git_adapter_local_alias_returns_local_git(tmp_path):
+    """GIVEN name='local' or 'github' THEN LocalGitAdapter is returned (aliased)."""
     from a2sdlc.adapters.git import LocalGitAdapter
 
     _init_repo(tmp_path)
-    g = build_git_adapter("github", project_root=tmp_path)
-    assert isinstance(g, LocalGitAdapter)
+    g_canonical = build_git_adapter("local", project_root=tmp_path)
+    g_legacy = build_git_adapter("github", project_root=tmp_path)
+    assert isinstance(g_canonical, LocalGitAdapter)
+    assert isinstance(g_legacy, LocalGitAdapter)
