@@ -14,6 +14,7 @@ from a2sdlc.domain.models import (
     StageResult,
     StageStatus,
     TicketState,
+    extract_inline_comments,
     extract_result,
     strip_status_block,
 )
@@ -392,3 +393,76 @@ class TestStageResultCleanShape:
         result = extract_result(output)
         assert result is not None
         assert result.status is StageStatus.QUESTIONS
+
+
+@pytest.mark.unit
+class TestExtractInlineComments:
+    def test_no_block_returns_empty(self) -> None:
+        assert extract_inline_comments("no fenced block here") == []
+
+    def test_missing_field_returns_empty(self) -> None:
+        output = '```a2sdlc\n{"status": "approved"}\n```'
+        assert extract_inline_comments(output) == []
+
+    def test_empty_list_returns_empty(self) -> None:
+        output = '```a2sdlc\n{"status": "approved", "inline_comments": []}\n```'
+        assert extract_inline_comments(output) == []
+
+    def test_valid_entries_parse(self) -> None:
+        output = (
+            "```a2sdlc\n"
+            "{\n"
+            '  "status": "changes_requested",\n'
+            '  "inline_comments": [\n'
+            '    {"file": "a.py", "line_start": 10, "line_end": 10, '
+            '"body": "rename this"},\n'
+            '    {"file": "b.py", "line_start": 5, "line_end": 8, '
+            '"body": "extract helper", "side": "LEFT"}\n'
+            "  ]\n"
+            "}\n"
+            "```"
+        )
+        comments = extract_inline_comments(output)
+        assert len(comments) == 2
+        assert comments[0].file == "a.py"
+        assert comments[0].line_start == 10
+        assert comments[0].side == "RIGHT"
+        assert comments[1].side == "LEFT"
+        assert comments[1].body == "extract helper"
+
+    def test_malformed_entries_dropped_with_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        output = (
+            "```a2sdlc\n"
+            "{\n"
+            '  "status": "changes_requested",\n'
+            '  "inline_comments": [\n'
+            '    {"file": "a.py", "line_start": 1, "line_end": 1, '
+            '"body": "ok"},\n'
+            '    {"file": "b.py"},\n'
+            '    "not an object",\n'
+            '    {"file": "c.py", "line_start": 2, "line_end": 2, '
+            '"body": "ok2"}\n'
+            "  ]\n"
+            "}\n"
+            "```"
+        )
+        logger = logging.getLogger("test_inline_comments")
+        with caplog.at_level(logging.WARNING, logger="test_inline_comments"):
+            comments = extract_inline_comments(output, logger)
+
+        # Two valid entries kept; two malformed dropped.
+        assert [c.file for c in comments] == ["a.py", "c.py"]
+        warnings = [r for r in caplog.records if r.name == "test_inline_comments"]
+        assert len(warnings) == 2
+
+    def test_non_list_inline_comments_returns_empty(self) -> None:
+        output = '```a2sdlc\n{"status": "approved", "inline_comments": "nope"}\n```'
+        assert extract_inline_comments(output) == []
+
+    def test_malformed_json_returns_empty(self) -> None:
+        output = "```a2sdlc\nthis is not json\n```"
+        assert extract_inline_comments(output) == []

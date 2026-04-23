@@ -12,6 +12,7 @@ from a2sdlc.domain.models import (
     StageName,
     StageStatus,
     TicketState,
+    extract_inline_comments,
     strip_status_block,
 )
 from a2sdlc.domain.progress_format import format_error, format_final
@@ -180,9 +181,8 @@ class ReviewStage:
         )
         comment.finalize(final_comment)
 
-        # REVIEW side effects — native PR review + inline comments. Parser for
-        # inline comments lands in step 7; for now we thread an empty list.
-        inline_comments: list = []
+        # REVIEW side effects — native PR review + inline comments.
+        inline_comments = extract_inline_comments(exec_result.output, ctx.logger)
         if pr_number is not None:
             verdict = (
                 "APPROVE"

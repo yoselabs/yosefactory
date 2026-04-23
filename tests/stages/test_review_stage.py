@@ -126,6 +126,38 @@ async def test_review_stage_execute_no_status_block_returns_blocked() -> None:
 
 
 @pytest.mark.asyncio
+async def test_review_stage_execute_threads_parsed_inline_comments() -> None:
+    """Step 7: ReviewStage parses inline_comments out of agent output and posts them."""
+    output_with_comments = (
+        "```a2sdlc\n"
+        "{\n"
+        '  "status": "changes_requested",\n'
+        '  "output": "See comments",\n'
+        '  "inline_comments": [\n'
+        '    {"file": "a.py", "line_start": 3, "line_end": 3, "body": "fix"}\n'
+        "  ]\n"
+        "}\n"
+        "```"
+    )
+    ctx, _work, _git, review, _runner = _review_ctx(
+        project_root=Path("/tmp/test_review_stage_parsed")
+    )
+    _populate_per_run_state(ctx, output_with_comments)
+
+    outcome = await ReviewStage().execute(ctx)
+
+    assert outcome.status == StageStatus.CHANGES_REQUESTED
+    assert len(outcome.inline_comments) == 1
+    assert outcome.inline_comments[0].file == "a.py"
+    # Posted to the adapter under the PR number.
+    assert len(review.inline_comments) == 1
+    pr_num, comments = review.inline_comments[0]
+    assert pr_num == 42
+    assert len(comments) == 1
+    assert comments[0].body == "fix"
+
+
+@pytest.mark.asyncio
 async def test_review_stage_execute_feedback_event_prepends_prefix() -> None:
     """When pre.event.is_feedback is True, the system prompt gets the feedback prefix."""
     ctx, _work, _git, _review, _runner = _review_ctx(

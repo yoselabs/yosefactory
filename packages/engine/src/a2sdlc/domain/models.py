@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
+
+if TYPE_CHECKING:
+    from a2sdlc.domain.stage_outcome import InlineComment
 
 
 # ── Enums ──────────────────────────────────────────────────────────
@@ -103,6 +109,52 @@ class TicketState(BaseModel):
     # Rate-limit self-heal slot (architecture vision §2.23);
     # scheduled sweep re-dispatches after this ISO timestamp clears.
     rate_limited_until: str | None = None
+
+
+def extract_inline_comments(
+    output: str, logger: logging.Logger | None = None
+) -> list[InlineComment]:
+    """Extract the optional ``inline_comments`` list from the a2sdlc block.
+
+    REVIEW agents may include ``inline_comments: [...]`` alongside
+    ``status`` inside the fenced block. Each entry must match the
+    ``InlineComment`` shape (file, line_start, line_end, body, side).
+
+    Tolerant parsing per P2 step 7 spec: missing field → empty list,
+    malformed entries dropped with a warning (not fatal). Non-REVIEW
+    stages never produce this field, so callers for IMPLEMENT / SPEC
+    get an empty list without checking stage.
+    """
+    from a2sdlc.domain.stage_outcome import InlineComment  # avoid cycle
+
+    marker = "```a2sdlc"
+    start = output.rfind(marker)
+    if start == -1:
+        return []
+    start += len(marker)
+    end = output.find("```", start)
+    if end == -1:
+        return []
+    raw = output[start:end].strip()
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    entries = payload.get("inline_comments") if isinstance(payload, dict) else None
+    if not isinstance(entries, list):
+        return []
+
+    comments: list[InlineComment] = []
+    for idx, entry in enumerate(entries):
+        try:
+            comments.append(InlineComment.model_validate(entry))
+        except Exception as exc:  # noqa: BLE001
+            if logger is not None:
+                logger.warning(
+                    "inline_comment.malformed",
+                    extra={"index": idx, "error": str(exc)},
+                )
+    return comments
 
 
 def extract_result(output: str) -> StageResult | None:
