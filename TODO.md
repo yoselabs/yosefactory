@@ -145,12 +145,12 @@ Fixed this session (2026-04-21):
 
 ### Bugs caught in smoke #28 (breaker validation)
 
-- [ ] Duplicate `Blocked:` comment on breaker trip. `check_cost_ceiling` / `check_review_cycles` call `mark_blocked(reason)` in preflight, then the CLI's error-handler wrapper in `cli/dispatch.py` ALSO calls `mark_blocked(f"Stage failed: {reason}")` because it treats the `DispatchResult(blocked=True)` return as an error. Fix: make the CLI wrapper distinguish "pre-execution breaker trip" (clean exit) from "mid-stage exception" (error path with traceback). Dedupe path already exists in `mark_blocked` but the message differs (`"Cost ceiling..."` vs `"Stage failed: Cost ceiling..."`), so the existing scan-for-duplicate check misses it.
-- [ ] Workflow exit code `failure` on clean breaker trip. `DispatchResult(blocked=True, error=<breaker-reason>)` propagates as Typer non-zero exit → workflow fails. Consumers see a red X on breaker trip even though behavior is correct. Fix: either (a) CLI exits 0 when `blocked=True` AND `error` matches a known-breaker reason, or (b) add a dedicated `breaker_tripped` field on `DispatchResult` that CLI checks.
+- [x] Duplicate `Blocked:` comment on breaker trip. Fixed 2026-04-23 (ad3b2c1) — CLI no longer calls `_notify_stage_failure` on `blocked=True`.
+- [x] Workflow exit code `failure` on clean breaker trip. Fixed 2026-04-23 (ad3b2c1) — `blocked=True` exits 0 via clean Typer return.
 
-### Cassette seeding for GH adapter integration tier (blocked on user)
+### Cassette seeding for GH adapter integration tier
 
-- [ ] Run `GITHUB_TOKEN=ghs_... make record-integration` once with a real installation token from the smoke repo's App. Commits cassettes to `tests/integration/adapters/cassettes/`. Unblocks CI-level auth-mode regression catching (see `Evolution/signals/2026-04-21-2341-unit-tests-miss-gh-token-auth-bugs.yaml` for context). Scrubber strips `authorization` + cookies before cassettes hit disk — still diff before committing.
+- [x] Seeded 2026-04-23 (b2c2ab7) via one-shot mint workflow on the smoke repo. All 13 cassettes recorded + scrubbed + committed. Replay active in `make check` via `make test-integration`.
 
 ### Smoke scenarios still not live-validated (docs/test_plan.md)
 
