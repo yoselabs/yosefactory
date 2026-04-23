@@ -29,10 +29,7 @@ from a2sdlc.evaluation.telemetry import NoopTelemetry, RunHandle, Telemetry
 from a2sdlc.lifecycle.comment import CommentManager
 from a2sdlc.lifecycle.pr import PRLifecycle
 from a2sdlc.pipeline.preflight import PreflightOutcome, run_preflight
-from a2sdlc.stages.implement import ImplementStage
-from a2sdlc.stages.merge import MergeStage
-from a2sdlc.stages.review import ReviewStage
-from a2sdlc.stages.spec import SpecStage
+from a2sdlc.stages import get_stage
 
 
 @dataclass
@@ -157,8 +154,8 @@ async def _run_attempted_stage(
     """Execute a stage under telemetry + progress envelope.
 
     Emits `stage_start` / `stage_end` unconditionally once the stage is
-    attempted. Delegates to the appropriate ``StageHandler.execute()``.
-    Step 9 collapses the per-stage branches into a single registry lookup.
+    attempted. Resolves the handler via the ``STAGES`` registry and awaits
+    its ``execute()``.
     """
     with (
         telemetry.session(session_id) as opener,
@@ -183,14 +180,8 @@ async def _run_attempted_stage(
 
         try:
             ctx.run = run
-            if pre.target_stage == StageName.MERGE:
-                outcome = await MergeStage().execute(ctx)
-            elif pre.target_stage == StageName.SPEC:
-                outcome = await SpecStage().execute(ctx)
-            elif pre.target_stage == StageName.IMPLEMENT:
-                outcome = await ImplementStage().execute(ctx)
-            else:
-                outcome = await ReviewStage().execute(ctx)
+            handler = get_stage(pre.target_stage)
+            outcome = await handler.execute(ctx)
             result, success, error = _outcome_to_dispatch_tuple(pre, outcome)
             return result
 
@@ -210,8 +201,8 @@ def _outcome_to_dispatch_tuple(
 
     The ``(DispatchResult, success, error)`` shape feeds ``stage_end``
     telemetry. P2 step 5 introduces this converter as the seam between
-    handlers (new) and dispatch's pre-handler contract. Deleted in
-    step 9 once the tuple goes away entirely.
+    handlers (new) and dispatch's pre-handler contract. P3 folds the
+    tuple shape away entirely once Effects land.
     """
     stats = outcome.stats
     if outcome.blocked:

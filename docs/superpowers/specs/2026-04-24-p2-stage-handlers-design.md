@@ -1,7 +1,7 @@
 ---
 title: "P2 — Stage handlers + N1 inline review"
 type: spec
-status: Draft
+status: Executed
 owner: "@iorlas"
 created: 2026-04-24
 updated: 2026-04-24
