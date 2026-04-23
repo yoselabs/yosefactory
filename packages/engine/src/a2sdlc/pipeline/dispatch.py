@@ -81,6 +81,23 @@ def _wire_comment_and_subscriber(ctx: RunContext, intent: RunIntent) -> None:
         ctx.progress_state.subscribe(ctx.make_comment_subscriber(comment))
 
 
+async def run_stage(
+    ctx: RunContext, intent: RunIntent
+) -> tuple[DispatchResult, bool, str | None]:
+    """Resolve the stage handler, execute it, apply effects, pack the result.
+
+    Pure with respect to telemetry + progress — those wrap this call in
+    ``_run_attempted_stage`` (P5 step 3 moves them to middleware). The
+    three-tuple return is transitional: step 3 drops the ``(success,
+    error)`` tail once telemetry middleware derives them from
+    ``DispatchResult`` directly.
+    """
+    handler = get_stage(intent.target_stage)
+    outcome = await handler.execute(ctx)
+    await apply_effects(ctx, handler.effects(ctx, outcome))
+    return outcome_to_dispatch_tuple(intent, outcome)
+
+
 async def _run_attempted_stage(ctx: RunContext, intent: RunIntent) -> DispatchResult:
     """Execute the resolved stage under telemetry + progress envelope.
 
@@ -107,10 +124,7 @@ async def _run_attempted_stage(ctx: RunContext, intent: RunIntent) -> DispatchRe
         error: str | None = "unknown"
         try:
             ctx.run = run
-            handler = get_stage(intent.target_stage)
-            outcome = await handler.execute(ctx)
-            await apply_effects(ctx, handler.effects(ctx, outcome))
-            result, success, error = outcome_to_dispatch_tuple(intent, outcome)
+            result, success, error = await run_stage(ctx, intent)
             return result
         finally:
             await ctx.progress_state.stage_end(
