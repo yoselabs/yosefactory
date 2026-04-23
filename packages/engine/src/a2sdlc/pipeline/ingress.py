@@ -23,11 +23,21 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from a2sdlc.domain.exceptions import SkipEvent
-from a2sdlc.domain.models import StageName
+from a2sdlc.config import load_stage_config
+from a2sdlc.domain.directives import parse_directives
+from a2sdlc.domain.exceptions import BlockedError, SkipEvent
+from a2sdlc.domain.models import GateConfig, StageName
+from a2sdlc.domain.run_intent import RunIntent
 from a2sdlc.domain.run_result import DispatchResult
+from a2sdlc.lifecycle.state import StateManager
+from a2sdlc.lifecycle.state_storage import GitFileStateStorage
 from a2sdlc.pipeline.context import assemble_context, pick_handover
 from a2sdlc.pipeline.feedback_routing import resolve_target_stage
+from a2sdlc.pipeline.gating import (
+    check_cost_ceiling,
+    check_duplicate_run_id,
+    check_review_cycles,
+)
 
 if TYPE_CHECKING:
     from a2sdlc.domain.pipeline_event import PipelineEvent
@@ -133,4 +143,77 @@ def resolve_routing(
     return None, event.trigger_stage, None
 
 
-__all__ = ["ParsedSkip", "parse_event", "resolve_routing"]
+def resolve_intent(
+    ctx: "DispatchContext",
+    event: "PipelineEvent",
+) -> "RunIntent | DispatchResult":
+    """Build the ``RunIntent`` for ``event``, or short-circuit.
+
+    Runs after ``parse_event`` + ``gating.check_ticket_active`` — handles
+    directive parsing, routing, branch setup, state read, idempotency
+    and circuit breakers. Returns a ``DispatchResult`` when git setup
+    is blocked, the run_id is a duplicate, or a circuit breaker trips.
+    """
+    ticket_body = ctx.work.get_ticket(event.key)
+    directives, clean_body = parse_directives(ticket_body)
+
+    user_prompt_override, target_stage, routing_result = resolve_routing(
+        ctx, event, clean_body
+    )
+    if routing_result is not None:
+        return routing_result
+
+    ctx.logger.info(
+        "dispatch.start",
+        extra={"key": event.key, "stage": target_stage.value},
+    )
+
+    gates = ctx.config.gate_config()
+    if directives.gate_merge is not None:
+        gates = GateConfig(merge=directives.gate_merge, spec=gates.spec)
+    if directives.gate_spec is not None:
+        gates = GateConfig(merge=gates.merge, spec=directives.gate_spec)
+
+    self_answer = ctx.config.self_answer
+
+    state_mgr = StateManager(GitFileStateStorage(ctx.git), event.key)
+    base = directives.base or ctx.config.default_base
+    branch = ctx.work.format_branch(event.key)
+    try:
+        ctx.git.setup_branch(branch, base)
+        ctx.logger.info("dispatch.branch_setup", extra={"branch": branch, "base": base})
+    except BlockedError as e:
+        ctx.logger.error("dispatch.git_blocked", extra={"reason": e.reason})
+        ctx.work.mark_blocked(event.key, e.reason)
+        return DispatchResult(stage=target_stage, blocked=True, error=e.reason)
+
+    state = state_mgr.read_state()
+
+    if reason := check_duplicate_run_id(ctx, state_mgr, ctx.run_id):
+        return DispatchResult(stage=target_stage, error=reason)
+
+    stage_cfg = load_stage_config(target_stage.value, ctx.config)
+    for reason in (
+        check_review_cycles(target_stage, state, stage_cfg),
+        check_cost_ceiling(state, ctx.config),
+    ):
+        if reason is not None:
+            ctx.logger.error("dispatch.circuit_breaker", extra={"reason": reason})
+            ctx.work.mark_blocked(event.key, reason)
+            return DispatchResult(stage=target_stage, blocked=True, error=reason)
+
+    return RunIntent(
+        event=event,
+        target_stage=target_stage,
+        clean_body=clean_body,
+        user_prompt_override=user_prompt_override,
+        gates=gates,
+        self_answer=self_answer,
+        state_mgr=state_mgr,
+        state=state,
+        base=base,
+        branch=branch,
+    )
+
+
+__all__ = ["ParsedSkip", "parse_event", "resolve_intent", "resolve_routing"]

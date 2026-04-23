@@ -29,8 +29,9 @@ from a2sdlc.domain.stage_outcome import StageOutcome
 from a2sdlc.evaluation.telemetry import NoopTelemetry, RunHandle, Telemetry
 from a2sdlc.lifecycle.comment import CommentManager
 from a2sdlc.lifecycle.pr import PRLifecycle
+from a2sdlc.pipeline import gating, ingress
 from a2sdlc.pipeline.effects_apply import apply as apply_effects
-from a2sdlc.pipeline.preflight import PreflightOutcome, run_preflight
+from a2sdlc.pipeline.preflight import PreflightOutcome
 from a2sdlc.stages import get_stage
 
 
@@ -74,10 +75,24 @@ class DispatchContext:
 
 async def dispatch(ctx: DispatchContext) -> DispatchResult:
     """Run one pipeline stage. Returns what happened."""
-    # 1. Preflight — event parse, routing, branch setup, idempotency,
-    # circuit breakers. Early-returns for skip/closed/inactive/duplicate/
-    # tripped-breaker/git-blocked.
-    pre = run_preflight(ctx)
+    # 1. Ingress + gating + intent resolution — explicit composition
+    # root shape per architecture vision §7.3. Early returns cover
+    # skip / closed / inactive / duplicate / tripped-breaker /
+    # git-blocked.
+    parsed = ingress.parse_event(ctx)
+    if isinstance(parsed, ingress.ParsedSkip):
+        return DispatchResult(stage=StageName.SPEC, error=parsed.reason)
+    event = parsed
+
+    if event.is_closed:
+        ctx.logger.info("dispatch.ticket_closed", extra={"key": event.key})
+        ctx.work.mark_done(event.key)
+        return DispatchResult(stage=StageName.MERGE, error="ticket_closed")
+
+    if reason := gating.check(ctx, event):
+        return DispatchResult(stage=StageName.SPEC, error=reason)
+
+    pre = ingress.resolve_intent(ctx, event)
     if isinstance(pre, DispatchResult):
         return pre
 

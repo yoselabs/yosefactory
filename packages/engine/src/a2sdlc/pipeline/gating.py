@@ -64,7 +64,21 @@ def check_duplicate_run_id(
     return None
 
 
+def check(ctx: "DispatchContext", event: "PipelineEvent") -> str | None:
+    """Run the pre-intent admission checks; return the first block reason.
+
+    At this stage of P4, only ``check_ticket_active`` can run — the
+    idempotency and circuit-breaker gates need ``state_mgr`` + the
+    resolved target stage, so they stay inside ``ingress.resolve_intent``
+    until a later phase can fan them out. Keeping a single ``check``
+    call site here preserves the composition-root shape from
+    architecture vision §7.3.
+    """
+    return check_ticket_active(ctx, event)
+
+
 __all__ = [
+    "check",
     "check_ticket_active",
     "check_duplicate_run_id",
     # Re-exported from breakers so call sites don't need two imports.
