@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from a2sdlc.pipeline.context import assemble_context, pick_handover
+from a2sdlc.ingress.context import assemble_context, pick_handover
 from a2sdlc.domain.handover import FeedbackItem, HandoverComment
 from a2sdlc.domain.models import StageName
 

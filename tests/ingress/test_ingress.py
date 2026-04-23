@@ -14,7 +14,7 @@ from a2sdlc.domain.exceptions import SkipEvent
 from a2sdlc.domain.handover import HandoverComment
 from a2sdlc.domain.models import StageName
 from a2sdlc.domain.pipeline_event import PipelineEvent
-from a2sdlc.pipeline.ingress import ParsedSkip, parse_event, resolve_routing
+from a2sdlc.ingress import ParsedSkip, parse_event, resolve_routing
 from tests.fakes import make_dispatch_context
 
 

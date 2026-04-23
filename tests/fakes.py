@@ -24,7 +24,8 @@ from a2sdlc.domain.run_context import RunContext
 from a2sdlc.domain.run_intent import RunIntent
 from a2sdlc.domain.run_result import DispatchResult, RunResult
 from a2sdlc.domain.stage_outcome import InlineComment
-from a2sdlc.pipeline import gating, ingress
+from a2sdlc import ingress
+from a2sdlc.pipeline import gating
 
 
 # ── RecordingSubscriber ───────────────────────────────────────────────
