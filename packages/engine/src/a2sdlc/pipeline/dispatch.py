@@ -31,6 +31,8 @@ from a2sdlc.lifecycle.pr import PRLifecycle
 from a2sdlc.pipeline.merge_flow import execute_merge
 from a2sdlc.pipeline.preflight import PreflightOutcome, run_preflight
 from a2sdlc.pipeline.stage_run import execute_ai_stage
+from a2sdlc.stages.implement import ImplementStage
+from a2sdlc.stages.review import ReviewStage
 from a2sdlc.stages.spec import SpecStage
 
 
@@ -187,15 +189,29 @@ async def _run_attempted_stage(
                 )
                 return result
 
-            # P2 step 5: SPEC routes through the SpecStage handler;
-            # IMPLEMENT/REVIEW still use the legacy execute_ai_stage path
-            # until step 6.
+            # P2 step 6: all AI stages route through their handlers.
+            # execute_ai_stage() is dead after this branch and is deleted
+            # in step 8 (kept here to avoid the larger cross-package delete).
             if pre.target_stage == StageName.SPEC:
                 ctx.run = run
                 outcome = await SpecStage().execute(ctx)
                 result, success, error = _outcome_to_dispatch_tuple(pre, outcome)
                 return result
 
+            if pre.target_stage == StageName.IMPLEMENT:
+                ctx.run = run
+                outcome = await ImplementStage().execute(ctx)
+                result, success, error = _outcome_to_dispatch_tuple(pre, outcome)
+                return result
+
+            if pre.target_stage == StageName.REVIEW:
+                ctx.run = run
+                outcome = await ReviewStage().execute(ctx)
+                result, success, error = _outcome_to_dispatch_tuple(pre, outcome)
+                return result
+
+            # Dead path — all StageName values handled above. Kept until
+            # step 8 deletes execute_ai_stage outright.
             result, success, error = await execute_ai_stage(
                 ctx, pre, pr_lifecycle, comment, pr_number, stage_config, run
             )

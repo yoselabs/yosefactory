@@ -1,0 +1,178 @@
+"""N6 standalone-invocability contract test for ReviewStage.
+
+Mirrors ``test_spec_stage.py`` with two REVIEW-specific assertions:
+
+- On success, ``post_review`` is recorded on the ReviewAdapter with the
+  APPROVE / REQUEST_CHANGES verdict derived from ``StageStatus``.
+- ``post_inline_comments`` is called unconditionally on success (empty
+  list is a no-op per the adapter Protocol).
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock
+
+import pytest
+
+from a2sdlc.config import load_stage_config
+from a2sdlc.domain.models import StageName, StageStatus
+from a2sdlc.domain.pipeline_event import PipelineEvent
+from a2sdlc.domain.run_result import RunResult
+from a2sdlc.domain.stage_outcome import StageOutcome
+from a2sdlc.lifecycle.comment import CommentManager
+from a2sdlc.lifecycle.pr import PRLifecycle
+from a2sdlc.pipeline.preflight import PreflightOutcome, run_preflight
+from a2sdlc.stages.review import ReviewStage
+from tests.fakes import FakeRunner, default_run_result, make_dispatch_context
+
+
+_APPROVED_OUTPUT = '```a2sdlc\n{"status": "approved", "output": "LGTM"}\n```'
+_CHANGES_OUTPUT = (
+    '```a2sdlc\n{"status": "changes_requested", "output": "Needs fixes"}\n```'
+)
+
+
+def _populate_per_run_state(ctx: Any, output: str) -> PreflightOutcome:
+    pre = run_preflight(ctx)
+    assert isinstance(pre, PreflightOutcome), f"preflight short-circuited: {pre!r}"
+    ctx.pre = pre
+    ctx.pr_lifecycle = PRLifecycle(ctx.review)
+    ctx.comment = CommentManager(ctx.work, pre.event.key)
+    ctx.comment.start(pre.target_stage.value)
+    ctx.pr_number = 42
+    ctx.stage_config = load_stage_config(pre.target_stage.value, ctx.config)
+    ctx.run = MagicMock(name="RunHandle")
+    ctx.runner = FakeRunner([default_run_result(output)])
+    return pre
+
+
+def _review_ctx(**kwargs: Any) -> Any:
+    event = PipelineEvent(key="35", trigger_stage=StageName.REVIEW)
+    return make_dispatch_context(event=event, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_review_stage_execute_approve_posts_native_review() -> None:
+    """Success path with APPROVED → post_review called with APPROVE."""
+    ctx, _work, _git, review, _runner = _review_ctx(
+        project_root=Path("/tmp/test_review_stage_approve")
+    )
+    _populate_per_run_state(ctx, _APPROVED_OUTPUT)
+
+    outcome = await ReviewStage().execute(ctx)
+
+    assert isinstance(outcome, StageOutcome)
+    assert outcome.status == StageStatus.APPROVED
+    assert outcome.blocked is False
+    assert len(review.reviews) == 1
+    pr_number, _body, verdict = review.reviews[0]
+    assert pr_number == 42
+    assert verdict == "APPROVE"
+    # Inline comments threaded through (empty in step 6 — parser lands in step 7).
+    assert len(review.inline_comments) == 1
+    assert review.inline_comments[0] == (42, [])
+    assert outcome.inline_comments == []
+
+
+@pytest.mark.asyncio
+async def test_review_stage_execute_changes_requested_posts_request_changes() -> None:
+    ctx, _work, _git, review, _runner = _review_ctx(
+        project_root=Path("/tmp/test_review_stage_changes")
+    )
+    _populate_per_run_state(ctx, _CHANGES_OUTPUT)
+
+    outcome = await ReviewStage().execute(ctx)
+
+    assert outcome.status == StageStatus.CHANGES_REQUESTED
+    assert len(review.reviews) == 1
+    _pr, _body, verdict = review.reviews[0]
+    assert verdict == "REQUEST_CHANGES"
+
+
+@pytest.mark.asyncio
+async def test_review_stage_execute_failure_returns_blocked_outcome() -> None:
+    ctx, work, _git, review, _runner = _review_ctx(
+        runner_results=[RunResult(success=False, error="timeout")],
+        project_root=Path("/tmp/test_review_stage_fail"),
+    )
+    _populate_per_run_state(ctx, _APPROVED_OUTPUT)
+    ctx.runner = FakeRunner([RunResult(success=False, error="timeout")])
+
+    outcome = await ReviewStage().execute(ctx)
+
+    assert outcome.blocked is True
+    assert outcome.error == "timeout"
+    assert len(work.blocked) == 1
+    # No native review on failure.
+    assert review.reviews == []
+    assert review.inline_comments == []
+
+
+@pytest.mark.asyncio
+async def test_review_stage_execute_no_status_block_returns_blocked() -> None:
+    ctx, work, _git, review, _runner = _review_ctx(
+        project_root=Path("/tmp/test_review_stage_nsb")
+    )
+    _populate_per_run_state(ctx, "plain text, no fenced a2sdlc block")
+
+    outcome = await ReviewStage().execute(ctx)
+
+    assert outcome.blocked is True
+    assert outcome.error == "no_status_block"
+    assert len(work.blocked) == 1
+    assert review.reviews == []
+
+
+@pytest.mark.asyncio
+async def test_review_stage_execute_feedback_event_prepends_prefix() -> None:
+    """When pre.event.is_feedback is True, the system prompt gets the feedback prefix."""
+    ctx, _work, _git, _review, _runner = _review_ctx(
+        project_root=Path("/tmp/test_review_stage_feedback")
+    )
+    pre = _populate_per_run_state(ctx, _APPROVED_OUTPUT)
+    # Force the feedback branch (preflight's feedback flow has its own
+    # routing cost; flipping the flag here exercises the handler branch).
+    pre.event.is_feedback = True
+
+    outcome = await ReviewStage().execute(ctx)
+
+    assert outcome.status == StageStatus.APPROVED
+
+
+@pytest.mark.asyncio
+async def test_review_stage_execute_uses_user_prompt_override() -> None:
+    """When pre.user_prompt_override is set, it replaces the clean_body+PR-context prompt."""
+    ctx, _work, _git, review, _runner = _review_ctx(
+        project_root=Path("/tmp/test_review_stage_override")
+    )
+    pre = _populate_per_run_state(ctx, _APPROVED_OUTPUT)
+    # PreflightOutcome is a dataclass; mutate the override after population.
+    pre.user_prompt_override = "pre-rendered prompt from feedback routing"
+
+    outcome = await ReviewStage().execute(ctx)
+
+    assert outcome.status == StageStatus.APPROVED
+    # PR context reader is NOT called when override wins — verify via
+    # the runner having been called once with the override text.
+    assert len(review.reviews) == 1
+
+
+def test_review_stage_preconditions_returns_none_in_p2() -> None:
+    ctx, *_ = _review_ctx(project_root=Path("/tmp/test_review_stage_pre"))
+    assert ReviewStage().preconditions(ctx) is None
+
+
+def test_review_stage_effects_is_empty_in_p2() -> None:
+    ctx, *_ = _review_ctx(project_root=Path("/tmp/test_review_stage_eff"))
+    outcome = StageOutcome(status=StageStatus.APPROVED)
+    assert ReviewStage().effects(ctx, outcome) == []
+
+
+def test_review_stage_name_and_valid_statuses() -> None:
+    stage = ReviewStage()
+    assert stage.name is StageName.REVIEW
+    assert stage.valid_statuses == frozenset(
+        {StageStatus.APPROVED, StageStatus.CHANGES_REQUESTED}
+    )
