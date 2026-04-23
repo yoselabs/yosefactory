@@ -146,8 +146,8 @@ Fixed this session (2026-04-21):
 
 ## SPEC-stage prompt leaks surfaced in smoke #38 (2026-04-23)
 
-- [ ] **SPEC agent authors `gh pr create` steps the engine is supposed to own.** In smoke #38, the SPEC agent's plan included `Task 2: gh pr create --base develop` and the agent ran it. PR #39 ended up created by `a2sdlc[bot]` (the agent identity) with `draft: false`, bypassing `_ensure_draft_pr` in `pipeline/dispatch.py`. The engine's draft-PR lifecycle (draft → ready-on-merge, title promotion) gets skipped. Fix direction: tighten `prompts/stages/spec.md` to state that PR creation is off-limits (engine's concern), and/or revoke the `gh`/`pr` tools from the SPEC stage's `_DEFAULT_TOOLS`.
-- [ ] **SPEC self-review hallucinated a "missing" directive value.** The #38 comment reads *"Critical issue — `gate:merge=` directive value was missing. Fixed by adding a directive table with value `human`."* — the ticket body had `[a2sdlc gate:merge=human]` literally. The self-review invented a gap, then "fixed" it in a spec document (at cost). The review-loop prompt is producing false positives. Fix direction: require the self-review to quote the exact text it believes is missing/wrong before declaring an issue; reject issues whose premise isn't grounded in the actual artifacts.
+- [x] **SPEC agent authors `gh pr create` steps the engine is supposed to own.** Two-layer fix 2026-04-23: prompt guardrails added (9e4aeb3) — "What the engine owns" section in `prompts/stages/spec.md`; SDK-level PreToolUse hook (63b8604) denies any `gh pr create/edit/merge/ready/close/reopen/review`, `hub pull-request`, or `glab mr *` Bash invocation with an explanatory deny reason. Engine-global, 7 unit tests. Awaits live smoke revalidation.
+- [x] **SPEC self-review hallucinated a "missing" directive value.** Fixed 2026-04-23 (9e4aeb3) — both self-review steps now require the reviewer to quote the exact line(s) from the spec/plan/ticket for every "missing/unclear/contradictory" finding. No-evidence findings are rejected. Awaits live smoke revalidation.
 
 ## Bugs caught in smoke #36 (scenario 4 retry, 2026-04-23)
 
