@@ -7,12 +7,10 @@ references as ``Any`` — matching the precedent set by ``RunIntent``
 and ``RunResult.progress``. Pipeline-layer consumers (``dispatch.py``)
 narrow the types at the boundary where needed.
 
-The shape is deliberately transitional: ``pre``/``pr_lifecycle``/
-``comment``/``pr_number``/``stage_config``/``run`` stay populated per-
-run for handler compat (unchanged from the P2/P3 fat-context pattern).
-``intent`` is introduced alongside ``pre`` so readers that don't need
-the legacy ``PreflightOutcome`` name can import the renamed type.
-A later phase tightens these fields once handler signatures move to
+The shape is deliberately transitional: ``pr_lifecycle``/``comment``/
+``pr_number``/``stage_config``/``run`` stay populated per-run for
+handler compat (unchanged from the P2/P3 fat-context pattern). A later
+phase tightens these fields once handler signatures move to
 ``execute(ctx, intent)``.
 """
 
@@ -55,7 +53,6 @@ class RunContext:
     # Optional telemetry. Runtime type: evaluation.telemetry.Telemetry.
     telemetry: Any = None
     # ── per-run orchestration state (populated by dispatch before handler.execute) ──
-    pre: RunIntent | None = None
     intent: RunIntent | None = None
     pr_lifecycle: Any = None
     comment: Any = None

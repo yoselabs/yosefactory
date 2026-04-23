@@ -21,7 +21,7 @@ from a2sdlc.domain.models import GateMode, StageName, StageStatus
 from a2sdlc.domain.stage_outcome import StageOutcome
 
 if TYPE_CHECKING:
-    from a2sdlc.pipeline.dispatch import DispatchContext
+    from a2sdlc.domain.run_context import RunContext
 
 
 class MergeStage:
@@ -38,14 +38,14 @@ class MergeStage:
     valid_statuses = frozenset[StageStatus]()
     config = StageConfig(name="merge", max_turns=0, timeout_minutes=5)
 
-    def preconditions(self, ctx: "DispatchContext") -> BlockReason | None:
+    def preconditions(self, ctx: "RunContext") -> BlockReason | None:
         return None
 
-    def effects(self, ctx: "DispatchContext", outcome: StageOutcome) -> list[Effect]:
+    def effects(self, ctx: "RunContext", outcome: StageOutcome) -> list[Effect]:
         return list(outcome.prepared_effects)
 
-    async def execute(self, ctx: "DispatchContext") -> StageOutcome:
-        pre = _require(ctx.pre, "pre")
+    async def execute(self, ctx: "RunContext") -> StageOutcome:
+        pre = _require(ctx.intent, "intent")
         pr_lifecycle = _require(ctx.pr_lifecycle, "pr_lifecycle")
         pr_number = ctx.pr_number
 

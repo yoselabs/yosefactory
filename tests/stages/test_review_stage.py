@@ -24,9 +24,14 @@ from a2sdlc.domain.stage_outcome import StageOutcome
 from a2sdlc.lifecycle.comment import CommentManager
 from a2sdlc.lifecycle.pr import PRLifecycle
 from a2sdlc.pipeline.effects_apply import apply as apply_effects
-from a2sdlc.pipeline.preflight import PreflightOutcome, run_preflight
+from a2sdlc.domain.run_intent import RunIntent
 from a2sdlc.stages.review import ReviewStage
-from tests.fakes import FakeRunner, default_run_result, make_dispatch_context
+from tests.fakes import (
+    FakeRunner,
+    default_run_result,
+    make_dispatch_context,
+    populate_run_intent,
+)
 
 
 _APPROVED_OUTPUT = '```a2sdlc\n{"status": "approved", "output": "LGTM"}\n```'
@@ -35,10 +40,10 @@ _CHANGES_OUTPUT = (
 )
 
 
-def _populate_per_run_state(ctx: Any, output: str) -> PreflightOutcome:
-    pre = run_preflight(ctx)
-    assert isinstance(pre, PreflightOutcome), f"preflight short-circuited: {pre!r}"
-    ctx.pre = pre
+def _populate_per_run_state(ctx: Any, output: str) -> RunIntent:
+    pre = populate_run_intent(ctx)
+
+    ctx.intent = pre
     ctx.pr_lifecycle = PRLifecycle(ctx.review)
     ctx.comment = CommentManager(ctx.work, pre.event.key)
     ctx.comment.start(pre.target_stage.value)

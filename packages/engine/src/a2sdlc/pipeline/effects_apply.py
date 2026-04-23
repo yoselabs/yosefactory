@@ -2,7 +2,7 @@
 
 The seam between handlers (pure) and side effects (I/O). Handlers
 return ``list[Effect]`` from ``effects()``; this module applies them
-in list order against the adapters carried on ``DispatchContext``.
+in list order against the adapters carried on ``RunContext``.
 
 V1.0 arms without an interpreter branch are registered in
 ``domain.effects`` for forward-compat but raise ``NotImplementedError``
@@ -40,13 +40,13 @@ from a2sdlc.domain.effects import (
 )
 
 if TYPE_CHECKING:
-    from a2sdlc.pipeline.dispatch import DispatchContext
+    from a2sdlc.domain.run_context import RunContext
 
 
-async def apply(ctx: "DispatchContext", effects: list[Effect]) -> None:
+async def apply(ctx: "RunContext", effects: list[Effect]) -> None:
     """Apply each effect against ctx's adapters in list order.
 
-    Per-run state (``ctx.pre``, ``ctx.comment``, ``ctx.pr_lifecycle``,
+    Per-run state (``ctx.intent``, ``ctx.comment``, ``ctx.pr_lifecycle``,
     ``ctx.run``) must be populated by dispatch before calling; arms
     reading them raise ``RuntimeError`` with a clear message otherwise.
     """
@@ -54,7 +54,7 @@ async def apply(ctx: "DispatchContext", effects: list[Effect]) -> None:
         _apply_one(ctx, eff)
 
 
-def _apply_one(ctx: "DispatchContext", eff: Effect) -> None:  # noqa: C901,PLR0912
+def _apply_one(ctx: "RunContext", eff: Effect) -> None:  # noqa: C901,PLR0912
     match eff:
         case MarkBlocked(reason=reason):
             ctx.work.mark_blocked(_key(ctx), reason)
@@ -105,8 +105,8 @@ def _apply_one(ctx: "DispatchContext", eff: Effect) -> None:  # noqa: C901,PLR09
             _require(ctx.pr_lifecycle, "pr_lifecycle").update_title(pr, title)
 
         case StateWrite(state=state):
-            pre = _require(ctx.pre, "pre")
-            pre.state_mgr.write_state(state)
+            intent = _require(ctx.intent, "intent")
+            intent.state_mgr.write_state(state)
 
         case CommitAndPush(message=message, paths=paths):
             # Best-effort — matches today's handler behavior. A push
@@ -128,8 +128,8 @@ def _apply_one(ctx: "DispatchContext", eff: Effect) -> None:  # noqa: C901,PLR09
             raise NotImplementedError(msg)
 
 
-def _key(ctx: "DispatchContext") -> str:
-    return _require(ctx.pre, "pre").event.key
+def _key(ctx: "RunContext") -> str:
+    return _require(ctx.intent, "intent").event.key
 
 
 def _require(value, name):  # type: ignore[no-untyped-def]

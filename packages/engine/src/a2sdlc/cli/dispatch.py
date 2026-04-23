@@ -184,7 +184,8 @@ def dispatch_command(
     root = project_root or find_project_root()
 
     from a2sdlc.config import load_config_file  # noqa: PLC0415
-    from a2sdlc.pipeline.dispatch import DispatchContext, dispatch  # noqa: PLC0415
+    from a2sdlc.domain.run_context import RunContext  # noqa: PLC0415
+    from a2sdlc.pipeline.dispatch import dispatch  # noqa: PLC0415
 
     config = load_config_file(root)
     setup_logging("dispatch", "dispatch", root)
@@ -236,7 +237,7 @@ def dispatch_command(
         progress_state.subscribe(dispatcher_sub)
 
         # Dispatcher mode: comments flow to Jira via DispatcherEventSubscriber.
-        # We still need *some* comment subscriber per DispatchContext contract —
+        # We still need *some* comment subscriber per RunContext contract —
         # ConsoleSubscriber is harmless local stdout, not tracker-bound.
         def make_comment_subscriber(_comment):
             return ConsoleSubscriber(progress_state)
@@ -264,7 +265,7 @@ def dispatch_command(
         def make_comment_subscriber(comment):
             return GhCommentSubscriber(comment, progress_state)
 
-    ctx = DispatchContext(
+    ctx = RunContext(
         work=work_adapter,
         git=git,
         review=review_adapter,

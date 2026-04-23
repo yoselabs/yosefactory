@@ -1,7 +1,7 @@
 """Integration test: pipeline.dispatch emits MLflow session + stage runs.
 
 Verifies the telemetry wiring added in Task 6: when a real ``MlflowTelemetry``
-is attached to ``DispatchContext``, a completed dispatch produces a parent
+is attached to ``RunContext``, a completed dispatch produces a parent
 ``session:<sid>`` run and a nested child ``<sid>:<stage>`` run with the
 expected tags and metrics.
 """

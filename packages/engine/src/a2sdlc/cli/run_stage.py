@@ -33,7 +33,8 @@ from a2sdlc.domain.exceptions import BlockedError
 from a2sdlc.domain.models import StageName
 from a2sdlc.domain.run_result import DispatchResult
 from a2sdlc.evaluation.tracked_run import run_tracked
-from a2sdlc.pipeline.dispatch import DispatchContext, dispatch
+from a2sdlc.domain.run_context import RunContext
+from a2sdlc.pipeline.dispatch import dispatch
 
 if TYPE_CHECKING:
     from a2sdlc.adapters.runner import StageRunner
@@ -156,7 +157,7 @@ def _run_stage_impl(
         print(f"error: branch setup failed: {exc.reason}", file=sys.stderr)  # noqa: T201
         return 1
 
-    ctx = DispatchContext(
+    ctx = RunContext(
         work=work,
         git=git,
         review=review,

@@ -11,7 +11,8 @@ from a2sdlc.domain.handover import FeedbackItem, HandoverComment
 from a2sdlc.domain.models import StageName, StageStatus
 from a2sdlc.domain.pipeline_event import PipelineEvent
 from a2sdlc.domain.run_result import RunResult
-from a2sdlc.pipeline.dispatch import DispatchContext, dispatch
+from a2sdlc.domain.run_context import RunContext
+from a2sdlc.pipeline.dispatch import dispatch
 from tests.fakes import (
     FakeGitAdapter,
     FakeReviewAdapter,
@@ -31,9 +32,7 @@ def _ctx(
     ticket_body: str = "Build patient form",
     run_id: str | None = "run-1",
     results: list[RunResult] | None = None,
-) -> tuple[
-    DispatchContext, FakeWorkAdapter, FakeGitAdapter, FakeReviewAdapter, FakeRunner
-]:
+) -> tuple[RunContext, FakeWorkAdapter, FakeGitAdapter, FakeReviewAdapter, FakeRunner]:
     return make_dispatch_context(
         event=PipelineEvent(key="35", trigger_stage=stage),
         ticket_body=ticket_body,
@@ -348,7 +347,7 @@ def _feedback_ctx(
     *,
     issue_handover: HandoverComment | None = None,
     issue_feedback: list[FeedbackItem] | None = None,
-) -> tuple[DispatchContext, FakeRunner]:
+) -> tuple[RunContext, FakeRunner]:
     ctx, _, _, _, runner = make_dispatch_context(
         event=PipelineEvent(key="42", is_feedback=True),
         ticket_body="Build form",
@@ -417,7 +416,7 @@ class TestFeedbackRouting:
 def _proceed_ctx(
     handover: HandoverComment | None = None,
     state_json: str | None = None,
-) -> tuple[DispatchContext, FakeGitAdapter]:
+) -> tuple[RunContext, FakeGitAdapter]:
     ctx, _, git, _, _ = make_dispatch_context(
         event=PipelineEvent(key="42", trigger_stage=None, is_feedback=False),
         ticket_body="Build form",

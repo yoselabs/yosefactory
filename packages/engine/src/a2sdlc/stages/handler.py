@@ -14,7 +14,7 @@ Architecture vision §7.2 load-bearing type #2. Every stage conforms:
   and shifts side-effect emission from ``execute()`` into this method.
 
 The ``ctx`` type (``RunContext``) is not yet formalized in the codebase.
-P2 threads the existing ``DispatchContext`` through ``execute()`` as
+P2 threads the existing ``RunContext`` through ``execute()`` as
 the ctx-equivalent; P4 introduces a narrower ``RunContext`` and the
 Protocol's ``execute(ctx)`` signature tightens.
 
@@ -32,11 +32,9 @@ from a2sdlc.domain.models import StageName, StageStatus
 from a2sdlc.domain.stage_outcome import StageOutcome
 
 if TYPE_CHECKING:
-    # DispatchContext is the ctx today; P4 narrows it to RunContext.
-    # Import guarded to avoid import cycles while the migration is mid-flight.
-    from a2sdlc.pipeline.dispatch import DispatchContext as _RunContext
+    from a2sdlc.domain.run_context import RunContext
 
-    Context = _RunContext
+    Context = RunContext
 else:
     Context = Any
 

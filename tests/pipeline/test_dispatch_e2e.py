@@ -13,7 +13,8 @@ from a2sdlc.adapters.review import Approval
 from a2sdlc.domain.pipeline_event import PipelineEvent
 from a2sdlc.config import ProjectConfig
 from a2sdlc.domain.progress import ProgressState
-from a2sdlc.pipeline.dispatch import DispatchContext, dispatch
+from a2sdlc.domain.run_context import RunContext
+from a2sdlc.pipeline.dispatch import dispatch
 from a2sdlc.domain.handover import FeedbackItem, HandoverComment
 from a2sdlc.domain.models import StageName
 from a2sdlc.domain.run_result import RunResult
@@ -66,7 +67,7 @@ def _feedback_ctx(
     *,
     issue_handover: HandoverComment | None = None,
     issue_feedback: list[FeedbackItem] | None = None,
-) -> tuple[DispatchContext, FakeRunner]:
+) -> tuple[RunContext, FakeRunner]:
     event = PipelineEvent(key="42", is_feedback=True)
     work = FakeWorkAdapter(
         event=event,
@@ -76,7 +77,7 @@ def _feedback_ctx(
         issue_feedback=issue_feedback or [],
     )
     runner = FakeRunner(_DEFAULT_RUN)
-    ctx = DispatchContext(
+    ctx = RunContext(
         work=work,
         git=FakeGitAdapter(),
         review=FakeReviewAdapter(),
@@ -90,7 +91,7 @@ def _feedback_ctx(
     return ctx, runner
 
 
-def _proceed_merge_ctx(pr_number: int = 7) -> tuple[DispatchContext, FakeReviewAdapter]:
+def _proceed_merge_ctx(pr_number: int = 7) -> tuple[RunContext, FakeReviewAdapter]:
     """Build a proceed context at the REVIEW stage with a PR ready to merge."""
     state = json.dumps(
         {
@@ -121,7 +122,7 @@ def _proceed_merge_ctx(pr_number: int = 7) -> tuple[DispatchContext, FakeReviewA
         approvals=[Approval(user="human-reviewer", is_bot=False)]
     )
     runner = FakeRunner(_DEFAULT_RUN)
-    ctx = DispatchContext(
+    ctx = RunContext(
         work=work,
         git=git,
         review=review,

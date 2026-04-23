@@ -25,7 +25,7 @@ from a2sdlc.domain.stage_outcome import StageOutcome
 
 if TYPE_CHECKING:
     from a2sdlc.config import StageConfig
-    from a2sdlc.pipeline.preflight import PreflightOutcome
+    from a2sdlc.domain.run_intent import RunIntent
     from a2sdlc.pipeline.stage_executor import ExecutionResult
 
 COMMIT_MESSAGE = "chore: stage artifacts"
@@ -38,7 +38,7 @@ def commit_and_push_effect() -> CommitAndPush:
 
 
 def agent_failure_outcome(
-    pre: "PreflightOutcome",
+    pre: "RunIntent",
     exec_result: "ExecutionResult",
     stage_config: "StageConfig",
     milestones,  # type: ignore[no-untyped-def]
@@ -69,7 +69,7 @@ def agent_failure_outcome(
 
 
 def no_status_block_outcome(
-    pre: "PreflightOutcome",
+    pre: "RunIntent",
     exec_result: "ExecutionResult",
     stage_config: "StageConfig",
     milestones,  # type: ignore[no-untyped-def]

@@ -16,7 +16,8 @@ from a2sdlc.domain.progress import (
     ProgressState,
     StageEnd,
 )
-from a2sdlc.pipeline.dispatch import DispatchContext, dispatch
+from a2sdlc.domain.run_context import RunContext
+from a2sdlc.pipeline.dispatch import dispatch
 from tests.fakes import (
     FakeGitAdapter,
     FakeReviewAdapter,
@@ -51,7 +52,7 @@ async def test_dispatch_emits_stage_start_and_stage_end() -> None:
     subscriber = RecordingSubscriber()
     progress_state.subscribe(subscriber)
 
-    ctx = DispatchContext(
+    ctx = RunContext(
         work=work,
         git=FakeGitAdapter(),
         review=FakeReviewAdapter(),
@@ -93,7 +94,7 @@ async def test_dispatch_stage_end_success_flag() -> None:
     subscriber = RecordingSubscriber()
     progress_state.subscribe(subscriber)
 
-    ctx = DispatchContext(
+    ctx = RunContext(
         work=work,
         git=FakeGitAdapter(),
         review=FakeReviewAdapter(),
@@ -160,7 +161,7 @@ async def test_stage_end_follows_final_metrics() -> None:
     subscriber = RecordingSubscriber()
     progress_state.subscribe(subscriber)
 
-    ctx = DispatchContext(
+    ctx = RunContext(
         work=work,
         git=FakeGitAdapter(),
         review=FakeReviewAdapter(),

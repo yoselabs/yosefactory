@@ -41,7 +41,7 @@ from a2sdlc.pipeline.gating import (
 
 if TYPE_CHECKING:
     from a2sdlc.domain.pipeline_event import PipelineEvent
-    from a2sdlc.pipeline.dispatch import DispatchContext
+    from a2sdlc.domain.run_context import RunContext
 
 
 @dataclass(frozen=True)
@@ -57,7 +57,7 @@ class ParsedSkip:
     reason: str
 
 
-def parse_event(ctx: "DispatchContext") -> "PipelineEvent | ParsedSkip":
+def parse_event(ctx: "RunContext") -> "PipelineEvent | ParsedSkip":
     """Parse the current dispatch event off the work adapter.
 
     Returns the ``PipelineEvent`` on success, or ``ParsedSkip(reason)``
@@ -72,7 +72,7 @@ def parse_event(ctx: "DispatchContext") -> "PipelineEvent | ParsedSkip":
 
 
 def resolve_routing(
-    ctx: "DispatchContext",
+    ctx: "RunContext",
     event: "PipelineEvent",
     clean_body: str,
 ) -> tuple[str | None, StageName, DispatchResult | None]:
@@ -144,7 +144,7 @@ def resolve_routing(
 
 
 def resolve_intent(
-    ctx: "DispatchContext",
+    ctx: "RunContext",
     event: "PipelineEvent",
 ) -> "RunIntent | DispatchResult":
     """Build the ``RunIntent`` for ``event``, or short-circuit.

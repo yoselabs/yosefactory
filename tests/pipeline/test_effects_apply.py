@@ -2,7 +2,7 @@
 
 Uses the fake adapters from ``tests/fakes.py`` so each arm's adapter
 call can be asserted on the recorded call list. Standalone-invocability
-aligned: we build a ``DispatchContext`` with fakes, populate the
+aligned: we build a ``RunContext`` with fakes, populate the
 per-run state fields, and call ``apply`` directly.
 """
 
@@ -36,8 +36,7 @@ from a2sdlc.domain.stage_outcome import InlineComment
 from a2sdlc.lifecycle.comment import CommentManager
 from a2sdlc.lifecycle.pr import PRLifecycle
 from a2sdlc.pipeline.effects_apply import apply
-from a2sdlc.pipeline.preflight import PreflightOutcome, run_preflight
-from tests.fakes import make_dispatch_context
+from tests.fakes import make_dispatch_context, populate_run_intent
 
 
 def _ctx_with_run_state(stage: StageName = StageName.SPEC) -> Any:
@@ -46,12 +45,11 @@ def _ctx_with_run_state(stage: StageName = StageName.SPEC) -> Any:
         event=event,
         project_root=Path(f"/tmp/test_effects_{stage.value}"),
     )
-    pre = run_preflight(ctx)
-    assert isinstance(pre, PreflightOutcome)
-    ctx.pre = pre
+    intent = populate_run_intent(ctx)
+    ctx.intent = intent
     ctx.pr_lifecycle = PRLifecycle(ctx.review)
-    ctx.comment = CommentManager(ctx.work, pre.event.key)
-    ctx.comment.start(pre.target_stage.value)
+    ctx.comment = CommentManager(ctx.work, intent.event.key)
+    ctx.comment.start(intent.target_stage.value)
     ctx.pr_number = 7
     ctx.run = MagicMock(name="RunHandle")
     return ctx, work, git, review

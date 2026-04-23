@@ -25,9 +25,6 @@ from a2sdlc.pipeline.effects_apply import apply as apply_effects
 from a2sdlc.pipeline.stage_finish import outcome_to_dispatch_tuple
 from a2sdlc.stages import get_stage
 
-# Transitional alias — P4 step 6. Dies in step 9.
-DispatchContext = RunContext
-
 
 async def dispatch(ctx: RunContext) -> DispatchResult:
     """Run one pipeline stage. Returns what happened."""
@@ -48,7 +45,7 @@ async def dispatch(ctx: RunContext) -> DispatchResult:
     if isinstance(intent, DispatchResult):
         return intent
 
-    ctx.pre = ctx.intent = intent
+    ctx.intent = intent
     ctx.pr_lifecycle = PRLifecycle(ctx.review)
     ctx.pr_number = _ensure_draft_pr(ctx, intent)
     ctx.stage_config = load_stage_config(intent.target_stage.value, ctx.config)
@@ -124,4 +121,4 @@ async def _run_attempted_stage(ctx: RunContext, intent: RunIntent) -> DispatchRe
             )
 
 
-__all__ = ["DispatchContext", "dispatch"]
+__all__ = ["dispatch"]

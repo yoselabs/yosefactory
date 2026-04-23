@@ -20,9 +20,11 @@ from a2sdlc.domain.handover import FeedbackItem, HandoverComment
 from a2sdlc.domain.models import StageName
 from a2sdlc.domain.pipeline_event import PipelineEvent
 from a2sdlc.domain.progress import ProgressEvent, ProgressState
-from a2sdlc.domain.run_result import RunResult
+from a2sdlc.domain.run_context import RunContext
+from a2sdlc.domain.run_intent import RunIntent
+from a2sdlc.domain.run_result import DispatchResult, RunResult
 from a2sdlc.domain.stage_outcome import InlineComment
-from a2sdlc.pipeline.dispatch import DispatchContext
+from a2sdlc.pipeline import gating, ingress
 
 
 # ── RecordingSubscriber ───────────────────────────────────────────────
@@ -399,7 +401,7 @@ class FakeStageRunner:
         )
 
 
-# ── DispatchContext factory ───────────────────────────────────────────
+# ── RunContext factory ───────────────────────────────────────────
 
 
 _DEFAULT_COMPLETE_OUTPUT = '```a2sdlc\n{"status": "complete", "output": "Done"}\n```'
@@ -430,10 +432,8 @@ def make_dispatch_context(
     run_id: str | None = "run-1",
     project_root: Path | None = None,
     config: ProjectConfig | None = None,
-) -> tuple[
-    DispatchContext, FakeWorkAdapter, FakeGitAdapter, FakeReviewAdapter, FakeRunner
-]:
-    """Build a DispatchContext with fakes for all adapters.
+) -> tuple[RunContext, FakeWorkAdapter, FakeGitAdapter, FakeReviewAdapter, FakeRunner]:
+    """Build a RunContext with fakes for all adapters.
 
     Returns the context plus each fake so tests can assert on recorded calls.
     """
@@ -449,7 +449,7 @@ def make_dispatch_context(
     review = FakeReviewAdapter()
     runner = FakeRunner(runner_results or [default_run_result()])
     project_root = project_root or Path("/tmp/test")
-    ctx = DispatchContext(
+    ctx = RunContext(
         work=work,
         git=git,
         review=review,
@@ -461,3 +461,28 @@ def make_dispatch_context(
         run_id=run_id,
     )
     return ctx, work, git, review, runner
+
+
+def populate_run_intent(ctx: RunContext) -> RunIntent:
+    """Replacement for the legacy ``run_preflight(ctx)`` test helper.
+
+    Runs ingress directly — ``parse_event`` → closed / ticket-active
+    short-circuits → ``resolve_intent``. Kept here rather than in a
+    production path because only standalone-stage tests need the shape:
+    ``dispatch()`` calls the same primitives at the composition root.
+    """
+    parsed = ingress.parse_event(ctx)
+    if isinstance(parsed, ingress.ParsedSkip):
+        msg = f"parse_event short-circuited: {parsed.reason}"
+        raise AssertionError(msg)
+    event = parsed
+    if event.is_closed:
+        raise AssertionError("parse_event returned closed ticket")
+    if reason := gating.check(ctx, event):
+        msg = f"gating blocked: {reason}"
+        raise AssertionError(msg)
+    intent = ingress.resolve_intent(ctx, event)
+    if isinstance(intent, DispatchResult):
+        msg = f"resolve_intent short-circuited: {intent!r}"
+        raise AssertionError(msg)
+    return intent

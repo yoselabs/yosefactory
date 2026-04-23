@@ -30,10 +30,10 @@ from a2sdlc.pipeline.breakers import check_cost_ceiling, check_review_cycles
 if TYPE_CHECKING:
     from a2sdlc.domain.pipeline_event import PipelineEvent
     from a2sdlc.lifecycle.state import StateManager
-    from a2sdlc.pipeline.dispatch import DispatchContext
+    from a2sdlc.domain.run_context import RunContext
 
 
-def check_ticket_active(ctx: "DispatchContext", event: "PipelineEvent") -> str | None:
+def check_ticket_active(ctx: "RunContext", event: "PipelineEvent") -> str | None:
     """Return ``"ticket_not_active"`` when the ticket is closed/terminal.
 
     Runs before any AI call — a stale delayed event on a resolved
@@ -49,7 +49,7 @@ def check_ticket_active(ctx: "DispatchContext", event: "PipelineEvent") -> str |
 
 
 def check_duplicate_run_id(
-    ctx: "DispatchContext",
+    ctx: "RunContext",
     state_mgr: "StateManager",
     run_id: str | None,
 ) -> str | None:
@@ -64,7 +64,7 @@ def check_duplicate_run_id(
     return None
 
 
-def check(ctx: "DispatchContext", event: "PipelineEvent") -> str | None:
+def check(ctx: "RunContext", event: "PipelineEvent") -> str | None:
     """Run the pre-intent admission checks; return the first block reason.
 
     At this stage of P4, only ``check_ticket_active`` can run — the

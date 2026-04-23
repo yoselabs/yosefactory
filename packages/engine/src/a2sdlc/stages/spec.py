@@ -33,7 +33,7 @@ from a2sdlc.stages._shared import (
 )
 
 if TYPE_CHECKING:
-    from a2sdlc.pipeline.dispatch import DispatchContext
+    from a2sdlc.domain.run_context import RunContext
 
 _DEFAULT_TOOLS = [
     "Bash",
@@ -69,18 +69,18 @@ class SpecStage:
         allowed_tools=list(_DEFAULT_TOOLS),
     )
 
-    def preconditions(self, ctx: "DispatchContext") -> BlockReason | None:
+    def preconditions(self, ctx: "RunContext") -> BlockReason | None:
         """Pure precondition check — None in P2 (preflight + breakers still live in pipeline/).
 
         P4 migrates preflight's per-stage gating here.
         """
         return None
 
-    def effects(self, ctx: "DispatchContext", outcome: StageOutcome) -> list[Effect]:
+    def effects(self, ctx: "RunContext", outcome: StageOutcome) -> list[Effect]:
         """Return the effect list ``execute()`` prepared on the outcome."""
         return list(outcome.prepared_effects)
 
-    async def execute(self, ctx: "DispatchContext") -> StageOutcome:
+    async def execute(self, ctx: "RunContext") -> StageOutcome:
         """Run the SPEC stage end-to-end against the agent.
 
         Reads per-run state from ``ctx`` (pre, pr_lifecycle, comment, pr_number,
@@ -88,7 +88,7 @@ class SpecStage:
         ``StageOutcome`` carrying status, output, stats, blocked/error, and a
         ``prepared_effects`` list that dispatch applies via the interpreter.
         """
-        pre = _require(ctx.pre, "pre")
+        pre = _require(ctx.intent, "intent")
         stage_config = _require(ctx.stage_config, "stage_config")
 
         # 1. Assemble prompts — SPEC gets the self-answer prefix when requested.

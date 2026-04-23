@@ -1,7 +1,7 @@
 """Orchestrate a dispatch run under a Telemetry + quality-gate.
 
 Pulls the tracking orchestration out of the CLI. Takes a zero-arg async
-``dispatch_fn`` (caller has already bound the ``DispatchContext``) so this
+``dispatch_fn`` (caller has already bound the ``RunContext``) so this
 module stays off the pipeline → evaluation dependency path.
 """
 

@@ -2,7 +2,7 @@
 
 Pure data type. Produced by ``pipeline.ingress.resolve_intent`` once
 event parsing and routing have settled. Consumed by stage handlers via
-``ctx.intent`` (alias ``ctx.pre`` during the P4 transition).
+``ctx.intent``.
 
 ``state_mgr`` is typed as ``Any`` to keep ``domain`` free of any
 runtime dependency on ``lifecycle`` — matching the precedent set by
