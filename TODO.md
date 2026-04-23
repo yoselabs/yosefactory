@@ -156,7 +156,7 @@ Fixed this session (2026-04-21):
 
 ## Architecture follow-ups (from P8 — 2026-04-23)
 
-- [ ] **`stages/` is heavier than `docs/architecture.md` §2 claims.** The doc says stages import only `domain/` + `config.py` ("data, not behavior"), but `stages/{spec,implement,review}.py` each import from 5 packages (assembly, config, domain, pipeline, stages) and had to be added to the cap-test `EXEMPT` set in `tests/architecture/test_composition_cap.py`. Decide: update the doc to name stage handlers as per-stage composition roots, OR split `StageExecutor` into a protocol in `domain/` + impl in `pipeline/` so stages only import the protocol. The second option would also let `ExecutionResult` move to `domain/` and retire the four `stages.* -> a2sdlc.pipeline.stage_executor` `ignore_imports` entries in `pyproject.toml`.
+- [x] **`stages/` is heavier than `docs/architecture.md` §2 claims.** Fixed 2026-04-23 (7d25cfb) via ctx-based injection: ExecutionResult moved to domain/, StageExecutor instantiated in pipeline/dispatch and exposed through RunContext.stage_executor. Stages dropped from cap-test EXEMPT; four `stages.* -> pipeline.stage_executor` whitelists retired. Each stage now imports from 4 packages.
 
 ## Test infrastructure follow-ups
 
