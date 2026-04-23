@@ -64,7 +64,17 @@ def _ensure_draft_pr(ctx: RunContext, intent: RunIntent) -> int | None:
     seed an empty commit, push, then open.
     """
     pr_number = intent.state.pr_number if intent.state else None
+    ctx.logger.info(
+        "dispatch.ensure_draft_pr.entry",
+        extra={
+            "target_stage": intent.target_stage.value,
+            "state_present": intent.state is not None,
+            "state_pr_number": pr_number,
+            "event_pr_number": intent.event.pr_number,
+        },
+    )
     if intent.target_stage == StageName.SPEC and pr_number is None:
+        ctx.logger.info("dispatch.ensure_draft_pr.creating")
         ctx.git.commit_empty(f"chore(a2sdlc): open session for {intent.event.key}")
         ctx.git.push()
         pr_number = ctx.pr_lifecycle.create_draft(
