@@ -141,7 +141,13 @@ class TestParseEventLabels:
         assert result.key == "42"
 
     def test_issue_labeled_review_resolves_pr(self, tmp_path: Path) -> None:
-        """stage:review on an issue should look up the PR from agent branch."""
+        """stage:review on an issue should look up the PR from agent branch.
+
+        The head filter MUST be ``owner:branch`` (per GitHub API); passing
+        just the branch silently disables the filter and allows any open
+        PR to match — observed cross-ticket contamination in smoke #42
+        where agent/42's REVIEW dispatch resolved PR #29 (agent/28).
+        """
         path = self._write_event(
             tmp_path,
             {
@@ -153,8 +159,10 @@ class TestParseEventLabels:
         )
         adapter = _make_work_adapter()
         mock_repo = MagicMock()
+        mock_repo.owner.login = "iorlas"
         mock_pr = MagicMock()
         mock_pr.number = 42
+        mock_pr.head.ref = "agent/16"
         mock_repo.get_pulls.return_value = [mock_pr]
         adapter._repo = mock_repo
 
@@ -166,7 +174,38 @@ class TestParseEventLabels:
         assert result.trigger_stage == StageName.REVIEW
         assert result.pr_number == 42
         assert result.key == "16"
-        mock_repo.get_pulls.assert_called_once_with(state="open", head="agent/16")
+        mock_repo.get_pulls.assert_called_once_with(
+            state="open", head="iorlas:agent/16"
+        )
+
+    def test_issue_labeled_review_skips_wrong_branch_pr(self, tmp_path: Path) -> None:
+        """Defence-in-depth — if the API returns a PR whose head ref doesn't
+        match (should never happen with a properly-formed filter but has in
+        practice), the helper must NOT accept it.
+        """
+        path = self._write_event(
+            tmp_path,
+            {
+                "action": "labeled",
+                "label": {"name": "stage:review"},
+                "issue": {"number": 42, "labels": [{"name": "stage:review"}]},
+                "sender": {"type": "User"},
+            },
+        )
+        adapter = _make_work_adapter()
+        mock_repo = MagicMock()
+        mock_repo.owner.login = "iorlas"
+        stale_pr = MagicMock()
+        stale_pr.number = 29
+        stale_pr.head.ref = "agent/28"  # wrong ref — must not be picked up
+        mock_repo.get_pulls.return_value = [stale_pr]
+        adapter._repo = mock_repo
+
+        with patch.dict(
+            os.environ, {"GITHUB_EVENT_PATH": path, "GITHUB_EVENT_NAME": "issues"}
+        ):
+            with pytest.raises(SkipEvent, match="no PR found"):
+                adapter.parse_event()
 
     def test_issue_labeled_review_no_pr_raises_skip(self, tmp_path: Path) -> None:
         """stage:review on an issue with no PR should skip."""

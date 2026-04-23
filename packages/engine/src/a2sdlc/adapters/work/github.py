@@ -255,10 +255,16 @@ class GitHubWorkAdapter:
         )
 
     def _get_pr_for_branch(self, branch: str) -> int | None:
-        """Find an open PR by head branch name. Returns PR number or None."""
-        pulls = self._repo.get_pulls(state="open", head=branch)
+        """Find an open PR by head branch name. Returns PR number or None.
+
+        ``head`` must be ``owner:branch`` per GitHub API — just ``branch``
+        silently disables the filter (cross-ticket contamination in #42).
+        """
+        owner = self._repo.owner.login
+        pulls = self._repo.get_pulls(state="open", head=f"{owner}:{branch}")
         for pr in pulls:
-            return pr.number
+            if pr.head.ref == branch:
+                return pr.number
         return None
 
     # ── ticket access ────────────────────────────────────────────────
