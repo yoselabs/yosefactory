@@ -1,7 +1,7 @@
 ---
 title: "P3 — Effects ADT + interpreter"
 type: spec
-status: Draft
+status: Executed
 owner: "@iorlas"
 created: 2026-04-25
 updated: 2026-04-25
@@ -173,6 +173,17 @@ non-removable I/O, since the agent output drives the outcome).
    `MarkBlocked` + `CommentFinalize` on the blocked path. Remove the
    fields; dispatch reads blocked-ness from the outcome's status +
    merged slots.
+
+   **Execution reshape.** The plan assumed `MarkBlocked` covered every
+   non-advance case. MergeStage's HUMAN-gate wait breaks that: the
+   ticket is *paused for a human*, not *blocked on the platform* — no
+   `MarkBlocked` emitted. Added a new first-class arm
+   `AwaitHumanDecision(kind, reason)` as the HITL primitive (future
+   home for dashboard notifications, Slack routing, SLA tracking).
+   Dispatch's `_pipeline_pause_reason(effects)` scans for
+   `MarkBlocked | AwaitHumanDecision`. SPEC / IMPLEMENT QUESTIONS
+   paths also emit it alongside `MarkNeedsInput`, unifying the "human
+   must decide for the pipeline to advance" concept across stages.
 
 ### D. Type tightening + closure
 
