@@ -56,6 +56,9 @@ def _populate_per_run_state(ctx: Any, output: str = _COMPLETE_OUTPUT) -> RunInte
     ctx.run = MagicMock(name="RunHandle")
     # Silence the runner fixture — replace with a single COMPLETE result.
     ctx.runner = FakeRunner([default_run_result(output)])
+    from a2sdlc.pipeline.stage_executor import StageExecutor  # noqa: PLC0415
+
+    ctx.stage_executor = StageExecutor(ctx.runner)
     return pre
 
 
@@ -89,6 +92,9 @@ async def test_spec_stage_execute_failure_returns_blocked_outcome() -> None:
     )
     _populate_per_run_state(ctx)
     ctx.runner = FakeRunner([RunResult(success=False, error="timeout")])
+    from a2sdlc.pipeline.stage_executor import StageExecutor  # noqa: PLC0415
+
+    ctx.stage_executor = StageExecutor(ctx.runner)
 
     stage = SpecStage()
     outcome = await stage.execute(ctx)
@@ -192,6 +198,9 @@ async def test_spec_stage_failure_path_emits_blocked_effects() -> None:
     )
     _populate_per_run_state(ctx)
     ctx.runner = FakeRunner([RunResult(success=False, error="timeout")])
+    from a2sdlc.pipeline.stage_executor import StageExecutor  # noqa: PLC0415
+
+    ctx.stage_executor = StageExecutor(ctx.runner)
 
     stage = SpecStage()
     outcome = await stage.execute(ctx)

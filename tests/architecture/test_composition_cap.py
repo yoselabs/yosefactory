@@ -6,19 +6,12 @@ import ast
 from pathlib import Path
 
 ROOT = Path(__file__).parents[2] / "packages/engine/src/a2sdlc"
-# Designated composition roots: pipeline hub, CLI entry points, and the
-# per-stage handlers. Stage modules (spec/implement/review) each act as a
-# mini composition root for their stage — they wire prompts, pipeline's
-# StageExecutor, domain/config types, observability formatting, and the
-# stage registry together. The same "narrow import footprint" rule does
-# not apply to them.
+# Designated composition roots: the pipeline hub + CLI subcommand
+# entry points. Everything else must keep a narrow import footprint.
 EXEMPT = {
     "pipeline/dispatch.py",
     "cli/dispatch.py",
     "cli/run_stage.py",
-    "stages/spec.py",
-    "stages/implement.py",
-    "stages/review.py",
 }
 CAP = 5
 

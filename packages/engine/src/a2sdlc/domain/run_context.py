@@ -59,6 +59,11 @@ class RunContext:
     pr_number: int | None = None
     stage_config: Any = None
     run: Any = None
+    # Pre-built ``pipeline.stage_executor.StageExecutor`` bound to
+    # ``runner`` — populated by dispatch before handler.execute. Stage
+    # handlers call ``ctx.stage_executor.run(...)`` so they don't need
+    # to import from ``pipeline/`` directly.
+    stage_executor: Any = None
 
 
 __all__ = ["RunContext"]

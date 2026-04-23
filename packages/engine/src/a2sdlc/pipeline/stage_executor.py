@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Any
 
 from a2sdlc.adapters.runner import StageRunner
 from a2sdlc.config import StageConfig
-from a2sdlc.domain.models import StageName, StageResult, extract_result
+from a2sdlc.domain.models import StageName, extract_result
 from a2sdlc.domain.progress import ProgressState
+from a2sdlc.domain.stage_execution import ExecutionResult
 from a2sdlc.domain.stats import StageRunStats
+
+__all__ = ["StageExecutor", "ExecutionResult"]
 
 _FOLLOWUP_PROMPT = (
     "Work phase complete. Provide your structured handover now. "
@@ -19,19 +21,6 @@ _FOLLOWUP_PROMPT = (
 )
 
 _MAX_FOLLOWUP_ATTEMPTS = 3
-
-
-@dataclass
-class ExecutionResult:
-    """Result of a full stage execution, including any follow-up rounds."""
-
-    output: str
-    stage_result: StageResult | None
-    stats: StageRunStats
-    success: bool
-    error: str | None = None
-    milestones: list[Any] = field(default_factory=list)
-    progress: ProgressState | None = None
 
 
 class StageExecutor:

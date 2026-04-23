@@ -46,11 +46,6 @@ ignore_imports = [
     "a2sdlc.middleware.idempotency -> a2sdlc.gating",
     # Ingress orchestrates pre-stage breakers — peer-tier-B sanctioned call.
     "a2sdlc.ingress -> a2sdlc.gating",
-    # Stage handlers receive StageExecutor/ExecutionResult from the pipeline layer.
-    "a2sdlc.stages.spec -> a2sdlc.pipeline.stage_executor",
-    "a2sdlc.stages.implement -> a2sdlc.pipeline.stage_executor",
-    "a2sdlc.stages.review -> a2sdlc.pipeline.stage_executor",
-    "a2sdlc.stages._shared -> a2sdlc.pipeline.stage_executor",
 ]
 
 # Peer-tier-A mutual isolation: lifecycle/assembly/evaluation/observability.

@@ -51,6 +51,9 @@ def _populate_per_run_state(ctx: Any, output: str) -> RunIntent:
     ctx.stage_config = load_stage_config(pre.target_stage.value, ctx.config)
     ctx.run = MagicMock(name="RunHandle")
     ctx.runner = FakeRunner([default_run_result(output)])
+    from a2sdlc.pipeline.stage_executor import StageExecutor  # noqa: PLC0415
+
+    ctx.stage_executor = StageExecutor(ctx.runner)
     return pre
 
 
@@ -113,6 +116,9 @@ async def test_review_stage_failure_emits_blocked_effects_no_post_review() -> No
     )
     _populate_per_run_state(ctx, _APPROVED_OUTPUT)
     ctx.runner = FakeRunner([RunResult(success=False, error="timeout")])
+    from a2sdlc.pipeline.stage_executor import StageExecutor  # noqa: PLC0415
+
+    ctx.stage_executor = StageExecutor(ctx.runner)
 
     stage = ReviewStage()
     outcome = await stage.execute(ctx)
@@ -178,6 +184,9 @@ async def test_review_stage_execute_failure_returns_blocked_outcome() -> None:
     )
     _populate_per_run_state(ctx, _APPROVED_OUTPUT)
     ctx.runner = FakeRunner([RunResult(success=False, error="timeout")])
+    from a2sdlc.pipeline.stage_executor import StageExecutor  # noqa: PLC0415
+
+    ctx.stage_executor = StageExecutor(ctx.runner)
 
     stage = ReviewStage()
     outcome = await stage.execute(ctx)

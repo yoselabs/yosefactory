@@ -23,6 +23,7 @@ from a2sdlc.effects.apply import apply as apply_effects
 from a2sdlc.middleware.idempotency import with_idempotency
 from a2sdlc.middleware.telemetry import with_telemetry
 from a2sdlc.effects.stage_finish import outcome_to_dispatch_result
+from a2sdlc.pipeline.stage_executor import StageExecutor
 from a2sdlc.stages import get_stage
 
 
@@ -49,6 +50,7 @@ async def dispatch(ctx: RunContext) -> DispatchResult:
     ctx.pr_lifecycle = PRLifecycle(ctx.review)
     ctx.pr_number = _ensure_draft_pr(ctx, intent)
     ctx.stage_config = load_stage_config(intent.target_stage.value, ctx.config)
+    ctx.stage_executor = StageExecutor(ctx.runner)
     _wire_comment_and_subscriber(ctx, intent)
 
     stack = with_idempotency(with_telemetry(run_stage))

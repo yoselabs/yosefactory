@@ -26,7 +26,6 @@ from a2sdlc.domain.models import (
 )
 from a2sdlc.domain.progress_format import format_final
 from a2sdlc.domain.stage_outcome import StageOutcome
-from a2sdlc.pipeline.stage_executor import StageExecutor
 from a2sdlc.stages._shared import (
     agent_failure_outcome,
     commit_and_push_effect,
@@ -97,7 +96,7 @@ class ReviewStage:
                 pr_context = pr_lifecycle.read_context(pr_number)
                 user_prompt = f"{pre.clean_body}\n\n{pr_context}"
 
-        executor = StageExecutor(ctx.runner)
+        executor = ctx.stage_executor
         exec_result = await executor.run(
             user_prompt=user_prompt,
             system_prompt=system_prompt,

@@ -26,7 +26,7 @@ from a2sdlc.domain.stage_outcome import StageOutcome
 if TYPE_CHECKING:
     from a2sdlc.config import StageConfig
     from a2sdlc.domain.run_intent import RunIntent
-    from a2sdlc.pipeline.stage_executor import ExecutionResult
+    from a2sdlc.domain.stage_execution import ExecutionResult
 
 COMMIT_MESSAGE = "chore: stage artifacts"
 ARTIFACT_PATHS = (".a2sdlc/state/state.json", "docs/")

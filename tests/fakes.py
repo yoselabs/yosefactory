@@ -450,6 +450,8 @@ def make_dispatch_context(
     review = FakeReviewAdapter()
     runner = FakeRunner(runner_results or [default_run_result()])
     project_root = project_root or Path("/tmp/test")
+    from a2sdlc.pipeline.stage_executor import StageExecutor  # noqa: PLC0415
+
     ctx = RunContext(
         work=work,
         git=git,
@@ -460,6 +462,7 @@ def make_dispatch_context(
         project_root=project_root,
         logger=logging.getLogger("test"),
         run_id=run_id,
+        stage_executor=StageExecutor(runner),
     )
     return ctx, work, git, review, runner
 
