@@ -9,24 +9,16 @@ unconditionally once a stage is attempted).
 
 from __future__ import annotations
 
-import logging
 import uuid
-from collections.abc import Callable
-from dataclasses import dataclass
-from pathlib import Path
 
-from a2sdlc.adapters.git import GitAdapter
-from a2sdlc.adapters.review import ReviewAdapter
-from a2sdlc.adapters.runner import StageRunner
-from a2sdlc.adapters.work import WorkAdapter
-from a2sdlc.config import ProjectConfig, StageConfig, load_stage_config
+from a2sdlc.config import load_stage_config
 from a2sdlc.domain.effects import AwaitHumanDecision, Effect, MarkBlocked
 from a2sdlc.domain.models import StageName
-from a2sdlc.domain.progress import ProgressState, Subscriber
 from a2sdlc.domain.progress_format import context_window_for_model
+from a2sdlc.domain.run_context import RunContext
 from a2sdlc.domain.run_result import DispatchResult
 from a2sdlc.domain.stage_outcome import StageOutcome
-from a2sdlc.evaluation.telemetry import NoopTelemetry, RunHandle, Telemetry
+from a2sdlc.evaluation.telemetry import NoopTelemetry, Telemetry
 from a2sdlc.lifecycle.comment import CommentManager
 from a2sdlc.lifecycle.pr import PRLifecycle
 from a2sdlc.pipeline import gating, ingress
@@ -34,43 +26,10 @@ from a2sdlc.pipeline.effects_apply import apply as apply_effects
 from a2sdlc.pipeline.preflight import PreflightOutcome
 from a2sdlc.stages import get_stage
 
-
-@dataclass
-class DispatchContext:
-    """Per-dispatch run context.
-
-    Carries external dependencies (adapters, runner, config, logger) and,
-    once dispatch has built them, the per-run orchestration state that
-    ``StageHandler.execute`` needs: preflight outcome, PR lifecycle,
-    comment manager, PR number, stage config, telemetry run handle.
-
-    The per-run fields are ``None`` before dispatch populates them —
-    they're only guaranteed live once ``_run_attempted_stage`` enters
-    the telemetry envelope. P4 narrows this into a dedicated
-    ``RunContext`` type; in P2/P3 the fat context is the transitional
-    home (see ``stages/handler.py`` Protocol comment).
-    """
-
-    work: WorkAdapter
-    git: GitAdapter
-    review: ReviewAdapter
-    runner: StageRunner
-    progress_state: ProgressState
-    config: ProjectConfig
-    project_root: Path
-    logger: logging.Logger
-    run_id: str | None = None
-    make_comment_subscriber: Callable[[CommentManager], Subscriber] | None = None
-    telemetry: "Telemetry | None" = (
-        None  # optional for back-compat; CLI always supplies
-    )
-    # ── per-run orchestration state (populated by dispatch before handler.execute) ──
-    pre: PreflightOutcome | None = None
-    pr_lifecycle: PRLifecycle | None = None
-    comment: CommentManager | None = None
-    pr_number: int | None = None
-    stage_config: StageConfig | None = None
-    run: RunHandle | None = None
+# Transitional alias — P4 step 6. ``DispatchContext`` was renamed +
+# relocated to ``domain.run_context.RunContext``; the alias avoids a
+# big-bang rename of every test file. Dies in step 9.
+DispatchContext = RunContext
 
 
 async def dispatch(ctx: DispatchContext) -> DispatchResult:
