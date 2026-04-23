@@ -10,10 +10,8 @@ from a2sdlc.config import StageConfig
 from a2sdlc.domain.block_reason import BlockReason
 from a2sdlc.domain.effects import (
     CommentFinalize,
-    CommitAndPush,
     Effect,
     LogMetric,
-    MarkBlocked,
     MarkNeedsInput,
     SetCurrentStage,
     StateWrite,
@@ -24,9 +22,14 @@ from a2sdlc.domain.models import (
     TicketState,
     strip_status_block,
 )
-from a2sdlc.domain.progress_format import format_error, format_final
+from a2sdlc.domain.progress_format import format_final
 from a2sdlc.domain.stage_outcome import StageOutcome
 from a2sdlc.pipeline.stage_executor import StageExecutor
+from a2sdlc.stages._shared import (
+    agent_failure_outcome,
+    commit_and_push_effect,
+    no_status_block_outcome,
+)
 
 if TYPE_CHECKING:
     from a2sdlc.pipeline.dispatch import DispatchContext
@@ -43,9 +46,6 @@ _DEFAULT_TOOLS = [
     "Agent",
     "Skill",
 ]
-
-_COMMIT_MESSAGE = "chore: stage artifacts"
-_ARTIFACT_PATHS = (".a2sdlc/state/state.json", "docs/")
 
 
 class ImplementStage:
@@ -111,62 +111,16 @@ class ImplementStage:
             exec_result.progress.context_window if exec_result.progress else None
         )
 
-        commit_and_push = CommitAndPush(message=_COMMIT_MESSAGE, paths=_ARTIFACT_PATHS)
-
         # Failure path.
         if not exec_result.success:
-            error = exec_result.error or "unknown"
-            error_comment = format_error(
-                error,
-                stage=pre.target_stage.value,
-                stats=exec_result.stats,
-                milestones=milestones,
-                model=stage_config.model,
-                branch=pre.branch,
-                max_turns=stage_config.max_turns,
-                context_window=ctx_window,
-            )
-            effects: list[Effect] = [
-                CommentFinalize(body=error_comment),
-                commit_and_push,
-                MarkBlocked(reason=error),
-            ]
-            return StageOutcome(
-                output_text=exec_result.output,
-                stats=exec_result.stats,
-                blocked=True,
-                error=error,
-                prepared_effects=effects,
+            return agent_failure_outcome(
+                pre, exec_result, stage_config, milestones, ctx_window
             )
 
         # No status block.
         if stage_result is None:
-            partial = exec_result.output[:2000]
-            no_status_footer = format_final(
-                partial,
-                stage=pre.target_stage.value,
-                stats=exec_result.stats,
-                milestones=milestones,
-                model=stage_config.model,
-                branch=pre.branch,
-                max_turns=stage_config.max_turns,
-                context_window=ctx_window,
-            )
-            error_msg = (
-                f"⚠️ No status block in **{pre.target_stage.value}** output."
-                f"\n\n{partial}\n\n{no_status_footer}"
-            )
-            effects = [
-                CommentFinalize(body=error_msg),
-                commit_and_push,
-                MarkBlocked(reason="no status block in output"),
-            ]
-            return StageOutcome(
-                output_text=exec_result.output,
-                stats=exec_result.stats,
-                blocked=True,
-                error="no_status_block",
-                prepared_effects=effects,
+            return no_status_block_outcome(
+                pre, exec_result, stage_config, milestones, ctx_window
             )
 
         # Success path.
@@ -225,7 +179,7 @@ class ImplementStage:
         effects: list[Effect] = [
             CommentFinalize(body=final_comment),
             StateWrite(state=new_state),
-            commit_and_push,
+            commit_and_push_effect(),
         ]
         if next_st is not None:
             effects.append(SetCurrentStage(stage=next_st))
