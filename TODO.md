@@ -132,6 +132,18 @@ Fixed this session (2026-04-21):
 - [x] `mark_pr_ready` uses GraphQL, not REST PATCH (43f3832)
 - [x] `set_done_label` replaces prior stage labels (f93cc0e)
 
+## Gates via labels, directives for overrides (design — 2026-04-23)
+
+- [ ] Move the common per-ticket gate controls onto **labels** rather than body directives. Labels are a first-class cross-tracker concept (GitHub, Jira, GitLab all have them) and they surface in the ticket UI without forcing the user to type bracket syntax. Proposed mapping — replaces the current `[a2sdlc gate:merge=human]` / `[a2sdlc gate:spec=human]` surface for the 90% case:
+  - `gate:merge=human` / `gate:merge=auto` (label values `gate:merge:human`, `gate:merge:auto`)
+  - `gate:spec=human` / `gate:spec=auto`
+  - Anything tracker-native (priority, component) stays on labels already.
+- [ ] Keep `[a2sdlc ...]` bracket directives for the **override** cases that don't map cleanly to a finite label set: `base=feature/xyz` (free-text branch name), `model=claude-opus-4-7` (free-text), future knobs like `timeout=600s`. Directives stay the low-friction escape hatch.
+- [ ] Migration plan when we pick this up:
+  1. Parser learns `label → directive` precedence: label-derived gate is authoritative if present; bracket directive is the override only when no matching label exists.
+  2. Update `docs/test_plan.md` scenarios 4 + 6 ticket shape to use labels by default.
+  3. Keep bracket parsing intact — we want zero migration pain for anyone already using it.
+
 ## Bugs caught in smoke #36 (scenario 4 retry, 2026-04-23)
 
 - [ ] **APPROVE reviews route to IMPLEMENT as if they were CHANGES_REQUESTED.** `ingress/feedback_routing.py:resolve_target_stage` only inspects the current pipeline stage, not the review verdict. When a human clears a `gate:merge=human` gate by submitting an APPROVE review, the engine fires `pull_request_review`, the routing promotes it to IMPLEMENT feedback, another review cycle fires, and the pipeline never actually progresses to MERGE. In smoke #36 this burned ~$1.20 + ~5 min in a spurious IMPLEMENT → REVIEW loop before I manually merged the PR to break out. **Fix:** inspect the review state in the event; skip the IMPLEMENT route when `state == "approved"` and instead surface the approval to the MERGE gate check.
