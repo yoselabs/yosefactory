@@ -23,7 +23,12 @@ from a2sdlc.domain.models import GateConfig, StageName
 from a2sdlc.domain.run_result import DispatchResult
 from a2sdlc.lifecycle.state import StateManager
 from a2sdlc.lifecycle.state_storage import GitFileStateStorage
-from a2sdlc.pipeline.breakers import check_cost_ceiling, check_review_cycles
+from a2sdlc.pipeline.gating import (
+    check_cost_ceiling,
+    check_duplicate_run_id,
+    check_review_cycles,
+    check_ticket_active,
+)
 from a2sdlc.pipeline.ingress import resolve_routing as _resolve_routing
 
 if TYPE_CHECKING:
@@ -78,12 +83,8 @@ def run_preflight(ctx: "DispatchContext") -> PreflightResult:
         return DispatchResult(stage=StageName.MERGE, error="ticket_closed")
 
     # 1.6 Skip stages on terminal tickets (stale delayed events, etc.).
-    if not ctx.work.is_ticket_active(event.key):
-        ctx.logger.info(
-            "dispatch.skip",
-            extra={"reason": "ticket_not_active", "key": event.key},
-        )
-        return DispatchResult(stage=StageName.SPEC, error="ticket_not_active")
+    if reason := check_ticket_active(ctx, event):
+        return DispatchResult(stage=StageName.SPEC, error=reason)
 
     # 2. Ticket body + directives
     ticket_body = ctx.work.get_ticket(event.key)
@@ -126,9 +127,8 @@ def run_preflight(ctx: "DispatchContext") -> PreflightResult:
     # 4. Read state + idempotency check (branch is now checked out).
     state = state_mgr.read_state()
 
-    if ctx.run_id and state_mgr.check_idempotency(ctx.run_id):
-        ctx.logger.info("dispatch.duplicate_run_id", extra={"run_id": ctx.run_id})
-        return DispatchResult(stage=target_stage, error="duplicate_run_id")
+    if reason := check_duplicate_run_id(ctx, state_mgr, ctx.run_id):
+        return DispatchResult(stage=target_stage, error=reason)
 
     # 5. Circuit breakers — review-cycle loop + per-ticket cost ceiling.
     stage_cfg = load_stage_config(target_stage.value, ctx.config)
