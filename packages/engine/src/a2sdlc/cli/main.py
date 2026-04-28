@@ -5,6 +5,7 @@ from __future__ import annotations
 import typer
 
 from a2sdlc.cli.dispatch import dispatch_command
+from a2sdlc.cli.ensure_gate_labels import ensure_gate_labels_command
 from a2sdlc.cli.run_stage import run_stage_command
 
 app = typer.Typer(
@@ -20,6 +21,10 @@ app.command("dispatch", help="Run pipeline dispatch (GitHub Actions entry).")(
 app.command("run-stage", help="Run a single pipeline stage against a local repo.")(
     run_stage_command
 )
+app.command(
+    "ensure-gate-labels",
+    help="Create gate:* labels on a GitHub repo (one-time consumer onboarding).",
+)(ensure_gate_labels_command)
 
 
 def main(argv: list[str] | None = None) -> None:

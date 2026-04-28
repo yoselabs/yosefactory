@@ -410,3 +410,68 @@ class TestNotifyStageFailure:
 
         mock_notify.assert_called_once()
         assert "RuntimeError" in mock_notify.call_args[0][1]
+
+
+# ── ensure-gate-labels CLI ───────────────────────────────────────────
+
+
+@pytest.mark.unit
+class TestEnsureGateLabelsCommand:
+    def test_invokes_helper_and_echoes_created(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from a2sdlc.cli.ensure_gate_labels import ensure_gate_labels_command
+
+        adapter = MagicMock()
+        with (
+            patch(
+                "a2sdlc.adapters.work.github.GitHubWorkAdapter.from_token",
+                return_value=adapter,
+            ),
+            patch(
+                "a2sdlc.adapters.work.gate_labels.ensure_gate_labels",
+                return_value=["gate:merge:human"],
+            ) as helper,
+        ):
+            ensure_gate_labels_command(repo="o/r", token="tok")
+
+        helper.assert_called_once_with(adapter._repo)
+        assert "created: gate:merge:human" in capsys.readouterr().out
+
+    def test_up_to_date_message_when_nothing_created(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from a2sdlc.cli.ensure_gate_labels import ensure_gate_labels_command
+
+        adapter = MagicMock()
+        with (
+            patch(
+                "a2sdlc.adapters.work.github.GitHubWorkAdapter.from_token",
+                return_value=adapter,
+            ),
+            patch(
+                "a2sdlc.adapters.work.gate_labels.ensure_gate_labels",
+                return_value=[],
+            ),
+        ):
+            ensure_gate_labels_command(repo="o/r", token="tok")
+
+        assert "up-to-date" in capsys.readouterr().out
+
+    def test_missing_repo_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import typer
+
+        from a2sdlc.cli.ensure_gate_labels import ensure_gate_labels_command
+
+        monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
+        with pytest.raises(typer.BadParameter):
+            ensure_gate_labels_command(repo=None, token="tok")
+
+    def test_missing_token_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import typer
+
+        from a2sdlc.cli.ensure_gate_labels import ensure_gate_labels_command
+
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        with pytest.raises(typer.BadParameter):
+            ensure_gate_labels_command(repo="o/r", token=None)

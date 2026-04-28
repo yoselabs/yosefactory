@@ -138,9 +138,9 @@ Fixed this session (2026-04-21):
 - [x] Keep `[a2sdlc ...]` bracket directives for **override** free-text knobs (`base=`, `model=`). Implemented as part of phase 1 — body-only fields preserved through `merge_directives`.
 - [x] Live smoke validation 2026-04-28 (smoke #47): ticket filed with `agent` + `gate:merge:human` labels, no body directive. Engine opened draft PR #48, paused at REVIEW with `to:null`, my APPROVE routed direct to MERGE, engine squash-merged in 4s, state.json stripped from main. Label-form gate fully honored end-to-end.
 - [x] Pre-create the four `gate:*` labels on the smoke repo (done 2026-04-28).
-- [ ] Phase 2 follow-ups still open:
-  - [ ] Update `docs/test_plan.md` scenarios 4 + 6 to recommend label form as the primary path; keep bracket form mentioned as fallback.
-  - [ ] Document for consumers that the four `gate:*` labels need to exist on the repo (or have the engine auto-create on first use).
+- [x] Phase 2 follow-ups:
+  - [x] Update `docs/test_plan.md` scenarios 4 + 6 to recommend label form as the primary path; keep bracket form mentioned as fallback. (439b300)
+  - [x] Consumer onboarding: `a2sdlc ensure-gate-labels` CLI subcommand creates the four `gate:*` labels idempotently. Run once per consumer repo with `GITHUB_TOKEN` + `GITHUB_REPOSITORY` set. Engine dispatch hot path does NOT auto-create — explicit avoids per-run API cost.
 
 ## SPEC-stage prompt leaks surfaced in smoke #38 (2026-04-23)
 
