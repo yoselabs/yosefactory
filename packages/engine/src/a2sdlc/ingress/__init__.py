@@ -24,7 +24,11 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from a2sdlc.config import load_stage_config
-from a2sdlc.domain.directives import parse_directives
+from a2sdlc.domain.directives import (
+    merge_directives,
+    parse_directives,
+    parse_label_directives,
+)
 from a2sdlc.domain.exceptions import BlockedError, SkipEvent
 from a2sdlc.domain.models import GateConfig, StageName
 from a2sdlc.domain.run_intent import RunIntent
@@ -153,7 +157,14 @@ def resolve_intent(
     to have resolved ``intent.state_mgr`` first.
     """
     ticket_body = ctx.work.get_ticket(event.key)
-    directives, clean_body = parse_directives(ticket_body)
+    body_directives, clean_body = parse_directives(ticket_body)
+    # Re-read labels fresh each dispatch — webhook event payload only
+    # carries the *triggering* label, not the current set. A user who
+    # adds `gate:merge:human` after the `agent` label has already fired
+    # the run still expects that gate honored on the next stage.
+    live_labels = ctx.work.get_labels(event.key)
+    label_directives = parse_label_directives(live_labels)
+    directives = merge_directives(label_directives, body_directives)
 
     user_prompt_override, target_stage, routing_result = resolve_routing(
         ctx, event, clean_body
