@@ -62,14 +62,28 @@ def _ensure_draft_pr(ctx: RunContext, intent: RunIntent) -> int | None:
 
     GitHub rejects PRs against unpushed branches and empty-diff PRs —
     seed an empty commit, push, then open.
+
+    The branch-match guard on ``state.pr_number`` defends against state
+    leaking onto base branches: if the engine's MERGE stage is bypassed
+    (manual merge in the GitHub UI, or merge from CLI without
+    ``strip_runtime_state``), ``.a2sdlc/state/state.json`` survives onto
+    the base. The next SPEC dispatch then inherits a stale
+    ``pr_number`` belonging to a previous ticket and refuses to open a
+    new draft. We only trust the cached PR number when the state was
+    written for *this* branch.
     """
-    pr_number = intent.state.pr_number if intent.state else None
+    state = intent.state
+    state_owns_branch = state is not None and state.branch == intent.branch
+    pr_number = state.pr_number if state_owns_branch and state else None
     ctx.logger.info(
         "dispatch.ensure_draft_pr.entry",
         extra={
             "target_stage": intent.target_stage.value,
-            "state_present": intent.state is not None,
-            "state_pr_number": pr_number,
+            "state_present": state is not None,
+            "state_branch": state.branch if state else None,
+            "intent_branch": intent.branch,
+            "state_owns_branch": state_owns_branch,
+            "pr_number_used": pr_number,
             "event_pr_number": intent.event.pr_number,
         },
     )
