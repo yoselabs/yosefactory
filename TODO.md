@@ -134,16 +134,12 @@ Fixed this session (2026-04-21):
 
 ## Gates via labels, directives for overrides (design — 2026-04-23)
 
-- [ ] Move the common per-ticket gate controls onto **labels** rather than body directives. Labels are a first-class cross-tracker concept (GitHub, Jira, GitLab all have them) and they surface in the ticket UI without forcing the user to type bracket syntax. Proposed mapping — replaces the current `[a2sdlc gate:merge=human]` / `[a2sdlc gate:spec=human]` surface for the 90% case:
-  - `gate:merge=human` / `gate:merge=auto` (label values `gate:merge:human`, `gate:merge:auto`)
-  - `gate:spec=human` / `gate:spec=auto`
-  - Anything tracker-native (priority, component) stays on labels already.
-- [ ] Keep `[a2sdlc ...]` bracket directives for the **override** cases that don't map cleanly to a finite label set: `base=feature/xyz` (free-text branch name), `model=claude-opus-4-7` (free-text), future knobs like `timeout=600s`. Directives stay the low-friction escape hatch.
-- [ ] Migration plan when we pick this up:
-  1. Parser learns `label → directive` precedence: label-derived gate is authoritative if present; bracket directive is the override only when no matching label exists.
-  2. **Re-read labels fresh each dispatch.** The engine currently reads `event["label"]["name"]` (the triggering label only) from the webhook payload. That's fine for "which label fired this run" but WRONG for "what gates are active" — a reviewer who labels `agent` first and `gate:merge:human` second triggers the pipeline on label #1; label #2 lives only on the issue, not in the event payload of the active run. Fix: at every gate-decision point (preflight + MERGE stage) call `ctx.work.get_labels(key)` against GitHub's live API and recompute. Same discipline as directive re-parsing via `get_ticket` already does. Directives don't have this bug because body is re-fetched; labels do.
-  3. Update `docs/test_plan.md` scenarios 4 + 6 ticket shape to use labels by default.
-  4. Keep bracket parsing intact — we want zero migration pain for anyone already using it.
+- [x] Move the common per-ticket gate controls onto **labels** rather than body directives. Phase 1 shipped 2026-04-28 (e993c13): label parser + label-wins merge + ingress re-reads labels fresh each dispatch. Mapping live now — `gate:merge:human` / `gate:merge:auto` / `gate:spec:human` / `gate:spec:auto`. Bracket directives still parsed as the fallback when no matching label exists.
+- [x] Keep `[a2sdlc ...]` bracket directives for **override** free-text knobs (`base=`, `model=`). Implemented as part of phase 1 — body-only fields preserved through `merge_directives`.
+- [ ] Phase 2 follow-ups:
+  - [ ] Live smoke that uses the label form end-to-end (add label after `agent` to exercise the re-read).
+  - [ ] Update `docs/test_plan.md` scenarios 4 + 6 to recommend label form as the primary path; keep bracket form mentioned as fallback.
+  - [ ] Pre-create the four `gate:*` labels on the smoke repo + document that consumers should `gh label create gate:merge:human gate:merge:auto gate:spec:human gate:spec:auto` once at repo init (or have the engine auto-create on first use).
 
 ## SPEC-stage prompt leaks surfaced in smoke #38 (2026-04-23)
 
