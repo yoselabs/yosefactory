@@ -96,6 +96,8 @@ from the agent's self-report.
 
 **Prereq:** a ticket where SPEC + IMPLEMENT have landed and a PR is in REVIEW (gate=human) or just-landed REVIEW.
 
+**Ticket shape (preferred — label form, since 2026-04-28 / e993c13):** add the `gate:merge:human` label alongside `agent`. The engine re-reads labels fresh each dispatch (`ingress.resolve_intent`), so labels can be added/removed mid-pipeline and they win over body directives on conflict. Bracket form (`[a2sdlc gate:merge=human]`) still works as a fallback when no matching label exists — useful when you also need `base=` or `model=` overrides on the same ticket. The four `gate:*` labels (`gate:merge:human`, `gate:merge:auto`, `gate:spec:human`, `gate:spec:auto`) currently must exist on the repo (pre-created on `iorlas/a2sdlc-smoke` 2026-04-28); auto-create on first dispatch is open follow-up.
+
 **Steps:**
 1. On the PR, submit a review with `CHANGES_REQUESTED` and a specific feedback comment.
 2. Expect engine to fire `pull_request_review` workflow, route to IMPLEMENT.
@@ -140,9 +142,16 @@ from the agent's self-report.
 
 ## 6. Stage override directives
 
-**What it validates:** `parse_directives` extracts `base:` and `gate_spec:` / `gate_merge:` from ticket body and they override project config.
+**What it validates:** directive merging — labels for the common gate controls, brackets for free-text overrides (`base=`, `model=`) — both override project config; labels win on conflict.
 
-**Ticket shape:** include the engine's bracket-form directives at the top of the body (one per line). Keys use `:` (see `domain/directives.py`), values must be whitespace-free:
+**Ticket shape (preferred — label form for gates, brackets for `base`):** apply the `gate:merge:human` label alongside `agent`, and put any free-text overrides in body directives:
+```
+[a2sdlc base=develop]
+
+<normal ticket body>
+```
+
+Equivalent (legacy) bracket-only shape — still parsed as a fallback when the matching label is absent:
 ```
 [a2sdlc base=develop]
 [a2sdlc gate:merge=human]
@@ -150,7 +159,7 @@ from the agent's self-report.
 <normal ticket body>
 ```
 
-(Not YAML front-matter. Earlier drafts of this plan and inline ticket templates used `gate_merge: human` under a `---` separator — that never parsed; the first run of scenario 4 auto-merged because the directive was silently ignored. Same bracket syntax applies to scenario 6 below.)
+(Not YAML front-matter. Earlier drafts of this plan and inline ticket templates used `gate_merge: human` under a `---` separator — that never parsed; the first run of scenario 4 auto-merged because the directive was silently ignored.)
 
 **Expected:** Branch is `agent/{N}` against `develop` (not `main`). MERGE stage blocks on human approval even though project config has `gates: {merge: auto}`.
 
