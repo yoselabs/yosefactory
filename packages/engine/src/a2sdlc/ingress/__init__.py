@@ -197,6 +197,20 @@ def resolve_intent(
         return DispatchResult(stage=target_stage, blocked=True, error=e.reason)
 
     state = state_mgr.read_state()
+    if state is not None and state.branch != branch:
+        # `.a2sdlc/state/state.json` survived onto the base branch, usually
+        # because a prior ticket's MERGE was performed outside the engine
+        # (manual `gh pr merge`, UI click) and `strip_runtime_state` never
+        # ran. The branch-match guard in `_ensure_draft_pr` makes this
+        # non-fatal, but the file is still a leaked artifact on base.
+        ctx.logger.warning(
+            "dispatch.base_branch_state_leaked",
+            extra={
+                "state_branch": state.branch,
+                "intent_branch": branch,
+                "base": base,
+            },
+        )
 
     stage_cfg = load_stage_config(target_stage.value, ctx.config)
     for reason in (

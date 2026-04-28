@@ -106,6 +106,39 @@ def test_resolve_routing_feedback_with_pr_loads_pr_handover_and_diff() -> None:
     assert target is StageName.SPEC
 
 
+def test_resolve_intent_warns_on_leaked_base_branch_state(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """State with a foreign branch on a fresh dispatch → warning logged."""
+    from datetime import datetime, timezone
+
+    from a2sdlc.domain.models import TicketState
+    from a2sdlc.ingress import resolve_intent
+
+    leaked = TicketState(
+        stage=StageName.SPEC,
+        branch="agent/99",  # different ticket — leaked onto base
+        stage_run_id="r",
+        last_updated=datetime.now(timezone.utc).isoformat(),
+    )
+    ctx, *_ = make_dispatch_context(
+        state_json=leaked.model_dump_json(),
+        project_root=Path("/tmp/test_routing_state_leak"),
+    )
+    event = PipelineEvent(key="35", trigger_stage=StageName.SPEC)
+
+    with caplog.at_level("WARNING"):
+        resolve_intent(ctx, event)
+
+    leaked_records = [
+        r for r in caplog.records if r.message == "dispatch.base_branch_state_leaked"
+    ]
+    assert len(leaked_records) == 1
+    record = leaked_records[0].__dict__
+    assert record["state_branch"] == "agent/99"
+    assert record["intent_branch"] == "agent/35"
+
+
 def test_resolve_routing_proceed_after_review_handover_routes_to_merge() -> None:
     from datetime import datetime, timezone
 
