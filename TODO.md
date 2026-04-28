@@ -136,10 +136,11 @@ Fixed this session (2026-04-21):
 
 - [x] Move the common per-ticket gate controls onto **labels** rather than body directives. Phase 1 shipped 2026-04-28 (e993c13): label parser + label-wins merge + ingress re-reads labels fresh each dispatch. Mapping live now — `gate:merge:human` / `gate:merge:auto` / `gate:spec:human` / `gate:spec:auto`. Bracket directives still parsed as the fallback when no matching label exists.
 - [x] Keep `[a2sdlc ...]` bracket directives for **override** free-text knobs (`base=`, `model=`). Implemented as part of phase 1 — body-only fields preserved through `merge_directives`.
-- [ ] Phase 2 follow-ups:
-  - [ ] Live smoke that uses the label form end-to-end (add label after `agent` to exercise the re-read).
+- [x] Live smoke validation 2026-04-28 (smoke #47): ticket filed with `agent` + `gate:merge:human` labels, no body directive. Engine opened draft PR #48, paused at REVIEW with `to:null`, my APPROVE routed direct to MERGE, engine squash-merged in 4s, state.json stripped from main. Label-form gate fully honored end-to-end.
+- [x] Pre-create the four `gate:*` labels on the smoke repo (done 2026-04-28).
+- [ ] Phase 2 follow-ups still open:
   - [ ] Update `docs/test_plan.md` scenarios 4 + 6 to recommend label form as the primary path; keep bracket form mentioned as fallback.
-  - [ ] Pre-create the four `gate:*` labels on the smoke repo + document that consumers should `gh label create gate:merge:human gate:merge:auto gate:spec:human gate:spec:auto` once at repo init (or have the engine auto-create on first use).
+  - [ ] Document for consumers that the four `gate:*` labels need to exist on the repo (or have the engine auto-create on first use).
 
 ## SPEC-stage prompt leaks surfaced in smoke #38 (2026-04-23)
 
@@ -149,7 +150,7 @@ Fixed this session (2026-04-21):
 ## Cross-ticket PR contamination + opaque `_ensure_draft_pr` skips (smoke #42–#44)
 
 - [x] **`_get_pr_for_branch` head filter missing `owner:` prefix.** Fixed 2026-04-23 (51b2851). Smoke #42 surfaced — agent/42 REVIEW dispatch resolved PR #29 (from agent/28, still OPEN). GitHub API ignores the head filter when no owner is included, so any OPEN PR can match. Added `owner:branch` format + `pr.head.ref == branch` defence-in-depth verification + skip-wrong-branch unit test.
-- [ ] **`_ensure_draft_pr` silently skipped creation on #42 and #43 but worked on #44.** Same code, three runs, two unexplained no-ops. Added `dispatch.ensure_draft_pr.entry / .creating` diagnostic logs (302eabe) that did fire cleanly on #44 — so at minimum any future occurrence will produce a diagnostic trail. Hypotheses worth checking next time it recurs: (a) git-level flakiness (commit_empty / push silently failing), (b) a subtle exception swallowed upstream of the CLI's top-level try/except, (c) a stale clone state on the runner where `current branch != agent/<N>`. Keep the diagnostic logs until we see a second stuck-no-PR run and can compare. Earlier runs (#38, #40) also didn't log `draft_pr_created` yet had PRs — strong hint that the SPEC agent's self-authored `gh pr create` was papering over a long-standing engine skip. That path is now blocked by the PreToolUse hook (63b8604).
+- [x] **`_ensure_draft_pr` silently skipped creation on #42, #43, #46.** Root-caused 2026-04-28 in smoke #46 (e871e9d): manual merges (e.g. `gh pr merge` from CLI when the engine's MERGE-stage install step fails) bypass `strip_runtime_state`, leaving `.a2sdlc/state/state.json` on the base branch. The next SPEC dispatch inherits the stale state and reads someone else's `pr_number` — short-circuiting creation. Fix: branch-match guard (`state.pr_number` only trusted when `state.branch == intent.branch`); base branches scrubbed manually; diagnostic logs upgraded with `state_branch`/`intent_branch`/`state_owns_branch`. Validated end-to-end in smoke #47.
 
 ## Bugs caught in smoke #36 (scenario 4 retry, 2026-04-23)
 
