@@ -75,7 +75,7 @@ def _ensure_draft_pr(ctx: RunContext, intent: RunIntent) -> int | None:
     state = intent.state
     state_owns_branch = state is not None and state.branch == intent.branch
     pr_number = state.pr_number if state_owns_branch and state else None
-    ctx.logger.info(
+    ctx.logger.debug(
         "dispatch.ensure_draft_pr.entry",
         extra={
             "target_stage": intent.target_stage.value,
@@ -88,7 +88,7 @@ def _ensure_draft_pr(ctx: RunContext, intent: RunIntent) -> int | None:
         },
     )
     if intent.target_stage == StageName.SPEC and pr_number is None:
-        ctx.logger.info("dispatch.ensure_draft_pr.creating")
+        ctx.logger.debug("dispatch.ensure_draft_pr.creating")
         ctx.git.commit_empty(f"chore(a2sdlc): open session for {intent.event.key}")
         ctx.git.push()
         pr_number = ctx.pr_lifecycle.create_draft(
