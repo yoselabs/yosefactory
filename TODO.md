@@ -2,20 +2,26 @@
 
 ## Progress Comment Redesign (I0239)
 
-- [ ] Tool content in progress — `Read {path}`, `Edit {path}:{line}`, `Bash: {command[:60]}` instead of just tool names
-- [ ] Turn counter — `(turn N/max)` in progress comment
-- [ ] Running token/cost totals — accumulate from AssistantMessage.usage during streaming
-- [ ] Context fill % — show how much of the context window is used
-- [ ] Model name — show which model is running in the status bar
-- [ ] Milestone sections — implementation, review 1, review 2 don't disappear when logs update
-- [ ] Agent text messages — TextBlock content (truncated) appears in logs
-- [ ] Status bar — reused across all stages, shown in final comment as summary
-- [ ] Icons — scannable at a glance
-- [ ] Turn exhaustion — if max turns reached, dispatch marks stage as `stage:blocked`
-- [ ] Move progress updates from hook-based (on each tool call) to timer-based (every 3s) — decouple from SDK streaming events so updates happen reliably regardless of tool activity
-- [ ] Skill invocations should persist in the log (not disappear when overwritten) — e.g. "brainstorming invoked at 0:42", "writing-plans invoked at 2:15"
-- [ ] Tool calls should include timestamp (relative to stage start) — "0:42 Read src/app.py", "1:15 Bash: pytest"
-- [ ] Consider table format for tool log — columns: time, tool, target, result. Make it scannable and visually appealing
+Audited 2026-04-29 — most "Phase 1" items already shipped.
+
+Done:
+- [x] Tool content in progress — `extract_target` in `domain/progress_format.py` renders `Read {path}`, `Bash: {cmd[:60]}`, etc.
+- [x] Turn counter — `N/max` in `_format_status_bar`.
+- [x] Running token/cost totals — accumulated via `update_metrics` per assistant message.
+- [x] Context fill % — `pct = input_tokens / context_window * 100` in status bar.
+- [x] Model name — status bar column.
+- [x] Milestone sections persist across updates — `Milestone` events stored separately from `tool_log`, never roll off.
+- [x] Status bar in final comment — `format_final` calls `_stats_bar`.
+- [x] Status icons — `_STATUS_ICONS` (✅ ❓ 🔄) in header.
+- [x] Turn exhaustion → `stage:blocked` — Claude SDK emits `subtype="error_max_turns"` → `agent_failure_outcome` → `MarkBlocked(reason="error_max_turns")`.
+- [x] Skill invocations persist — Skill tool emits both a tool_log entry AND a `Milestone` (which doesn't roll off).
+- [x] Tool log timestamps — `_format_milestone_time(entry.timestamp)` per row.
+- [x] Table format for tool log — markdown table with Time / Tool / Target columns.
+
+Still open (deliberate trade-offs, not stale):
+- [ ] Agent text messages (TextBlock) — currently dropped on purpose (see runner.py comment "TextBlock dropped — logging covers it"). Reopening would add noise; revisit only if missing rationale becomes a real debugging gap.
+- [ ] Move from hook-based to timer-based (3s) updates — architectural shift to decouple updates from SDK streaming. Defer until Mode 2 parallel-run hardening lands `run_id` propagation; both touch the same plumbing.
+- [ ] Friendlier error message when max_turns is hit — currently shows raw `error_max_turns` subtype; could render "agent ran out of turns at N/M" in the blocked comment.
 
 ## Code Review Milestones
 
