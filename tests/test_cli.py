@@ -112,6 +112,21 @@ class TestAssembleSystemPrompt:
             "review prompt missing 'brainstorming' keyword"
         )
 
+    def test_review_stage_instructs_reviewer_to_read_spec_and_plan(
+        self, tmp_path: Path
+    ) -> None:
+        """Review prompt must tell the reviewer to read the spec and plan files."""
+        a2sdlc_dir = tmp_path / ".a2sdlc"
+        a2sdlc_dir.mkdir()
+        result = assemble_system_prompt("review", a2sdlc_dir)
+
+        result_lower = result.lower()
+        assert "docs/superpowers/specs" in result_lower
+        assert "docs/superpowers/plans" in result_lower
+        assert "fidelity" in result_lower, (
+            "review prompt should mention fidelity to the spec"
+        )
+
     def test_spec_stage_does_not_restrict_brainstorming(self, tmp_path: Path) -> None:
         """Spec stage should NOT tell the agent to skip brainstorming."""
         a2sdlc_dir = tmp_path / ".a2sdlc"

@@ -297,3 +297,60 @@ def test_review_stage_name_and_valid_statuses() -> None:
     assert stage.valid_statuses == frozenset(
         {StageStatus.APPROVED, StageStatus.CHANGES_REQUESTED}
     )
+
+
+@pytest.mark.asyncio
+async def test_review_stage_includes_issue_discussion_in_user_prompt() -> None:
+    """Issue Q&A comments are appended to the user prompt as context for the reviewer."""
+    from datetime import datetime, timezone
+
+    from a2sdlc.domain.handover import FeedbackItem
+
+    feedback = [
+        FeedbackItem(
+            id="f1",
+            author="alice",
+            author_type="human",
+            source="issue_comment",
+            body="should this also handle empty inputs?",
+            created_at=datetime(2026, 4, 28, tzinfo=timezone.utc),
+        ),
+        FeedbackItem(
+            id="f2",
+            author="bob",
+            author_type="human",
+            source="issue_comment",
+            body="yes, please add a test for that",
+            created_at=datetime(2026, 4, 29, tzinfo=timezone.utc),
+        ),
+    ]
+    ctx, _work, _git, _review, runner = _review_ctx(
+        issue_feedback=feedback,
+        project_root=Path("/tmp/test_review_discussion_injection"),
+    )
+    _populate_per_run_state(ctx, _APPROVED_OUTPUT)
+
+    stage = ReviewStage()
+    await stage.execute(ctx)
+
+    assert len(ctx.runner.calls) == 1
+    user_prompt = ctx.runner.calls[0].user_prompt
+    assert "Issue Discussion" in user_prompt
+    assert "alice" in user_prompt
+    assert "bob" in user_prompt
+    assert "empty inputs" in user_prompt
+    assert "add a test for that" in user_prompt
+
+
+@pytest.mark.asyncio
+async def test_review_stage_omits_discussion_section_when_no_comments() -> None:
+    ctx, _work, _git, _review, runner = _review_ctx(
+        project_root=Path("/tmp/test_review_no_discussion")
+    )
+    _populate_per_run_state(ctx, _APPROVED_OUTPUT)
+
+    stage = ReviewStage()
+    await stage.execute(ctx)
+
+    user_prompt = ctx.runner.calls[0].user_prompt
+    assert "Issue Discussion" not in user_prompt

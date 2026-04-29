@@ -85,9 +85,11 @@ class ReviewStage:
                 "Focus on the feedback items below.\n\n" + system_prompt
             )
 
-        # REVIEW user prompt — override wins, otherwise body (+ PR context).
-        # read_context() is a PR-diff read; it is a read-only adapter call
-        # and part of prompt assembly, not a side effect we migrate.
+        # REVIEW user prompt — override wins, otherwise body (+ PR context
+        # + issue Q&A discussion). read_context() is a PR-diff read;
+        # collect_issue_feedback is the issue-comment fetch. Both are
+        # read-only adapter calls and part of prompt assembly, not side
+        # effects we migrate.
         if pre.user_prompt_override is not None:
             user_prompt = pre.user_prompt_override
         else:
@@ -95,6 +97,11 @@ class ReviewStage:
             if pr_number is not None:
                 pr_context = pr_lifecycle.read_context(pr_number)
                 user_prompt = f"{pre.clean_body}\n\n{pr_context}"
+            discussion = _format_issue_discussion(
+                ctx.work.collect_issue_feedback(pre.event.key, datetime.min)
+            )
+            if discussion:
+                user_prompt = f"{user_prompt}\n\n{discussion}"
 
         executor = ctx.stage_executor
         exec_result = await executor.run(
@@ -234,3 +241,21 @@ def _require(value, name):  # type: ignore[no-untyped-def]
         msg = f"ReviewStage.execute requires ctx.{name} to be populated by dispatch"
         raise RuntimeError(msg)
     return value
+
+
+def _format_issue_discussion(items: list) -> str:  # type: ignore[type-arg]
+    """Render issue Q&A comments for the REVIEW user prompt.
+
+    Distinct from ``_format_feedback_section`` in ``ingress/context.py``
+    (which frames feedback as TODO items the agent must address). REVIEW
+    only needs the conversation that shaped the spec for context — no
+    "address this" framing.
+    """
+    if not items:
+        return ""
+    lines = ["## Issue Discussion (for context)\n"]
+    for item in sorted(items, key=lambda f: f.created_at):
+        lines.append(f"### {item.source} by @{item.author}")
+        lines.append(item.body)
+        lines.append("")
+    return "\n".join(lines)
