@@ -7,6 +7,7 @@ import typer
 from a2sdlc.cli.dispatch import dispatch_command
 from a2sdlc.cli.ensure_gate_labels import ensure_gate_labels_command
 from a2sdlc.cli.run_stage import run_stage_command
+from a2sdlc.cli.scrub_base import scrub_base_command
 
 app = typer.Typer(
     name="a2sdlc",
@@ -25,6 +26,10 @@ app.command(
     "ensure-gate-labels",
     help="Create gate:* labels on a GitHub repo (one-time consumer onboarding).",
 )(ensure_gate_labels_command)
+app.command(
+    "scrub-base",
+    help="Remove leaked .a2sdlc/state/state.json from a base branch.",
+)(scrub_base_command)
 
 
 def main(argv: list[str] | None = None) -> None:

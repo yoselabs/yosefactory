@@ -147,6 +147,17 @@ Fixed this session (2026-04-21):
 - [x] **SPEC agent authors `gh pr create` steps the engine is supposed to own.** Two-layer fix 2026-04-23: prompt guardrails added (9e4aeb3) — "What the engine owns" section in `prompts/stages/spec.md`; SDK-level PreToolUse hook (63b8604) denies any `gh pr create/edit/merge/ready/close/reopen/review`, `hub pull-request`, or `glab mr *` Bash invocation with an explanatory deny reason. Engine-global, 7 unit tests. Awaits live smoke revalidation.
 - [x] **SPEC self-review hallucinated a "missing" directive value.** Fixed 2026-04-23 (9e4aeb3) — both self-review steps now require the reviewer to quote the exact line(s) from the spec/plan/ticket for every "missing/unclear/contradictory" finding. No-evidence findings are rejected. Awaits live smoke revalidation.
 
+## Parked: state.json out of the working tree (2026-04-29)
+
+Ideas for moving runtime state off the agent branch so manual-merge bypass can't leak it:
+
+- **Orphan state branch (`_a2sdlc-state` or similar).** Files at `state/<ticket>.json`. Visible in branch list, files are clickable on github.com (engine could post `https://github.com/owner/repo/blob/_a2sdlc-state/state/<key>.json` in finalize comments for troubleshooting). Single timeline per ticket = `git log` audit trail. Concurrent-write races handled by push-with-rebase retry. Most attractive given Denis wants visibility for troubleshooting.
+- **Custom refs (`refs/a2sdlc/state/<ticket>`).** Atomic compare-and-swap via `update-ref`. Cleanest race semantics but **invisible in GitHub UI** — no clickable troubleshooting URLs.
+- **Hidden state comment on the issue.** Zero git plumbing, but exposes state in the issue page source and adds API calls per dispatch.
+- **External state server.** Future option; not for v1, won't be for every consumer.
+
+For now, `a2sdlc scrub-base` (this commit) covers the recovery case. Revisit if manual-merge bypass keeps biting in real smokes; the orphan-branch option also retires `strip_runtime_state` and the `e871e9d` branch-match guard once migrated.
+
 ## Cross-ticket PR contamination + opaque `_ensure_draft_pr` skips (smoke #42–#44)
 
 - [x] **`_get_pr_for_branch` head filter missing `owner:` prefix.** Fixed 2026-04-23 (51b2851). Smoke #42 surfaced — agent/42 REVIEW dispatch resolved PR #29 (from agent/28, still OPEN). GitHub API ignores the head filter when no owner is included, so any OPEN PR can match. Added `owner:branch` format + `pr.head.ref == branch` defence-in-depth verification + skip-wrong-branch unit test.
