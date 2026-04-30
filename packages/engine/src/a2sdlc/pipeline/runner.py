@@ -23,6 +23,7 @@ from a2sdlc.domain.models import StageName
 from a2sdlc.domain.run_result import RunResult
 from a2sdlc.domain.progress import ProgressState
 from a2sdlc.domain.progress_format import extract_target
+from a2sdlc.runtime.isolation import build_sdk_options_overrides
 
 logger = logging.getLogger("a2sdlc.pipeline.runner")
 
@@ -165,6 +166,13 @@ async def run_stage(
                 f"Invalid effort {effort!r}. Expected one of {sorted(_EFFORT_SDK_MAP)}."
             )
         options_kwargs["effort"] = sdk_effort
+
+    # Engine-pinned isolation overrides — applied last so they win
+    # over anything earlier in the build. See ``runtime/isolation``
+    # and Spec §Agent isolation: forces ``setting_sources`` to the
+    # project/local pair and zeroes ``mcp_servers`` so the operator's
+    # MCP config does not bleed into agent behaviour.
+    options_kwargs.update(build_sdk_options_overrides())
 
     options = ClaudeAgentOptions(**options_kwargs)
     if is_resume:
