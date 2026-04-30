@@ -31,8 +31,11 @@ introducing engine-specific concepts now. Tracker-driven triggers,
 auto-merge, multi-pipeline coordination, and human-gate signals are
 deliberately deferred — additive later, never breaking changes.
 
-Appetite: **5–7 days** (model rename + composition reshuffle + new
-adapter + CLI surface + tests).
+Appetite: **5–7 days.** The vocabulary (Workflow / Activity / Effect /
+Signal / Trigger) is *documentation-level* in v1 — code keeps existing
+type names; only conceptual boundaries are tightened. Doing a real type
+rename inside the codebase is out of scope and would push the appetite to
+9+ days.
 
 ## Non-goals
 
@@ -45,14 +48,19 @@ adapter + CLI surface + tests).
 - **No eval mode in v1.** Eval-orchestration is an out-of-engine concern
   (a script that fans out N `a2sdlc run` invocations) and not part of
   v1's contract.
-- **No durable run-registry ref.** State stays branch-local. Branch lifecycle
-  = workflow lifecycle.
+- **No durable run-registry ref.** State stays branch-local. Branch
+  lifecycle = workflow lifecycle (single home for this rule; not
+  restated elsewhere).
 - **No protocol split of `ReviewAdapter` into `ReviewOutputAdapter` +
   `PRLifecycleAdapter`.** Note as a future cleanup; defer.
 - **No feature-flagging / `workflow.patched` analogue.** Forward-compat is
   via `state.json`'s `schema_version`, not code-path versioning.
 - **No multi-concurrent runs on one VM.** Single run per VM is supported;
-  worktrees come later.
+  worktrees come later. v1 enforces the constraint with a PID lockfile
+  (see §Failure modes); behavior beyond that is undefined.
+- **No code rename of existing types** to the new vocabulary. The
+  vocabulary is documentation-level; type names in the codebase stay as
+  they are unless a specific rename is part of an Important fix.
 
 ## Workflow vocabulary
 
@@ -73,6 +81,15 @@ the external-decision boundary; triggers spawn workflows*. This shape is
 preserved when a future runtime (Temporal, Restate, etc.) replaces the
 in-process loop.
 
+**Storage caveat for Temporal portability.** The *primitives* port cleanly;
+the *storage* does not. Temporal owns workflow state in its cluster, and
+its `workflow_id` is a durable cluster identity decoupled from any external
+resource — the opposite of "branch death = workflow death." On a Temporal
+migration: `state.json` becomes a derived read-model written by activities,
+durable identity moves to Temporal's `workflow_id`, and the branch becomes
+a tag on that workflow. The reducer, the effect descriptions, and the
+signal envelopes survive intact; the persistence layer is rewritten.
+
 ## Identity model
 
 Two identifiers, no third:
@@ -83,7 +100,6 @@ PipelineRun {
   ticket_key:     str | None # = "ABC-123" or label or filename slug; shared across attempts
   base:           str        # base branch name
   base_sha:       str        # base branch HEAD at workflow start
-  version:        int        # auto-incremented from existing run branches for the same base
   ecosystem:      str        # = config.mode value: "local" | "github" | "jira-github"
   schema_version: int        # state.json schema version
   stage:          StageName  # current stage
@@ -104,16 +120,21 @@ guard at `pipeline/dispatch.py:90` becomes a general rule applied wherever
 The run-branch generator produces:
 
 ```
-a2sdlc/auto/<base-slug>/<yyyymmdd-hhmm>-<input-hash>
+a2sdlc/auto/<base-slug>/<yyyymmdd-hhmmss>-<input-hash>
 ```
 
 - `<base-slug>` = base branch name with `/` → `-`
 - `<input-hash>` = first 6 hex chars of SHA-256 of `INPUT.md` content
   at base HEAD
+- Timestamp uses **second** precision (UTC) to make collisions on
+  back-to-back reruns mathematically impossible in practice.
 
 Hash suffix gives a reproducibility marker — running twice with identical
 input produces the same hash, making accidental duplicate runs detectable.
-Time prefix gives ordering for human inspection.
+Time prefix gives ordering for human inspection. If a branch with the
+generated name already exists locally or on origin (e.g. clock skew or
+deliberate retry within the same second), the engine refuses with a clear
+error — see §Failure modes.
 
 ## State storage and lifecycle
 
@@ -138,12 +159,28 @@ jira+github) are additive.
 | Role | Adapter | Behavior |
 |---|---|---|
 | Work | `LocalFileWorkAdapter` (existing, extended) | Reads `INPUT.md` from base HEAD as the "ticket"; progress comments go to `.a2sdlc/state/<branch>/progress.md`; status transitions update local markers. |
-| Review | **`LocalReviewAdapter` (new)** | `post_review` writes `.a2sdlc/state/<branch>/reviews/<ts>-cycle-<n>.md`; `post_inline_comments` writes `<ts>-cycle-<n>-inline.md` with `path:line — comment` form. PR-lifecycle methods (`create_draft_pr`, `merge_pr`, `mark_pr_ready`, `get_approvals`) return safe no-op defaults. |
+| Review | **`LocalReviewAdapter` (new)** | `post_review` writes `.a2sdlc/state/<branch>/reviews/<ts>-cycle-<n>.md`; `post_inline_comments` writes `<ts>-cycle-<n>-inline.md` (format below). PR-lifecycle methods (`create_draft_pr`, `merge_pr`, `mark_pr_ready`, `get_approvals`) return safe no-op defaults. |
 | Subscribers | `console`, `mlflow_trace` | Console prints stage transitions to stdout; MLflow records run metadata. |
 
 `LocalNoopReviewAdapter` is preserved for tests that want a true no-op; the
 new `LocalReviewAdapter` is the user-facing local mode that produces
 inspectable artifacts.
+
+Inline-comment file format. One block per comment, blank line between
+blocks. Multi-line comment bodies are kept verbatim under the header:
+
+```
+src/billing/charge.py:42
+  agent: payment retries can wedge here when the upstream API returns 502
+  on idempotency-key re-use; consider an explicit retry-count cap.
+
+src/billing/charge.py:88
+  agent: missing edge case — empty cart still hits the charge endpoint.
+```
+
+`path:line` is the header, indented body lines are the comment. Encoding
+is UTF-8. The em-dash is illustrative; any character is allowed in the
+body.
 
 ### Future ecosystems (deferred)
 
@@ -163,7 +200,7 @@ into `ReviewOutputAdapter` + `PRLifecycleAdapter`. Recorded as future work.
 
 Adapter selection lives in repo config, not CLI flags:
 
-```
+```yaml
 # .a2sdlc/config.yaml (or pyproject [tool.a2sdlc])
 mode: local              # local | github | jira-github (only "local" implemented in v1)
 adapters:
@@ -174,6 +211,11 @@ subscribers:
   - mlflow
 required_env:
   - ANTHROPIC_API_KEY
+pipeline:
+  max_review_cycles: 3   # SPEC → IMPLEMENT → REVIEW handover loop cap
+  protected_bases:       # bases the engine refuses unless --allow-protected-base
+    - main
+    - master
 ```
 
 The `a2sdlc run` command is a **universal verb**, not local-only. It reads
@@ -193,32 +235,42 @@ CLI flag overrides supported:
 
 Behavior, in this order:
 
-1. **Validate environment first.** Resolve config, load adapter set,
-   validate required env vars (see below). This is the very first action
-   so missing-credential failures cost sub-second time.
-2. **Resolve base.** `--base` arg if given, else current `HEAD` ref name.
-   Refuse if base is in the protected set (`main`, `master`, configurable
-   in `.a2sdlc/config.yaml` under `protected_bases`) unless
-   `--allow-protected-base` is passed.
-3. **Read `INPUT.md` from base HEAD** (the committed version, not the
+1. **Validate environment first.** Resolve the config file path (default
+   `.a2sdlc/config.yaml`, override with `--config`), load adapter classes
+   (no instantiation, no I/O), and validate required env vars from each
+   class's static `REQUIRED_ENV` plus engine-level vars. This step touches
+   the config file and `os.environ` only — no git, no FS reads beyond the
+   config — so missing-credential failures cost sub-second time.
+2. **Acquire VM lockfile** at `.a2sdlc/run.lock` (exclusive flock with PID
+   + start-timestamp). Fail with a clear error if held by another process.
+   See §Failure modes.
+3. **Resolve base.** `--base` arg if given, else current `HEAD` ref name.
+   Refuse if base is in `pipeline.protected_bases` (default `[main,
+   master]`) unless `--allow-protected-base` is passed.
+4. **Reject dirty working tree.** If `git status --porcelain` reports any
+   tracked changes, fail. The engine never silently consumes uncommitted
+   work. Untracked files outside `.a2sdlc/` are tolerated (BAs may have
+   notes lying around).
+5. **Read `INPUT.md` from base HEAD** (the committed version, not the
    working tree). Error if missing on base HEAD. Reasoning: input must be
    committed for audit. The working-tree state of `INPUT.md` is ignored
    on purpose so BA's local edits can't accidentally drive a run.
-4. **Compute hash, generate run-branch name, create branch off base,
-   switch to it.**
-5. **Run pipeline** SPEC → IMPLEMENT → REVIEW, with handover loop
-   (REVIEW → IMPLEMENT) up to `max_review_cycles` (default 3, configurable
-   under `pipeline.max_review_cycles`).
-6. **Persist progress after each stage.** Commit (a) updated `state.json`,
+6. **Compute hash, generate run-branch name, refuse if branch already
+   exists** locally or on origin, then create branch off base and switch
+   to it.
+7. **Run pipeline** SPEC → IMPLEMENT → REVIEW, with handover loop
+   (REVIEW → IMPLEMENT) up to `pipeline.max_review_cycles` (default 3).
+8. **Persist progress after each stage.** Commit (a) updated `state.json`,
    (b) any code changes the stage produced, (c) any new review artifacts
    under `.a2sdlc/state/<branch>/reviews/`, then `git push origin
-   <run-branch>`. Push failures fail the run with a clear error; partial
-   state stays local for forensics.
-7. **Print stage transitions to stdout** in real time via the `console`
+   <run-branch>`. Each stage advance = one commit. Commit and push are
+   each fatal on failure — see §Failure modes for the recovery surface.
+9. **Print stage transitions to stdout** in real time via the `console`
    subscriber.
-8. **On terminal state**, print the run-branch name on stdout and exit
-   0. Preview-URL emission is out of scope for v1 — left for a later
-   subscriber plugin.
+10. **On terminal state**, print the run-branch name on stdout and exit
+    0. Preview-URL emission is out of scope for v1 — left for a later
+    subscriber plugin.
+11. **Release the lockfile** on exit (success or failure).
 
 Sample output:
 
@@ -234,7 +286,7 @@ $ a2sdlc run
 [IMPLEMENT] done → REVIEW
 [REVIEW]    approved
 done.
-branch: a2sdlc/auto/req-billing-v2/20260430-1422-a3f019
+branch: a2sdlc/auto/req-billing-v2/20260430-142208-a3f019
 ```
 
 ## Fail-fast on missing env vars
@@ -252,20 +304,41 @@ class GitHubWorkAdapter:
 
 The composition root collects `REQUIRED_ENV` across all wired adapters
 plus engine-level required vars (e.g. `ANTHROPIC_API_KEY`), and validates
-`os.environ` **before any I/O happens**. Missing vars are aggregated into a
-single error message that lists every missing key:
+`os.environ` **before any I/O happens** (config file read excepted —
+that's how we know which adapters to ask). Missing vars are aggregated
+into a single error message; format and exit code are specified in
+§Failure modes.
 
-```
-$ a2sdlc run
-error: required environment variables are not set:
-  - ANTHROPIC_API_KEY  (engine)
-  - GITHUB_TOKEN       (adapter: github-work)
-set them in your shell or .envrc and try again.
-exit 2
-```
+The check runs before lockfile acquisition, base resolution, or any git
+read, so missing credentials cost a sub-second response, not a
+half-completed run.
 
-The check runs before reading `INPUT.md` or touching git, so missing
-credentials cost a sub-second response, not a half-completed run.
+## Failure modes
+
+Single source of truth for what fails, what message the BA sees, and what
+exit code the CLI returns. Implementers must not invent new modes; they
+must add to this table.
+
+| When | Detection | Stderr message (paraphrased) | Exit | Recovery |
+|---|---|---|---|---|
+| Required env var missing | Step 1 | `error: required environment variables are not set:\n  - VAR (engine)\n  - VAR2 (adapter: github-work)\nset them in your shell or .envrc and try again.` | 2 | Set vars, rerun. |
+| Lockfile already held | Step 2 | `error: another a2sdlc run is in progress on this VM (pid <P> started <T>). only one run at a time is supported.` | 3 | Wait for prior run, or kill stale process and remove `.a2sdlc/run.lock`. |
+| Protected base | Step 3 | `error: refusing to run on protected base '<branch>'. pass --allow-protected-base to override.` | 4 | Use `--allow-protected-base` or check out a non-protected base. |
+| Dirty working tree | Step 4 | `error: working tree has uncommitted changes:\n<short status>\ncommit, stash, or reset before running.` | 5 | Resolve, rerun. |
+| `INPUT.md` missing on base HEAD | Step 5 | `error: INPUT.md not found on '<base>' HEAD. commit it on the base branch and try again.` | 6 | Commit `INPUT.md` to base, rerun. |
+| Run-branch already exists | Step 6 | `error: branch '<run-branch>' already exists (local or origin). a duplicate run with the same INPUT.md within the same second is unsupported.` | 7 | Wait one second, rerun. |
+| Stage-commit failure (e.g. pre-commit hook) | Step 8 | `error: failed to commit stage '<n>' progress: <git stderr>\nlocal branch '<run-branch>' on this VM has the partial state.` | 8 | Inspect locally, fix, manually finish or discard. |
+| Push failure | Step 8 | `error: failed to push '<run-branch>' to origin: <git stderr>\nlocal branch on this VM has the work — run 'git push origin <run-branch>' manually after fixing.` | 9 | Push manually or rerun after resolving. |
+| `max_review_cycles` exceeded | Step 7 | `error: review handover loop exceeded max_review_cycles=<N>. last review at <ts>. branch '<run-branch>' kept for inspection.` | 10 | Inspect reviews, edit `INPUT.md` on base, rerun. |
+| Internal/unhandled | anywhere | `error: internal failure: <traceback>\nlockfile released; partial state on local branch '<run-branch>'.` | 1 | File a bug; partial state preserved. |
+
+Two invariants across all failure modes:
+
+1. **The lockfile is always released on exit.** Implemented via `try` /
+   `finally` around the entire run; signal handlers (`SIGINT`,
+   `SIGTERM`) trigger the same cleanup.
+2. **Partial run-branches stay on the local VM.** They are never deleted
+   on failure. A failed run is forensic data.
 
 ## MLflow correlation
 
@@ -276,7 +349,6 @@ Every run logs to MLflow with:
   - `ticket_key` — when set
   - `base` — base branch name
   - `base_sha` — base commit SHA at run start
-  - `version` — version counter
   - `ecosystem` — `local` | `github` | `jira-github`
   - `input_hash` — 6-char hash from run-branch suffix
   - `engine_version` — git SHA of the engine release
@@ -330,7 +402,7 @@ StartWorkflow {
   input_path:   str             # = "INPUT.md" relative to base HEAD
   label:        str | None
   config_path:  str | None
-  mode:         Mode
+  ecosystem:    str             # = config.mode value
 }
 ```
 
@@ -341,12 +413,19 @@ doesn't care which trigger fired.
 ## Migration notes
 
 - Existing `state.json` consumers gain a `schema_version` check; v0 files
-  without the field are treated as v0 and migrated on read.
+  (no `schema_version` field) are read into the v1 in-memory shape with
+  `schema_version=0` and `ecosystem="local"` defaulted in. The migrated
+  state is written back to disk **lazily**, on the next stage-finish
+  commit — never eagerly on read. Migration is logged via the `console`
+  subscriber as `state.migrated v0 → v1`.
 - `RunIntent.base` already carries the base branch — wire `base_sha`
   capture at workflow start.
-- `format_branch` becomes adapter-driven for both directions: existing
-  `format_branch(ticket_key)` for the GH ecosystem, plus new
-  `format_run_branch(base, input_hash, ts) -> str` for the local ecosystem.
+- `format_branch` gains both directions of the mapping for the local
+  ecosystem: existing `format_branch(ticket_key)` for the GH ecosystem
+  stays; new `format_run_branch(base, input_hash, ts) -> str` *generates*
+  the local run-branch name, and a paired `parse_run_branch(branch) ->
+  (base, ts, input_hash) | None` *extracts* the components for telemetry
+  and queries.
 - The `merge` stage is removed from the v1 default pipeline (still exists
   in code; just not in the local-mode stage list).
 
@@ -365,13 +444,24 @@ doesn't care which trigger fired.
    needs it.
 5. MLflow shows the run with `run_name = <branch-name>` and pivotable
    tags (`ticket_key`, `base`, etc.).
-6. Review handover loop fires at least once when the spec demands it,
-   visible as `REVIEW → IMPLEMENT` transitions in stdout and as multiple
-   `<ts>-cycle-<n>.md` files in the review folder.
+6. Review handover loop fires at least once when the SPEC stage's
+   output requires changes, visible as `REVIEW → IMPLEMENT` transitions
+   in stdout and as multiple `<ts>-cycle-<n>.md` files in the review
+   folder.
 7. Engine refuses to run on a protected base (`main`) without an
    explicit `--allow-protected-base` flag.
 8. Architecture tests still pass — domain has zero a2sdlc imports;
    composition root remains the only 5+-package importer.
+9. Concurrent invocation: starting a second `a2sdlc run` while a first
+   is still active fails fast with the lockfile error from §Failure
+   modes; the lockfile is removed on first run's exit.
+10. Dirty working tree: an uncommitted change to a tracked file causes
+    the run to fail with the dirty-tree error before any branch is
+    created.
+11. v0 `state.json` migration: a fixture state file without
+    `schema_version` is accepted on read, surfaces a `state.migrated`
+    log line, and is rewritten with `schema_version=1` on the next
+    stage-finish commit (not eagerly).
 
 ## Out-of-scope follow-ups (already enumerated, captured here for tracking)
 
