@@ -335,3 +335,58 @@ def test_drive_pipeline_commit_failure_exits_8(
             label=None,
         )
     assert exc_info.value.exit_code == 8
+
+
+def test_drive_pipeline_emits_run_end_on_failure_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RunEnd fires on the failure path too — single-loop driver (C3).
+
+    Subscribes a capture handler before drive_pipeline runs; asserts a
+    single RunEnd event with success=False reaches the bus even when
+    SPEC fails. Implicitly proves both pipeline + run_end execute in
+    one event loop because the subscriber registered on the first loop
+    is still reachable when run_end is emitted.
+    """
+    from typing import Any
+
+    from a2sdlc.domain.progress import ProgressEvent, ProgressState, RunEnd
+
+    repo, _origin, base = _init_local_repo(tmp_path)
+    monkeypatch.chdir(repo)
+
+    runner = _FailingRunner([(StageStatus.COMPLETE, "spec", False)])
+    monkeypatch.setattr(
+        "a2sdlc.pipeline.runner.SdkStageRunner",
+        lambda **kw: runner,  # noqa: ARG005
+    )
+
+    captured: list[RunEnd] = []
+
+    class _Capture:
+        async def handle(self, event: ProgressEvent) -> None:
+            if isinstance(event, RunEnd):
+                captured.append(event)
+
+    real_init = ProgressState.__init__
+
+    def _patched_init(self: ProgressState, *args: Any, **kwargs: Any) -> None:
+        real_init(self, *args, **kwargs)
+        self.subscribe(_Capture())
+
+    monkeypatch.setattr(ProgressState, "__init__", _patched_init)
+
+    cfg = _make_run_config()
+    with pytest.raises(typer.Exit) as exc_info:
+        run_pipeline_module.drive_pipeline(
+            repo=repo,
+            config=cfg,
+            base=base,
+            input_md=b"x",
+            run_branch="a2sdlc/auto/feature-x/20260430-c3-runend",
+            label=None,
+        )
+    assert exc_info.value.exit_code == 1
+    assert len(captured) == 1
+    assert captured[0].success is False
+    assert captured[0].error is not None

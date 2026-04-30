@@ -420,8 +420,42 @@ def drive_pipeline(
         success = False
         run_error = f"review handover loop exceeded max_review_cycles={max_cycles}"
 
+    async def _drive_full() -> None:
+        """Pipeline + RunEnd in a single event loop.
+
+        ``RunEnd`` emission lives inside the async region so subscribers
+        (e.g. ``MlflowTraceSubscriber``) registered against this loop
+        don't get hit by a second ``asyncio.run`` after the first one
+        already closed loop-bound resources. Fires on success and
+        failure paths alike (AC #14).
+        """
+        nonlocal success, run_error
+        try:
+            await _drive()
+        except typer.Exit:
+            # Commit/push exit codes (8/9) — already user-facing,
+            # propagate after RunEnd fires.
+            raise
+        except Exception as exc:  # noqa: BLE001
+            success = False
+            run_error = f"internal_failure: {type(exc).__name__}: {exc}"
+            raise
+        finally:
+            # Best-effort RunEnd — never let a subscriber failure mask
+            # the pipeline's real exit reason.
+            try:
+                await progress_state.run_end(
+                    workflow_id=run_branch,
+                    success=success,
+                    error=run_error,
+                    aggregate_stats=aggregate,
+                    total_cycles=cycles_per_stage,
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning("run_end_emit_failed", exc_info=True)
+
     try:
-        asyncio.run(_drive())
+        asyncio.run(_drive_full())
     except typer.Exit:
         # Re-raise commit/push exit codes (8/9) as-is — the lockfile
         # ``finally`` in run.py still releases the lock.
@@ -432,21 +466,6 @@ def drive_pipeline(
             f"lockfile released; partial state on local branch '{run_branch}'.\n"
         )
         raise typer.Exit(code=1) from exc
-    finally:
-        # Best-effort RunEnd emission so the console subscriber prints
-        # ``totals: …`` even when we exit non-zero.
-        try:
-            asyncio.run(
-                progress_state.run_end(
-                    workflow_id=run_branch,
-                    success=success,
-                    error=run_error,
-                    aggregate_stats=aggregate,
-                    total_cycles=cycles_per_stage,
-                )
-            )
-        except Exception:  # noqa: BLE001
-            logger.warning("run_end_emit_failed", exc_info=True)
 
     if not success:
         if run_error and "max_review_cycles" in run_error:
