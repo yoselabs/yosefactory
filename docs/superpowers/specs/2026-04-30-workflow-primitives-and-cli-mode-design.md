@@ -31,16 +31,18 @@ introducing engine-specific concepts now. Tracker-driven triggers,
 auto-merge, multi-pipeline coordination, and human-gate signals are
 deliberately deferred — additive later, never breaking changes.
 
-Appetite: **7–9 days.** The vocabulary (Workflow / Activity / Effect /
+Appetite: **8–10 days.** The vocabulary (Workflow / Activity / Effect /
 Signal / Trigger) stays *documentation-level* in v1 — code keeps existing
 type names — but the runtime surface added here is real engineering:
-`LocalReviewAdapter`, the run-branch generator + parser pair, env-var
-validation + REQUIRED_ENV plumbing, lockfile + signal-handler cleanup,
-dirty-tree check, lazy v0→v1 migration, the failure-modes-table error
-surface, the per-stage stats event extension + `RunEnd` event, and the
+`LocalReviewAdapter`, the new `WorkAdapter.write_stage_artifact` method
+and `LocalFileWorkAdapter` impl, the run-branch generator + parser pair,
+env-var validation + REQUIRED_ENV plumbing, lockfile + signal-handler
+cleanup, dirty-tree check, lazy v0→v1 migration, the failure-modes-table
+error surface, the per-stage stats event extension + `RunEnd` event, the
 console subscriber's three-rhythm renderer (start / event log / output
-block + stats / totals). Doing a real type rename inside the codebase
-is out of scope and would push to 11+ days.
+block + stats / totals), and the `make smoke-local` end-to-end harness.
+Doing a real type rename inside the codebase is out of scope and would
+push to 12+ days.
 
 ## Non-goals
 
@@ -163,13 +165,35 @@ jira+github) are additive.
 
 | Role | Adapter | Behavior |
 |---|---|---|
-| Work | `LocalFileWorkAdapter` (existing, extended) | Reads `INPUT.md` from base HEAD as the "ticket"; progress/status markers go to `.a2sdlc/state/<branch>/progress.md`; **stage handlers write per-stage artifacts via this adapter**: SPEC writes `.a2sdlc/state/<branch>/spec.md` (one file, overwritten on re-entry); IMPLEMENT writes `.a2sdlc/state/<branch>/implement-cycle-<n>.md` (one per cycle). |
+| Work | `LocalFileWorkAdapter` (existing, extended) | Reads `INPUT.md` from base HEAD as the "ticket"; progress/status markers go to `.a2sdlc/state/<branch>/progress.md`; **stage handlers write per-stage artifacts** via the new `WorkAdapter.write_stage_artifact` method (see below): SPEC writes `.a2sdlc/state/<branch>/spec.md` (one file per workflow; SPEC runs only `cycle 1`); IMPLEMENT writes `.a2sdlc/state/<branch>/implement-cycle-<n>.md` (one per cycle). |
 | Review | **`LocalReviewAdapter` (new)** | `post_review` writes `.a2sdlc/state/<branch>/reviews/<ts>-cycle-<n>.md`; `post_inline_comments` writes `<ts>-cycle-<n>-inline.md` (format below). PR-lifecycle methods (`create_draft_pr`, `merge_pr`, `mark_pr_ready`, `get_approvals`) return safe no-op defaults. |
 | Subscribers | `console`, `mlflow_trace` | Console prints stage transitions and per-stage stats summaries (duration / turns / tokens / cost) to stdout, plus a final `totals:` line; MLflow records the same numbers as run metrics. |
 
 `LocalNoopReviewAdapter` is preserved for tests that want a true no-op; the
 new `LocalReviewAdapter` is the user-facing local mode that produces
 inspectable artifacts.
+
+**New `WorkAdapter` method (additive, not a rename).** The protocol gains
+one method to make the artifact-write seam explicit and the output-block
+byte-equality enforceable:
+
+```python
+def write_stage_artifact(
+    self, stage: StageName, cycle: int, content: str
+) -> Path: ...
+```
+
+Implementations decide *where* the file lands (LocalFileWorkAdapter
+returns `.a2sdlc/state/<branch>/<stage>[-cycle-<n>].md`; future
+GitHubWorkAdapter could write the same to a tracker comment); the
+returned `Path` is what the `console` subscriber reads to populate the
+output block. This way the file content and the stdout block are the
+same `bytes` object — the byte-equality claim in AC #13 is enforceable
+by a single read.
+
+The method is **additive** (no existing call sites change) and is
+explicitly carved out of the "no code renames" non-goal in the same
+spirit as `RunEnd`.
 
 Inline-comment file format. One block per comment, blank line between
 blocks. Multi-line comment bodies are kept verbatim under the header:
@@ -323,13 +347,31 @@ stream (`domain/progress.py`) routed through the `console` subscriber:
      `ProgressEvent` is extended to carry a `stage_stats:
      StageRunStats` field; the `console` subscriber reads it.
 4. **Run end** — a `totals:` aggregate line over all stage runs. Wiring:
-   `pipeline/dispatch.py` (the composition root, already permitted to
-   import broadly) emits a new `RunEnd` event with the aggregated
-   `StageRunStats` *after* the stage loop closes; the `console`
-   subscriber prints `totals:` from it. Adding `RunEnd` to
-   `domain/progress.py` is a code-level addition explicitly carved out
-   from the "no code renames" non-goal — it's an additive event, not a
+   `pipeline/dispatch.py` emits a new `RunEnd` event in a `finally`
+   block so it fires on **both success and failure paths**. The
+   `console` subscriber prints the line as `totals:` on success or
+   `totals (failed):` when `RunEnd.success == False`. Adding `RunEnd`
+   to `domain/progress.py` is a code-level addition explicitly carved
+   out from the "no code renames" non-goal — additive event, not a
    rename.
+
+   `RunEnd` shape:
+
+   ```python
+   @dataclass(frozen=True)
+   class RunEnd:
+       workflow_id:     str
+       success:         bool
+       error:           str | None        # populated on failure paths
+       aggregate_stats: StageRunStats     # summed across all stage runs
+       total_cycles:    dict[StageName, int]  # cycles per stage (e.g., {SPEC:1, IMPLEMENT:2, REVIEW:2})
+   ```
+
+   Even on failure paths from §Failure modes (commit failure, push
+   failure, max_review_cycles exceeded, internal/unhandled), `RunEnd`
+   captures whatever stages did run before the failure. AC #12 covers
+   the success case; `totals (failed):` rendering is asserted by AC
+   #14 (added below).
 
 The `_throttle.py` utility stays available for future ecosystems
 (github mode posts comments and *will* want throttling), but the
@@ -369,11 +411,10 @@ All tests pass.
 ===== a2sdlc:stage-output BEGIN =====
 verdict: changes_requested
 
-inline:
-  src/billing/charge.py:88
-    missing edge case for X — empty cart still hits the upstream API
-    when payment_method has retry_on_empty=True. add a guard before
-    line 88 or hoist the EMPTY_CART check.
+src/billing/charge.py:88
+  agent: missing edge case for X — empty cart still hits the upstream API
+  when payment_method has retry_on_empty=True. add a guard before
+  line 88 or hoist the EMPTY_CART check.
 ===== a2sdlc:stage-output END =====
 [REVIEW]    handover → IMPLEMENT | 41.2s · 3 turns · 22.1k in / 1.8k out · $0.071
 
@@ -397,8 +438,22 @@ branch: a2sdlc/auto/req-billing-v2/20260430-142208-a3f019
 totals: 5m 17s · 23 turns · 107.1k in / 26.2k out · $0.790
 ```
 
-Token counts use `k`/`M` suffixes; cost is USD with two decimals;
-durations use `Xs` / `Xm Ys` form.
+**Stats line formatting.** All three numeric formatters reuse the
+existing helpers in `domain/progress_format.py` so the renderer stays
+consistent with the rest of the engine:
+
+- **Duration** — `_format_duration(duration_ms / 1000)`. Yields `Xs`
+  below 60s, `Xm Ys` between 1m and 1h, `Xh Ym` above. Sub-second values
+  render as `0s`.
+- **Tokens (in / out)** — `_format_tokens(n)`. `n < 1000` renders as
+  `n` (no suffix); `1000 ≤ n < 1_000_000` renders `X.Yk` with one
+  decimal; `n ≥ 1_000_000` renders `X.YM`. `0` renders as `0`.
+- **Cost** — `f"${cost_usd:.2f}"` always two decimals; `0.0` renders
+  as `$0.00` (used for free local models so the line shape is stable).
+
+If a stat is unavailable for a stage (e.g. a stage that doesn't call
+the LLM), the field is rendered as `-` rather than omitted, so the line
+shape stays alignable in stdout.
 
 ## Fail-fast on missing env vars
 
@@ -554,9 +609,11 @@ doesn't care which trigger fired.
 ## Acceptance criteria
 
 1. A fresh repo with `INPUT.md` on a `req/*` branch and a minimal
-   `.a2sdlc/config.yaml` runs end-to-end via `a2sdlc run` on a VM, produces
-   a run branch on origin, writes review artifacts under
-   `.a2sdlc/state/<branch>/reviews/`, and prints the branch name.
+   `.a2sdlc/config.yaml` runs end-to-end via `a2sdlc run` on a VM,
+   produces a run branch on origin, and writes all per-stage artifacts
+   under `.a2sdlc/state/<branch>/`: `spec.md`, one or more
+   `implement-cycle-<n>.md`, and review files under `reviews/`. Prints
+   the run-branch name on stdout.
 2. Re-running with the same `INPUT.md` produces a branch with the same
    hash suffix (different timestamp); BA can detect duplicates.
 3. Re-running after editing `INPUT.md` produces a branch with a different
@@ -581,9 +638,11 @@ doesn't care which trigger fired.
     the run to fail with the dirty-tree error before any branch is
     created.
 11. v0 `state.json` migration: a fixture state file without
-    `schema_version` is accepted on read, surfaces a `state.migrated`
-    log line, and is rewritten with `schema_version=1` on the next
-    stage-finish commit (not eagerly).
+    `schema_version` is accepted on read, surfaces a `state.migrated
+    from=v0 to=v1` log line, and is rewritten on the next
+    stage-finish commit (not eagerly) with `schema_version=1` plus
+    every other v1-mandated identity field present (`workflow_id`,
+    `ticket_key` semantics, `base`, `base_sha`, `ecosystem`).
 12. Per-stage stats summary line is printed at every stage terminal
     transition (`done` / `handover` / `approved`) with all five fields
     (duration, turns, tokens-in, tokens-out, cost), and a final
@@ -598,6 +657,75 @@ doesn't care which trigger fired.
     plus the paired inline file when present), and one terminal stats
     line. The block content is byte-equal to the file the active
     adapter wrote.
+14. `RunEnd` fires on **both success and failure** paths. On success
+    the console prints `totals: <stats>`; on failure (any exit path
+    in §Failure modes that occurs after at least one stage ran) the
+    console prints `totals (failed): <stats>` followed by the failure
+    error message. The `aggregate_stats` cover whatever stages
+    actually ran.
+15. **End-to-end smoke test against a real scratch repo.** A make
+    target (`make smoke-local`) sets up a fresh git repo in
+    `tmp/smoke-local/`, initializes a `req/billing-v2` base branch
+    with a small `INPUT.md` and a minimal `.a2sdlc/config.yaml`, runs
+    `a2sdlc run` from that directory, asserts the run-branch exists
+    locally and on the local origin, asserts all expected artifacts
+    are present (`spec.md`, `implement-cycle-1.md`, at least one
+    review file), asserts the stdout transcript contains the
+    `===== a2sdlc:stage-output BEGIN =====` / `END` fences and a
+    `totals:` line, and exits 0. The smoke runs in CI; the scratch
+    repo is created/destroyed within the make target, never
+    committed.
+
+## Testing strategy
+
+Three tiers; the implementation plan must include all three.
+
+### Unit tests
+Per-module, fast, no I/O. Cover: branch-name generation +
+parsing (round-trip), env-var validator, dirty-tree check, lockfile
+acquire/release + signal handler, state-blob v0→v1 migrator, stats
+formatters (the `_format_*` helpers), `RunEnd` aggregation across
+mock stage runs, output-block fence rendering.
+
+### Integration tests
+Use `LocalFileWorkAdapter` + `LocalReviewAdapter` against a temporary
+git repo (pytest fixture) with mocked agent calls. Assert: artifact
+files land at the spec'd paths; `state.json` schema_version is set;
+re-run with same INPUT.md produces same hash suffix; protected-base
+guard fires; lockfile error fires on concurrent invocation.
+
+### End-to-end smoke (real `a2sdlc run`)
+A `make smoke-local` target performs a *real* run end-to-end against
+a scratch repo created inside the harness:
+
+1. Creates `tmp/smoke-local/repo/` (cleaned at start), `git init`s it,
+   initializes a "local origin" via a bare repo at
+   `tmp/smoke-local/origin.git/` and sets it as `origin` remote on
+   the working repo.
+2. Creates a base branch `req/smoke-feature` carrying a tiny
+   `INPUT.md` (a deliberately small change request, e.g. "add a
+   greet() function returning 'hello, <name>!' and a unit test")
+   plus a minimal `.a2sdlc/config.yaml` pointing at the local
+   ecosystem.
+3. Commits + pushes the base to the local origin.
+4. Invokes `a2sdlc run` from inside the working repo with the
+   required env vars set from CI secrets (or skipped with a clear
+   message when secrets are absent — smoke is opt-in in that case).
+5. Captures stdout to a file; asserts:
+   - exit code 0
+   - the run-branch exists on the local origin
+   - per-stage artifacts are present at the spec'd paths
+   - stdout contains the expected fences and a `totals:` line
+   - the run-branch's tip commit contains the agent-produced changes
+6. Tears down `tmp/smoke-local/` on exit (success or failure
+   preserves the directory under `tmp/smoke-local-failed-<ts>/` for
+   forensics).
+
+This is the spec's primary trust surface — unit and integration tests
+prove the wiring; the smoke proves the engine actually does the job.
+The implementation plan must produce the harness, the
+`make smoke-local` target, and a CI job that runs it (gated on the
+required env vars being present).
 
 ## Out-of-scope follow-ups (already enumerated, captured here for tracking)
 
