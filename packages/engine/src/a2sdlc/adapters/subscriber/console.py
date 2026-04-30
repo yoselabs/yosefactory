@@ -195,12 +195,25 @@ class ConsoleSubscriber:
         Spec §Console output cadence sample: ``done`` for non-review stages,
         ``approved`` for a successful review, ``handover → IMPLEMENT`` when a
         review fails (changes requested loops back to IMPLEMENT).
+
+        For REVIEW, the verdict (approved vs changes_requested) lives in
+        the parsed structured-output status block — ``StageEnd.success``
+        only means "the stage executed without error". Prefer
+        ``event.verdict`` when present; fall back to ``success`` for
+        non-REVIEW stages or when no verdict was parsed.
         """
         if not event.success:
             if event.stage == StageName.REVIEW:
                 return "handover → IMPLEMENT"
             return "failed"
         if event.stage == StageName.REVIEW:
+            verdict = event.verdict
+            if verdict == "changes_requested":
+                return "handover → IMPLEMENT"
+            if verdict == "approved":
+                return "approved"
+            # Unknown / None → fall back to legacy label so the renderer
+            # stays useful for stages whose driver hasn't been updated.
             return "approved"
         return "done"
 

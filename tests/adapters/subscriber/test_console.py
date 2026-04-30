@@ -313,6 +313,51 @@ async def test_review_failure_renders_handover_transition() -> None:
 
 
 @pytest.mark.asyncio
+async def test_review_verdict_changes_requested_renders_handover() -> None:
+    """REVIEW with verdict=changes_requested must render the handover
+    label even when success=True (the stage executed without error,
+    but the verdict directs the loop back to IMPLEMENT)."""
+    buf = io.StringIO()
+    sub = ConsoleSubscriber(stream=buf)
+    await sub.handle(
+        StageStart(stage=StageName.REVIEW, session_id="r1", started_at=0.0)
+    )
+    await sub.handle(
+        StageEnd(
+            stage=StageName.REVIEW,
+            success=True,
+            error=None,
+            final_metrics=_metrics(elapsed=2.0, num_turns=1),
+            artifact_path=None,
+            verdict="changes_requested",
+        )
+    )
+    out = buf.getvalue()
+    assert "handover → IMPLEMENT" in out
+    assert "approved" not in out
+
+
+@pytest.mark.asyncio
+async def test_review_verdict_approved_renders_approved() -> None:
+    buf = io.StringIO()
+    sub = ConsoleSubscriber(stream=buf)
+    await sub.handle(
+        StageStart(stage=StageName.REVIEW, session_id="r1", started_at=0.0)
+    )
+    await sub.handle(
+        StageEnd(
+            stage=StageName.REVIEW,
+            success=True,
+            error=None,
+            final_metrics=_metrics(elapsed=2.0, num_turns=1),
+            artifact_path=None,
+            verdict="approved",
+        )
+    )
+    assert "approved" in buf.getvalue()
+
+
+@pytest.mark.asyncio
 async def test_non_review_failure_renders_failed_transition() -> None:
     buf = io.StringIO()
     sub = ConsoleSubscriber(stream=buf)
