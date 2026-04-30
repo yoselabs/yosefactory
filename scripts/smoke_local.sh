@@ -2,13 +2,11 @@
 # Spec §Testing strategy → End-to-end smoke. AC #15.
 set -euo pipefail
 
-REQUIRED=(ANTHROPIC_API_KEY)
-for v in "${REQUIRED[@]}"; do
-  if [ -z "${!v:-}" ]; then
-    echo "smoke-local skipped: $v not set"
-    exit 0
-  fi
-done
+# Accept either subscription OAuth token or direct API key.
+if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+  echo "smoke-local skipped: CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY not set"
+  exit 0
+fi
 
 ROOT="$(git rev-parse --show-toplevel)"
 TMP="$ROOT/tmp/smoke-local"
@@ -36,7 +34,7 @@ cat > .a2sdlc/config.yaml <<'YAML'
 mode: local
 adapters: {work: local-file, review: local}
 subscribers: [console, mlflow]
-required_env: [ANTHROPIC_API_KEY]
+required_env: []
 pipeline: {max_review_cycles: 2, protected_bases: [main]}
 YAML
 
@@ -56,9 +54,10 @@ git add INPUT.md
 git commit -q --amend --no-edit
 git push -q -u origin req/smoke-feature
 
-# Run the engine.
+# Run the engine. Use uv run from the engine project so we exercise the
+# local source tree, not whatever stale shim happens to be on PATH.
 TRANSCRIPT="$TMP/transcript.txt"
-if a2sdlc run > "$TRANSCRIPT" 2>&1; then
+if uv run --project "$ROOT/packages/engine" a2sdlc run > "$TRANSCRIPT" 2>&1; then
   STATUS=0
 else
   STATUS=$?
@@ -81,7 +80,7 @@ echo "$RUN_BRANCH" | grep -q "^a2sdlc/auto/" || fail "branch shape: $RUN_BRANCH"
 git -C "$WORK" ls-remote origin "$RUN_BRANCH" | grep -q . || fail "branch missing on origin"
 
 # Artifacts present.
-STATE_DIR="$WORK/.a2sdlc/state/$(echo "$RUN_BRANCH" | tr / __)"
+STATE_DIR="$WORK/.a2sdlc/state/$(echo "$RUN_BRANCH" | sed 's|/|__|g')"
 [ -f "$STATE_DIR/spec.md" ] || fail "spec.md missing under $STATE_DIR"
 ls "$STATE_DIR/"implement-cycle-*.md > /dev/null 2>&1 || fail "implement-cycle-*.md missing"
 ls "$STATE_DIR/reviews/"*.md > /dev/null 2>&1 || fail "review file missing"
