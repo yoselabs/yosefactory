@@ -272,32 +272,56 @@ Behavior, in this order:
     subscriber plugin.
 11. **Release the lockfile** on exit (success or failure).
 
+### Console output cadence
+
+Three rhythms, all driven from the existing `ProgressEvent` stream
+(`domain/progress.py`) routed through the `console` subscriber:
+
+1. **Stage start** — one line when a stage begins, naming the stage and
+   the cycle number for re-entries: `[SPEC] starting (cycle 1)`.
+2. **Mid-stage progress** — short status lines, **throttled** via
+   `Throttle(min_interval≈2s)` (existing utility in
+   `adapters/subscriber/_throttle.py`). Only `Milestone` and
+   `GroupOpen`/`GroupClose` events render to console; tool-call spam is
+   dropped. One line per admitted event, prefixed with the stage tag.
+3. **Stage end** — the stats summary line at the terminal transition
+   (`done` / `handover` / `approved`), format
+   `<duration> · <turns> turns · <tokens-in> in / <tokens-out> out ·
+   <cost>` sourced from `StageRunStats` (`domain/stats.py`).
+4. **Run end** — a `totals:` aggregate line over all stage runs.
+
+The mid-stage stream stays terse on purpose: BAs running on a VM want
+"is it still alive and what is it doing roughly" rather than a tool-call
+log.
+
 Sample output:
 
 ```
 $ a2sdlc run
+[SPEC]      starting (cycle 1)
 [SPEC]      reading INPUT.md from req/billing-v2 ...
+[SPEC]      drafting acceptance criteria ...
 [SPEC]      done → IMPLEMENT     | 18.3s · 4 turns · 12.4k in / 3.1k out · $0.082
+[IMPLEMENT] starting (cycle 1)
 [IMPLEMENT] generating changes ...
+[IMPLEMENT] writing tests ...
 [IMPLEMENT] done → REVIEW        | 2m 41s · 9 turns · 38.2k in / 14.7k out · $0.412
+[REVIEW]    starting (cycle 1)
 [REVIEW]    inspecting diff ...
 [REVIEW]    handover → IMPLEMENT | 41.2s · 3 turns · 22.1k in / 1.8k out · $0.071
             (feedback: "missing edge case for X")
+[IMPLEMENT] starting (cycle 2)
 [IMPLEMENT] revising ...
 [IMPLEMENT] done → REVIEW        | 1m 04s · 5 turns · 19.8k in / 6.2k out · $0.184
+[REVIEW]    starting (cycle 2)
 [REVIEW]    approved             | 12.8s · 2 turns · 14.6k in / 0.4k out · $0.041
 done.
 branch: a2sdlc/auto/req-billing-v2/20260430-142208-a3f019
 totals: 5m 17s · 23 turns · 107.1k in / 26.2k out · $0.790
 ```
 
-The trailing line per stage is the **stage stats summary** — same fields
-the status-bar surface already accumulates (`domain/stats.py`
-`StageRunStats`). The summary fires at the stage's terminal transition
-(done / handover / approved). Format: `<duration> · <turns> turns ·
-<tokens-in> in / <tokens-out> out · <cost>`. Token counts are formatted
-with `k`/`M` suffixes, cost as USD with two decimals. The final
-`totals:` line aggregates across all stage runs in the workflow.
+Token counts use `k`/`M` suffixes; cost is USD with two decimals;
+durations use `Xs` / `Xm Ys` form.
 
 ## Fail-fast on missing env vars
 
@@ -476,6 +500,10 @@ doesn't care which trigger fired.
     transition (`done` / `handover` / `approved`) with all five fields
     (duration, turns, tokens-in, tokens-out, cost), and a final
     `totals:` line aggregates across all stage runs.
+13. Console cadence: each stage prints exactly one `starting (cycle N)`
+    line on entry, throttled mid-stage progress lines (≥2s apart), and
+    one terminal stats line. Tool-call-level events do not render to
+    stdout.
 
 ## Out-of-scope follow-ups (already enumerated, captured here for tracking)
 
