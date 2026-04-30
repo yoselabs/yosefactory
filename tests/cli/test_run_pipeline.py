@@ -239,6 +239,126 @@ def test_drive_pipeline_branch_creation_failure_exits_1(
     assert exc_info.value.exit_code == 1
 
 
+class _MetricRunner:
+    """Scripted runner that returns RunResult with non-zero metrics."""
+
+    def __init__(
+        self,
+        scripts: list[tuple[StageStatus | None, str, dict[str, float | int]]],
+    ):
+        self._scripts = list(scripts)
+
+    async def run(self, **kwargs):  # noqa: ANN003,ARG002
+        from a2sdlc.domain.run_result import RunResult
+
+        if not self._scripts:
+            raise RuntimeError("scripted runner exhausted")
+        status, output, metrics = self._scripts.pop(0)
+        if status is None:
+            block = ""
+        else:
+            block = f'\n```a2sdlc\n{{"status": "{status.value}", "output": ""}}\n```\n'
+        return RunResult(
+            success=True,
+            output=output + block,
+            error=None,
+            session_id="test",
+            total_cost_usd=float(metrics.get("cost", 0.0)),
+            duration_ms=int(metrics.get("duration_ms", 0)),
+            input_tokens=int(metrics.get("tokens_in", 0)),
+            output_tokens=int(metrics.get("tokens_out", 0)),
+            num_turns=int(metrics.get("num_turns", 0)),
+            progress=None,
+        )
+
+
+def test_drive_pipeline_aggregate_stats_in_run_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RunEnd.aggregate_stats sums metrics across SPEC/IMPLEMENT/REVIEW stages."""
+    from a2sdlc.domain.progress import ProgressEvent, ProgressState, RunEnd
+
+    repo, _origin, base = _init_local_repo(tmp_path)
+    monkeypatch.chdir(repo)
+
+    runner = _MetricRunner(
+        [
+            (
+                StageStatus.COMPLETE,
+                "spec body",
+                {
+                    "cost": 0.10,
+                    "duration_ms": 1000,
+                    "tokens_in": 100,
+                    "tokens_out": 50,
+                    "num_turns": 2,
+                },
+            ),
+            (
+                StageStatus.COMPLETE,
+                "impl body",
+                {
+                    "cost": 0.20,
+                    "duration_ms": 2000,
+                    "tokens_in": 200,
+                    "tokens_out": 80,
+                    "num_turns": 3,
+                },
+            ),
+            (
+                StageStatus.APPROVED,
+                "review body",
+                {
+                    "cost": 0.05,
+                    "duration_ms": 500,
+                    "tokens_in": 40,
+                    "tokens_out": 20,
+                    "num_turns": 1,
+                },
+            ),
+        ]
+    )
+    monkeypatch.setattr(
+        "a2sdlc.pipeline.runner.SdkStageRunner",
+        lambda **kw: runner,  # noqa: ARG005
+    )
+
+    captured: list[RunEnd] = []
+
+    class _Capture:
+        async def handle(self, event: ProgressEvent) -> None:
+            if isinstance(event, RunEnd):
+                captured.append(event)
+
+    from typing import Any
+
+    real_init = ProgressState.__init__
+
+    def _patched_init(self: ProgressState, *args: Any, **kwargs: Any) -> None:
+        real_init(self, *args, **kwargs)
+        self.subscribe(_Capture())
+
+    monkeypatch.setattr(ProgressState, "__init__", _patched_init)
+
+    cfg = _make_run_config(max_cycles=2)
+    run_pipeline_module.drive_pipeline(
+        repo=repo,
+        config=cfg,
+        base=base,
+        input_md=b"smoke\n",
+        run_branch="a2sdlc/auto/feature-x/20260430-222222-c2",
+        label=None,
+    )
+
+    assert len(captured) == 1
+    agg = captured[0].aggregate_stats
+    assert agg.cost_usd == pytest.approx(0.35)
+    assert agg.tokens_in == 340
+    assert agg.tokens_out == 150
+    assert agg.duration_ms == 3500
+    assert agg.num_turns == 6
+
+
 def test_branch_state_dir_uses_double_underscore(tmp_path: Path) -> None:
     """Slashes in run-branch names map to ``__`` for the state dir slug."""
     got = run_pipeline_module._branch_state_dir(

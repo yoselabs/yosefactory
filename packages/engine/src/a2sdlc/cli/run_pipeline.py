@@ -36,6 +36,7 @@ import typer
 
 from a2sdlc.config_run import RunConfig
 from a2sdlc.domain.models import StageName, StageStatus
+from a2sdlc.domain.stats import StageRunStats
 
 
 def _checkout_run_branch(repo: Path, base: str, run_branch: str) -> None:
@@ -111,6 +112,7 @@ class _StageRunResult:
     artifact_path: Path | None
     success: bool
     error: str | None
+    stats: StageRunStats
 
 
 async def _run_one_stage(
@@ -152,6 +154,7 @@ async def _run_one_stage(
     artifact: Path | None = None
     status: StageStatus | None = None
     output_text = ""
+    stats: StageRunStats = StageRunStats()
 
     try:
         result = await executor.run(
@@ -166,6 +169,7 @@ async def _run_one_stage(
             branch=branch,
         )
         output_text = result.output
+        stats = result.stats
         if not result.success:
             success = False
             error = result.error or "agent_failure"
@@ -204,6 +208,7 @@ async def _run_one_stage(
         artifact_path=artifact,
         success=success and error is None,
         error=error,
+        stats=stats,
     )
 
 
@@ -240,7 +245,6 @@ def drive_pipeline(
     from a2sdlc.adapters.work.local_file import LocalFileWorkAdapter  # noqa: PLC0415
     from a2sdlc.config import load_config_file, load_stage_config  # noqa: PLC0415
     from a2sdlc.domain.progress import ProgressState  # noqa: PLC0415
-    from a2sdlc.domain.stats import StageRunStats  # noqa: PLC0415
     from a2sdlc.pipeline.runner import SdkStageRunner  # noqa: PLC0415
 
     state_root = _branch_state_dir(repo, run_branch)
@@ -331,6 +335,7 @@ def drive_pipeline(
             review_adapter=review_adapter,
         )
         spec_output = spec_res.output
+        aggregate.add_from_stats(spec_res.stats)
         if not spec_res.success:
             success = False
             run_error = spec_res.error or "spec_failed"
@@ -365,6 +370,7 @@ def drive_pipeline(
                 review_adapter=review_adapter,
             )
             implement_output = impl_res.output
+            aggregate.add_from_stats(impl_res.stats)
             if not impl_res.success:
                 success = False
                 run_error = impl_res.error or "implement_failed"
@@ -393,6 +399,7 @@ def drive_pipeline(
                 work_adapter=work_adapter,
                 review_adapter=review_adapter,
             )
+            aggregate.add_from_stats(rev_res.stats)
             if not rev_res.success:
                 success = False
                 run_error = rev_res.error or "review_failed"

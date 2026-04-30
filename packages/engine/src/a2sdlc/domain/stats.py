@@ -27,6 +27,19 @@ class StageRunStats:
         self.duration_ms += result.duration_ms
         self.num_turns += result.num_turns
 
+    def add_from_stats(self, other: StageRunStats) -> None:
+        """Merge another StageRunStats into this accumulator.
+
+        Used by ``drive_pipeline`` to roll per-stage totals (already
+        accumulated by ``StageExecutor`` across follow-up rounds) up
+        into the run-level aggregate emitted on ``RunEnd``.
+        """
+        self.cost_usd += other.cost_usd
+        self.tokens_in += other.tokens_in
+        self.tokens_out += other.tokens_out
+        self.duration_ms += other.duration_ms
+        self.num_turns += other.num_turns
+
     def reset(self) -> None:
         """Zero all accumulated fields."""
         self.cost_usd = 0
