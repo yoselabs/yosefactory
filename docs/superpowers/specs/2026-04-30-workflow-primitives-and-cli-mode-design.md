@@ -31,11 +31,16 @@ introducing engine-specific concepts now. Tracker-driven triggers,
 auto-merge, multi-pipeline coordination, and human-gate signals are
 deliberately deferred — additive later, never breaking changes.
 
-Appetite: **5–7 days.** The vocabulary (Workflow / Activity / Effect /
-Signal / Trigger) is *documentation-level* in v1 — code keeps existing
-type names; only conceptual boundaries are tightened. Doing a real type
-rename inside the codebase is out of scope and would push the appetite to
-9+ days.
+Appetite: **7–9 days.** The vocabulary (Workflow / Activity / Effect /
+Signal / Trigger) stays *documentation-level* in v1 — code keeps existing
+type names — but the runtime surface added here is real engineering:
+`LocalReviewAdapter`, the run-branch generator + parser pair, env-var
+validation + REQUIRED_ENV plumbing, lockfile + signal-handler cleanup,
+dirty-tree check, lazy v0→v1 migration, the failure-modes-table error
+surface, the per-stage stats event extension + `RunEnd` event, and the
+console subscriber's three-rhythm renderer (start / event log / output
+block + stats / totals). Doing a real type rename inside the codebase
+is out of scope and would push to 11+ days.
 
 ## Non-goals
 
@@ -56,8 +61,8 @@ rename inside the codebase is out of scope and would push the appetite to
 - **No feature-flagging / `workflow.patched` analogue.** Forward-compat is
   via `state.json`'s `schema_version`, not code-path versioning.
 - **No multi-concurrent runs on one VM.** Single run per VM is supported;
-  worktrees come later. v1 enforces the constraint with a PID lockfile
-  (see §Failure modes); behavior beyond that is undefined.
+  worktrees come later. v1 enforces the constraint with a PID lockfile;
+  see §Failure modes for the exact lockfile + stale-lock semantics.
 - **No code rename of existing types** to the new vocabulary. The
   vocabulary is documentation-level; type names in the codebase stay as
   they are unless a specific rename is part of an Important fix.
@@ -158,7 +163,7 @@ jira+github) are additive.
 
 | Role | Adapter | Behavior |
 |---|---|---|
-| Work | `LocalFileWorkAdapter` (existing, extended) | Reads `INPUT.md` from base HEAD as the "ticket"; progress comments go to `.a2sdlc/state/<branch>/progress.md`; status transitions update local markers. |
+| Work | `LocalFileWorkAdapter` (existing, extended) | Reads `INPUT.md` from base HEAD as the "ticket"; progress/status markers go to `.a2sdlc/state/<branch>/progress.md`; **stage handlers write per-stage artifacts via this adapter**: SPEC writes `.a2sdlc/state/<branch>/spec.md` (one file, overwritten on re-entry); IMPLEMENT writes `.a2sdlc/state/<branch>/implement-cycle-<n>.md` (one per cycle). |
 | Review | **`LocalReviewAdapter` (new)** | `post_review` writes `.a2sdlc/state/<branch>/reviews/<ts>-cycle-<n>.md`; `post_inline_comments` writes `<ts>-cycle-<n>-inline.md` (format below). PR-lifecycle methods (`create_draft_pr`, `merge_pr`, `mark_pr_ready`, `get_approvals`) return safe no-op defaults. |
 | Subscribers | `console`, `mlflow_trace` | Console prints stage transitions and per-stage stats summaries (duration / turns / tokens / cost) to stdout, plus a final `totals:` line; MLflow records the same numbers as run metrics. |
 
@@ -282,21 +287,49 @@ stream (`domain/progress.py`) routed through the `console` subscriber:
 2. **Mid-stage event log** — every progress event renders, including
    tool calls. No throttling — local-mode is for inspection on a VM,
    verbose is helpful. One line per event, prefixed with the stage tag
-   and indented for tool-call detail.
+   and indented for tool-call detail. `Milestone` events render as
+   plain prefixed lines; `GroupOpen` / `GroupClose` render as
+   pass-through scope markers (single line, no nesting indent in v1)
+   so the implementer doesn't have to invent a tree renderer.
+
+   The `cycle N` counter on the `starting` line is **per-stage,
+   always starts at 1, increments on each re-entry** of that stage
+   (SPEC will always show `cycle 1`; IMPLEMENT and REVIEW will
+   increment when the handover loop fires).
 3. **Stage end** — two blocks at the terminal transition (`done` /
    `handover` / `approved`):
-   - **Output block.** The stage's primary artifact rendered inline —
-     for REVIEW the contents of the review markdown that
-     `LocalReviewAdapter` just wrote; for SPEC the acceptance criteria
-     it produced; for IMPLEMENT the summary of changes. This is the
-     content that would have been a tracker-side comment in the github
-     ecosystem; in local mode it lands on both stdout and the
-     branch-state file. Block is fenced with `--- output ---` /
-     `--- end output ---` so it's grep-friendly.
+   - **Output block.** The stage's primary artifact rendered inline.
+     For each stage, the artifact is the file the active adapter
+     writes for that stage's output (single source, two sinks: file +
+     stdout):
+     - **SPEC** → `.a2sdlc/state/<branch>/spec.md`
+       (written by `LocalFileWorkAdapter`)
+     - **IMPLEMENT** → `.a2sdlc/state/<branch>/implement-cycle-<n>.md`
+       (written by `LocalFileWorkAdapter`)
+     - **REVIEW** → `.a2sdlc/state/<branch>/reviews/<ts>-cycle-<n>.md`
+       (written by `LocalReviewAdapter`; if the review produced inline
+       comments, the paired `<ts>-cycle-<n>-inline.md` is appended to
+       the same block)
+     Block is fenced with the banner-style markers below so the fence
+     cannot collide with arbitrary markdown the artifact contains:
+     ```
+     ===== a2sdlc:stage-output BEGIN =====
+     <artifact bytes>
+     ===== a2sdlc:stage-output END =====
+     ```
    - **Stats line.** `<duration> · <turns> turns · <tokens-in> in /
      <tokens-out> out · <cost>` sourced from `StageRunStats`
-     (`domain/stats.py`).
-4. **Run end** — a `totals:` aggregate line over all stage runs.
+     (`domain/stats.py`). Wiring: the existing `StageEnd`
+     `ProgressEvent` is extended to carry a `stage_stats:
+     StageRunStats` field; the `console` subscriber reads it.
+4. **Run end** — a `totals:` aggregate line over all stage runs. Wiring:
+   `pipeline/dispatch.py` (the composition root, already permitted to
+   import broadly) emits a new `RunEnd` event with the aggregated
+   `StageRunStats` *after* the stage loop closes; the `console`
+   subscriber prints `totals:` from it. Adding `RunEnd` to
+   `domain/progress.py` is a code-level addition explicitly carved out
+   from the "no code renames" non-goal — it's an additive event, not a
+   rename.
 
 The `_throttle.py` utility stays available for future ecosystems
 (github mode posts comments and *will* want throttling), but the
@@ -310,12 +343,12 @@ $ a2sdlc run
 [SPEC]      tool: read INPUT.md
 [SPEC]      tool: read docs/architecture.md
 [SPEC]      tool: write .a2sdlc/state/.../spec.md
---- output ---
+===== a2sdlc:stage-output BEGIN =====
 ## Acceptance criteria
 1. Charges with valid card succeed and return 2xx.
 2. Charges with empty cart return 400 with code EMPTY_CART.
 3. Idempotency-key reuse on the same cart returns the original charge.
---- end output ---
+===== a2sdlc:stage-output END =====
 [SPEC]      done → IMPLEMENT     | 18.3s · 4 turns · 12.4k in / 3.1k out · $0.082
 
 [IMPLEMENT] starting (cycle 1)
@@ -323,17 +356,17 @@ $ a2sdlc run
 [IMPLEMENT] tool: edit src/billing/charge.py
 [IMPLEMENT] tool: write tests/billing/test_charge.py
 [IMPLEMENT] tool: bash 'pytest tests/billing -x'
---- output ---
+===== a2sdlc:stage-output BEGIN =====
 Edited src/billing/charge.py: added EMPTY_CART guard at line 42.
 Added tests/billing/test_charge.py with 3 cases (success, empty-cart, idempotency).
 All tests pass.
---- end output ---
+===== a2sdlc:stage-output END =====
 [IMPLEMENT] done → REVIEW        | 2m 41s · 9 turns · 38.2k in / 14.7k out · $0.412
 
 [REVIEW]    starting (cycle 1)
 [REVIEW]    tool: read src/billing/charge.py
 [REVIEW]    tool: read tests/billing/test_charge.py
---- output ---
+===== a2sdlc:stage-output BEGIN =====
 verdict: changes_requested
 
 inline:
@@ -341,22 +374,22 @@ inline:
     missing edge case for X — empty cart still hits the upstream API
     when payment_method has retry_on_empty=True. add a guard before
     line 88 or hoist the EMPTY_CART check.
---- end output ---
+===== a2sdlc:stage-output END =====
 [REVIEW]    handover → IMPLEMENT | 41.2s · 3 turns · 22.1k in / 1.8k out · $0.071
 
 [IMPLEMENT] starting (cycle 2)
 [IMPLEMENT] tool: edit src/billing/charge.py
 [IMPLEMENT] tool: bash 'pytest tests/billing -x'
---- output ---
+===== a2sdlc:stage-output BEGIN =====
 Hoisted EMPTY_CART guard above the retry path. All tests pass.
---- end output ---
+===== a2sdlc:stage-output END =====
 [IMPLEMENT] done → REVIEW        | 1m 04s · 5 turns · 19.8k in / 6.2k out · $0.184
 
 [REVIEW]    starting (cycle 2)
 [REVIEW]    tool: read src/billing/charge.py
---- output ---
+===== a2sdlc:stage-output BEGIN =====
 verdict: approved
---- end output ---
+===== a2sdlc:stage-output END =====
 [REVIEW]    approved             | 12.8s · 2 turns · 14.6k in / 0.4k out · $0.041
 
 done.
@@ -417,6 +450,15 @@ Two invariants across all failure modes:
    `SIGTERM`) trigger the same cleanup.
 2. **Partial run-branches stay on the local VM.** They are never deleted
    on failure. A failed run is forensic data.
+
+**Stale-lockfile policy.** A lockfile contains the owning process PID
+and the run start timestamp. The engine **does not auto-reclaim** stale
+lockfiles in v1 — even if the recorded PID is dead, the next invocation
+fails with the lockfile error and the recovery instruction is `rm
+.a2sdlc/run.lock` after confirming no `a2sdlc` process is running. This
+is a deliberately conservative choice: silent reclaim risks racing two
+processes whose PIDs happened to recycle. Auto-reclaim with a TTL is a
+candidate for a future spec; v1 keeps the behavior obvious.
 
 ## MLflow correlation
 
@@ -495,15 +537,17 @@ doesn't care which trigger fired.
   `schema_version=0` and `ecosystem="local"` defaulted in. The migrated
   state is written back to disk **lazily**, on the next stage-finish
   commit — never eagerly on read. Migration is logged via the `console`
-  subscriber as `state.migrated v0 → v1`.
+  subscriber as `state.migrated from=v0 to=v1` (grep-friendly,
+  ASCII-only).
 - `RunIntent.base` already carries the base branch — wire `base_sha`
   capture at workflow start.
 - `format_branch` gains both directions of the mapping for the local
   ecosystem: existing `format_branch(ticket_key)` for the GH ecosystem
-  stays; new `format_run_branch(base, input_hash, ts) -> str` *generates*
-  the local run-branch name, and a paired `parse_run_branch(branch) ->
-  (base, ts, input_hash) | None` *extracts* the components for telemetry
-  and queries.
+  stays; new `format_run_branch(base, ts, input_hash) -> str`
+  *generates* the local run-branch name (argument order matches the
+  rendered name `<base-slug>/<ts>-<input-hash>`), and a paired
+  `parse_run_branch(branch) -> (base, ts, input_hash) | None`
+  *extracts* the components for telemetry and queries.
 - The `merge` stage is removed from the v1 default pipeline (still exists
   in code; just not in the local-mode stage list).
 
@@ -545,11 +589,15 @@ doesn't care which trigger fired.
     (duration, turns, tokens-in, tokens-out, cost), and a final
     `totals:` line aggregates across all stage runs.
 13. Console cadence: each stage prints exactly one `starting (cycle N)`
-    line on entry, every progress event (including tool calls) inline
-    with no throttling, an `--- output ---` / `--- end output ---`
-    block carrying the stage's primary artifact, and one terminal stats
-    line. The same artifact content is the file `LocalReviewAdapter` /
-    `LocalFileWorkAdapter` writes into branch state.
+    line **per stage entry** (cycles re-print on re-entry of IMPLEMENT
+    or REVIEW), every progress event (including tool calls) inline
+    with no throttling, an `===== a2sdlc:stage-output BEGIN =====` /
+    `===== a2sdlc:stage-output END =====` block carrying the stage's
+    primary artifact (SPEC → `spec.md`, IMPLEMENT →
+    `implement-cycle-<n>.md`, REVIEW → `reviews/<ts>-cycle-<n>.md`
+    plus the paired inline file when present), and one terminal stats
+    line. The block content is byte-equal to the file the active
+    adapter wrote.
 
 ## Out-of-scope follow-ups (already enumerated, captured here for tracking)
 
