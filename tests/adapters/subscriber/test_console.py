@@ -404,3 +404,42 @@ async def test_stage_end_closes_live_render() -> None:
         StageEnd(stage=StageName.SPEC, success=True, error=None, final_metrics=final)
     )
     assert sub._live is None
+
+
+@pytest.mark.asyncio
+async def test_legacy_group_open_close_and_milestone_refresh_recent_events() -> None:
+    """Legacy rich.Live mode appends GroupOpen/GroupClose/Milestone to recent_events."""
+    from a2sdlc.domain.progress import GroupClose, GroupOpen
+
+    state = ProgressState(project_root="/tmp")
+    sub = ConsoleSubscriber(state)
+    await sub.handle(StageStart(stage=StageName.SPEC, session_id="sid", started_at=0.0))
+    await sub.handle(GroupOpen(title="grouping"))
+    await sub.handle(GroupClose())
+    await sub.handle(Milestone(timestamp=0.0, label="hit"))
+    rendered = "\n".join(sub.recent_events)
+    assert "grouping" in rendered
+    assert "end" in rendered
+    assert "hit" in rendered
+
+
+@pytest.mark.asyncio
+async def test_run_end_flush_swallows_exception() -> None:
+    """If the underlying stream's flush() raises, RunEnd handler must not crash."""
+
+    class BoomStream(io.StringIO):
+        def flush(self) -> None:  # type: ignore[override]
+            raise OSError("pipe closed")
+
+    buf = BoomStream()
+    sub = ConsoleSubscriber(stream=buf)
+    await sub.handle(
+        RunEnd(
+            workflow_id="x",
+            success=True,
+            error=None,
+            aggregate_stats=StageRunStats(),
+            total_cycles={},
+        )
+    )
+    assert "totals:" in buf.getvalue()

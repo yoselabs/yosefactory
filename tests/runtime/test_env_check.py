@@ -36,3 +36,8 @@ def test_format_missing_message_shape():
     assert "GITHUB_TOKEN" in msg
     assert "(adapter:github-work)" in msg
     assert msg.startswith("error:")
+
+
+def test_format_missing_message_empty_returns_empty_string():
+    """Empty list -> empty string, so callers can early-return without scanning."""
+    assert format_missing_message([]) == ""

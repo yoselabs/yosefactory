@@ -68,3 +68,25 @@ def test_pr_lifecycle_methods_are_safe_noops(tmp_path: Path) -> None:
     adapter.update_pr_title(pr_number=0, title="t")
     adapter.mark_pr_ready(pr_number=0)
     adapter.merge_pr(pr_number=0)
+
+
+def test_pr_read_methods_are_safe_noops(tmp_path: Path) -> None:
+    """Read-side PR methods return empty values in local mode (no PR exists)."""
+    adapter = make_adapter(tmp_path)
+    assert adapter.read_pr_diff(pr_number=0) == ""
+    assert adapter.read_pr_comments(pr_number=0) == []
+    assert (
+        adapter.collect_pr_feedback(
+            pr_number=0, since=datetime(2026, 1, 1, tzinfo=timezone.utc)
+        )
+        == []
+    )
+    assert adapter.find_last_handover(pr_number=0) is None
+
+
+def test_default_clock_returns_utc_datetime() -> None:
+    """The module-level _default_clock helper produces a tz-aware UTC datetime."""
+    from a2sdlc.adapters.review.local import _default_clock
+
+    now = _default_clock()
+    assert now.tzinfo is timezone.utc
