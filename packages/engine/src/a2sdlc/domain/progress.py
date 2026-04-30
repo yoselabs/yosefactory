@@ -9,9 +9,11 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Protocol
 
 from a2sdlc.domain.models import StageName
+from a2sdlc.domain.stats import StageRunStats
 
 
 # ── Event taxonomy ────────────────────────────────────────────────
@@ -74,11 +76,35 @@ class StageEnd:
     success: bool
     error: str | None
     final_metrics: Metrics
+    artifact_path: Path | None = None
+
+
+@dataclass(frozen=True)
+class RunEnd:
+    """Workflow-level terminal event. Spec §Console output cadence.
+
+    Emitted by pipeline/dispatch.py in a finally block on every exit
+    path. Console subscriber renders ``totals:`` (success) or
+    ``totals (failed):`` + error message (failure).
+    """
+
+    workflow_id: str
+    success: bool
+    error: str | None
+    aggregate_stats: StageRunStats
+    total_cycles: dict[StageName, int]
 
 
 # Tagged union. Subscribers dispatch via isinstance.
 ProgressEvent = (
-    StageStart | ToolEntry | GroupOpen | GroupClose | Metrics | Milestone | StageEnd
+    StageStart
+    | ToolEntry
+    | GroupOpen
+    | GroupClose
+    | Metrics
+    | Milestone
+    | StageEnd
+    | RunEnd
 )
 
 
