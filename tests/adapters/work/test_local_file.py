@@ -410,3 +410,57 @@ def test_find_last_handover_returns_none_for_unknown_stage_name(tmp_path):
     (handover_dir / "unknown.md").write_text("garbage stage")
 
     assert adapter.find_last_handover("sid-1") is None
+
+
+def test_write_stage_artifact_spec_writes_spec_md(tmp_path) -> None:
+    from a2sdlc.adapters.work.local_file import LocalFileWorkAdapter
+    from a2sdlc.domain.models import StageName
+
+    adapter = LocalFileWorkAdapter(state_root=tmp_path / ".a2sdlc/state/branchA")
+    p = adapter.write_stage_artifact(StageName.SPEC, cycle=1, content="hello\n")
+    assert p == tmp_path / ".a2sdlc/state/branchA/spec.md"
+    assert p.read_text() == "hello\n"
+
+
+def test_write_stage_artifact_implement_uses_cycle(tmp_path) -> None:
+    from a2sdlc.adapters.work.local_file import LocalFileWorkAdapter
+    from a2sdlc.domain.models import StageName
+
+    adapter = LocalFileWorkAdapter(state_root=tmp_path / ".a2sdlc/state/branchA")
+    p1 = adapter.write_stage_artifact(StageName.IMPLEMENT, cycle=1, content="c1")
+    p2 = adapter.write_stage_artifact(StageName.IMPLEMENT, cycle=2, content="c2")
+    assert p1.name == "implement-cycle-1.md"
+    assert p2.name == "implement-cycle-2.md"
+    assert p1.read_text() == "c1"
+    assert p2.read_text() == "c2"
+
+
+def test_write_stage_artifact_overwrites_for_spec(tmp_path) -> None:
+    from a2sdlc.adapters.work.local_file import LocalFileWorkAdapter
+    from a2sdlc.domain.models import StageName
+
+    adapter = LocalFileWorkAdapter(state_root=tmp_path / ".a2sdlc/state/branchA")
+    adapter.write_stage_artifact(StageName.SPEC, cycle=1, content="first")
+    adapter.write_stage_artifact(StageName.SPEC, cycle=1, content="second")
+    p = tmp_path / ".a2sdlc/state/branchA/spec.md"
+    assert p.read_text() == "second"
+
+
+def test_write_stage_artifact_raises_for_review_stage(tmp_path) -> None:
+    """REVIEW artifacts are owned by the ReviewAdapter, not the WorkAdapter."""
+    import pytest
+
+    from a2sdlc.adapters.work.local_file import LocalFileWorkAdapter
+    from a2sdlc.domain.models import StageName
+
+    adapter = LocalFileWorkAdapter(state_root=tmp_path / ".a2sdlc/state/branchA")
+    with pytest.raises(ValueError, match="REVIEW artifacts are owned"):
+        adapter.write_stage_artifact(StageName.REVIEW, cycle=1, content="x")
+
+
+def test_state_root_property_returns_construction_arg(tmp_path) -> None:
+    from a2sdlc.adapters.work.local_file import LocalFileWorkAdapter
+
+    target = tmp_path / ".a2sdlc/state/branchA"
+    adapter = LocalFileWorkAdapter(state_root=target)
+    assert adapter.state_root == target

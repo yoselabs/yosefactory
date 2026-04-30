@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Protocol
 
 from a2sdlc.domain.handover import FeedbackItem, HandoverComment
@@ -57,6 +58,20 @@ class WorkAdapter(Protocol):
         self, key: str, since: datetime
     ) -> list[FeedbackItem]: ...
     def find_last_handover(self, key: str) -> HandoverComment | None: ...
+    def write_stage_artifact(self, stage: StageName, cycle: int, content: str) -> Path:
+        """Persist the stage's primary artifact and return the file path.
+
+        Spec §Adapter ecosystem. The returned Path is what the console
+        subscriber reads to populate the stage-output block; the file
+        contents and the stdout block are byte-equal by construction.
+
+        Path conventions:
+        - SPEC -> {state_root}/spec.md (cycle ignored; SPEC runs once).
+        - IMPLEMENT -> {state_root}/implement-cycle-{n}.md.
+        - REVIEW: written by ReviewAdapter; this method is not invoked
+          for REVIEW stages.
+        """
+        ...
 
 
 from a2sdlc.adapters.work.local_file import LocalFileWorkAdapter  # noqa: E402

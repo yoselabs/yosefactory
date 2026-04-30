@@ -33,19 +33,27 @@ class LocalFileWorkAdapter:
 
     def __init__(
         self,
-        project_root: Path,
-        session_id: str,
-        stage: StageName,
-        ticket_path: Path | None,
+        project_root: Path | None = None,
+        session_id: str = "",
+        stage: StageName = StageName.SPEC,
+        ticket_path: Path | None = None,
+        *,
+        state_root: Path | None = None,
     ) -> None:
-        self._root = project_root
+        self._root = project_root if project_root is not None else Path.cwd()
         self._session_id = session_id
         self._stage = stage
 
-        self._a2sdlc_dir = project_root / ".a2sdlc"
-        self._a2sdlc_dir.mkdir(exist_ok=True)
-        self._state_dir = self._a2sdlc_dir / "state"
-        self._state_dir.mkdir(exist_ok=True)
+        if state_root is not None:
+            # Direct state-dir construction — used by callers that own the
+            # branch-scoped state layout (CLI/local mode, tests).
+            self._state_dir = state_root
+            self._a2sdlc_dir = state_root.parent
+        else:
+            self._a2sdlc_dir = self._root / ".a2sdlc"
+            self._a2sdlc_dir.mkdir(exist_ok=True)
+            self._state_dir = self._a2sdlc_dir / "state"
+        self._state_dir.mkdir(parents=True, exist_ok=True)
         self._handover_dir = self._state_dir / _HANDOVER_DIR
         self._handover_dir.mkdir(exist_ok=True)
 
@@ -54,6 +62,10 @@ class LocalFileWorkAdapter:
 
         self._comment_counter = 0
         self._comment_stage: dict[str, StageName] = {}
+
+    @property
+    def state_root(self) -> Path:
+        return self._state_dir
 
     # ── internal helpers ─────────────────────────────────────────────
 
@@ -140,6 +152,21 @@ class LocalFileWorkAdapter:
     def update_progress(self, comment_id: str, body: str) -> None:
         # Live progress flows through subscribers, not WorkAdapter.
         return None
+
+    def write_stage_artifact(self, stage: StageName, cycle: int, content: str) -> Path:
+        if stage == StageName.SPEC:
+            filename = "spec.md"
+        elif stage == StageName.IMPLEMENT:
+            filename = f"implement-cycle-{cycle}.md"
+        else:
+            raise ValueError(
+                f"LocalFileWorkAdapter does not write artifacts for stage {stage!r};"
+                " REVIEW artifacts are owned by LocalReviewAdapter."
+            )
+        path = self._state_dir / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+        return path
 
     def finalize_comment(self, comment_id: str, body: str) -> None:
         stage = self._comment_stage.get(comment_id, self._stage)

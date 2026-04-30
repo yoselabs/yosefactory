@@ -75,6 +75,7 @@ class FakeWorkAdapter:
         self.label_history: list[tuple[str, str]] = []  # (key, label)
         self.blocked: list[tuple[str, str]] = []  # (key, reason)
         self.needs_input: list[str] = []
+        self.written_artifacts: list[tuple[StageName, int, str]] = []
 
         self._comment_counter = 0
 
@@ -138,6 +139,10 @@ class FakeWorkAdapter:
 
     def find_last_handover(self, key: str) -> HandoverComment | None:
         return self._last_handover
+
+    def write_stage_artifact(self, stage: StageName, cycle: int, content: str) -> Path:
+        self.written_artifacts.append((stage, cycle, content))
+        return Path(f"/tmp/fake-artifact/{stage.value}-cycle-{cycle}.md")
 
 
 # ── FakeReviewAdapter ─────────────────────────────────────────────────
