@@ -12,6 +12,7 @@ import requests
 from github import Github
 from github.Repository import Repository
 
+from a2sdlc.adapters.work._github_stub_artifact import write_stage_artifact_stub
 from a2sdlc.domain.pipeline_event import PipelineEvent
 from a2sdlc.domain.exceptions import SkipEvent
 from a2sdlc.domain.handover import (
@@ -404,6 +405,8 @@ class GitHubWorkAdapter:
     def format_branch(self, ticket_key: str) -> str:
         """Return branch name for a ticket."""
         return f"agent/{ticket_key}"
+
+    write_stage_artifact = staticmethod(write_stage_artifact_stub)
 
     def collect_issue_feedback(self, key: str, since: datetime) -> list[FeedbackItem]:
         """Collect feedback comments on an issue since a given time."""
