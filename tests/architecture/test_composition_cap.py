@@ -12,6 +12,9 @@ EXEMPT = {
     "pipeline/dispatch.py",
     "cli/dispatch.py",
     "cli/run_stage.py",
+    # Local-mode composition root — wires the pipeline for `a2sdlc run`,
+    # mirroring `cli/dispatch.py` for the GH path.
+    "cli/run_pipeline.py",
 }
 CAP = 5
 

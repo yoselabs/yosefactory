@@ -28,9 +28,17 @@ def ensure_clean_tree(repo: Path) -> None:
         if not line:
             continue
         code = line[:2]
-        path = line[3:]
+        path = line[3:].strip()
+        # Engine bookkeeping that's never user-authored: the lockfile
+        # the run itself just created, plus any state/log dirs the
+        # engine writes into. These never count as "dirty work the BA
+        # forgot to commit".
+        if path in (".a2sdlc/run.lock",) or path.startswith(
+            (".a2sdlc/state/", ".a2sdlc/logs/")
+        ):
+            continue
         if code == "??":
-            if path.strip().startswith(".a2sdlc/"):
+            if path.startswith(".a2sdlc/"):
                 bad.append(line)
         else:
             bad.append(line)

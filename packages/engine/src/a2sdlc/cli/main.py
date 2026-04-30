@@ -6,6 +6,7 @@ import typer
 
 from a2sdlc.cli.dispatch import dispatch_command
 from a2sdlc.cli.ensure_gate_labels import ensure_gate_labels_command
+from a2sdlc.cli.run import run_command
 from a2sdlc.cli.run_stage import run_stage_command
 from a2sdlc.cli.scrub_base import scrub_base_command
 
@@ -18,6 +19,9 @@ app = typer.Typer(
 
 app.command("dispatch", help="Run pipeline dispatch (GitHub Actions entry).")(
     dispatch_command
+)
+app.command("run", help="Run one workflow attempt end-to-end (universal verb).")(
+    run_command
 )
 app.command("run-stage", help="Run a single pipeline stage against a local repo.")(
     run_stage_command
