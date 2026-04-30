@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Protocol
 
 from a2sdlc.domain.handover import FeedbackItem, HandoverComment
@@ -49,7 +50,16 @@ class ReviewAdapter(Protocol):
     def mark_pr_ready(self, pr_number: int) -> None: ...
     def merge_pr(self, pr_number: int, method: str = "squash") -> None: ...
     def get_approvals(self, pr_number: int) -> list[Approval]: ...
-    def post_review(self, pr_number: int, body: str, verdict: str) -> None: ...
+    def post_review(self, pr_number: int, body: str, verdict: str) -> Path:
+        """Post a review and return the local file path that mirrors the body.
+
+        For LocalReviewAdapter, this *is* the canonical artifact. For GH /
+        Jira ecosystems, the API call posts to the tracker and the
+        returned path is a side-staging file the engine consults for the
+        stdout output block.
+        """
+        ...
+
     def post_inline_comments(
         self, pr_number: int, comments: list[InlineComment]
     ) -> None:

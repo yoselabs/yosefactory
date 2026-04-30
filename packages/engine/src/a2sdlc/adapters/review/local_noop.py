@@ -101,8 +101,12 @@ class LocalNoopReviewAdapter:
         """Return a single synthetic local human approval."""
         return [Approval(user="local", is_bot=False)]
 
-    def post_review(self, pr_number: int, body: str, verdict: str) -> None:
-        """Append a review to pr.json. If changes_requested, also write feedback.json."""
+    def post_review(self, pr_number: int, body: str, verdict: str) -> Path:
+        """Append a review to pr.json. If changes_requested, also write feedback.json.
+
+        Returns the canonical artifact path: feedback.json when the verdict
+        is changes_requested (the runner will read it), otherwise pr.json.
+        """
         data = self._read_pr()
         reviews: list[dict[str, Any]] = data.setdefault("reviews", [])
         cycle = len(reviews) + 1
@@ -124,6 +128,8 @@ class LocalNoopReviewAdapter:
                 "created_at": created_at,
             }
             self._feedback_path.write_text(json.dumps(feedback_record, indent=2))
+            return self._feedback_path
+        return self._pr_path
 
     def post_inline_comments(
         self, pr_number: int, comments: list[InlineComment]

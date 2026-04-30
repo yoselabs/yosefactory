@@ -247,6 +247,24 @@ def test_post_inline_comments_empty_list_is_noop(tmp_path):
     assert before == after
 
 
+def test_post_review_returns_path(tmp_path):
+    """post_review returns a Path (per ReviewAdapter Protocol)."""
+    from pathlib import Path
+
+    (tmp_path / ".a2sdlc" / "state").mkdir(parents=True)
+    adapter = LocalNoopReviewAdapter(project_root=tmp_path)
+    adapter.create_draft_pr("a2sdlc/sid", "main", "t", "sid")
+
+    p_approved = adapter.post_review(pr_number=1, body="x", verdict="approved")
+    assert isinstance(p_approved, Path)
+
+    p_changes = adapter.post_review(
+        pr_number=1, body="needs work", verdict="changes_requested"
+    )
+    assert isinstance(p_changes, Path)
+    assert p_changes.exists()
+
+
 def test_post_inline_comments_appends_to_pr_json(tmp_path):
     """Comments land under pr.json['inline_comments'] with shape fields."""
     (tmp_path / ".a2sdlc" / "state").mkdir(parents=True)

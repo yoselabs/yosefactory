@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import tempfile
 from datetime import datetime
+from pathlib import Path
 
 from github.PullRequest import ReviewComment as GhReviewCommentPayload
 from github.Repository import Repository
@@ -95,7 +97,7 @@ class GitHubReviewAdapter:
                 )
         return approvals
 
-    def post_review(self, pr_number: int, body: str, verdict: str) -> None:
+    def post_review(self, pr_number: int, body: str, verdict: str) -> Path:
         """Submit a PR review; skip cleanly on self-approval 422.
 
         When the authoring App and the reviewing identity are the same,
@@ -107,6 +109,10 @@ class GitHubReviewAdapter:
         record.
 
         REQUEST_CHANGES self-reviews are accepted by GitHub and still post.
+
+        Returns a side-staging file path under the system tempdir that
+        mirrors the review body — the engine consults this file for the
+        stdout output block (Spec §Console output cadence).
         """
         pull = self._repo.get_pull(pr_number)
         try:
@@ -120,25 +126,34 @@ class GitHubReviewAdapter:
                     "(engine verdict recorded in stage comment)",
                     pr_number,
                 )
-                return
-            logger.warning(
-                "post_review unexpected failure on PR #%d — falling back to comment",
-                pr_number,
-                exc_info=True,
-            )
-            # Dedupe the fallback comment — retries must not stack copies.
-            marker = f"**Review: {verdict}**"
-            try:
-                for c in pull.get_issue_comments():
-                    if (c.body or "").lstrip().startswith(marker):
-                        logger.debug(
-                            "post_review: fallback comment already present on PR #%d",
-                            pr_number,
-                        )
-                        return
-            except Exception:  # noqa: BLE001
-                pass
-            pull.create_issue_comment(f"{marker}\n\n{body}")
+            else:
+                logger.warning(
+                    "post_review unexpected failure on PR #%d — falling back to comment",
+                    pr_number,
+                    exc_info=True,
+                )
+                # Dedupe the fallback comment — retries must not stack copies.
+                marker = f"**Review: {verdict}**"
+                already_posted = False
+                try:
+                    for c in pull.get_issue_comments():
+                        if (c.body or "").lstrip().startswith(marker):
+                            logger.debug(
+                                "post_review: fallback comment already present on PR #%d",
+                                pr_number,
+                            )
+                            already_posted = True
+                            break
+                except Exception:  # noqa: BLE001
+                    pass
+                if not already_posted:
+                    pull.create_issue_comment(f"{marker}\n\n{body}")
+
+        tmpdir = Path(tempfile.gettempdir()) / "a2sdlc-gh-reviews"
+        tmpdir.mkdir(parents=True, exist_ok=True)
+        path = tmpdir / f"pr-{pr_number}-{verdict}.md"
+        path.write_text(f"verdict: {verdict}\n\n{body}\n")
+        return path
 
     def post_inline_comments(
         self, pr_number: int, comments: list[InlineComment]

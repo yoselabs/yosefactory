@@ -208,8 +208,9 @@ class FakeReviewAdapter:
     def get_approvals(self, pr_number: int) -> list[Approval]:
         return list(self._approvals)
 
-    def post_review(self, pr_number: int, body: str, verdict: str) -> None:
+    def post_review(self, pr_number: int, body: str, verdict: str) -> Path:
         self.reviews.append((pr_number, body, verdict))
+        return Path("/dev/null")
 
     def post_inline_comments(
         self, pr_number: int, comments: list[InlineComment]

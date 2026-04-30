@@ -160,6 +160,7 @@ class TestPostReview:
         mock_repo = MagicMock()
         mock_pr = MagicMock()
         mock_pr.create_review.side_effect = RuntimeError("cannot approve own PR")
+        mock_pr.get_issue_comments.return_value = []
         mock_repo.get_pull.return_value = mock_pr
         adapter._repo = mock_repo
 
