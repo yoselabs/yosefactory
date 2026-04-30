@@ -31,7 +31,7 @@ layers = [
     "a2sdlc.pipeline",
     "a2sdlc.composition",
     "a2sdlc.ingress | a2sdlc.gating | a2sdlc.effects | a2sdlc.middleware | a2sdlc.stages",
-    "a2sdlc.lifecycle | a2sdlc.observability | a2sdlc.evaluation | a2sdlc.assembly",
+    "a2sdlc.lifecycle | a2sdlc.observability | a2sdlc.evaluation | a2sdlc.assembly | a2sdlc.runtime",
     "a2sdlc.adapters",
     "a2sdlc.config",
     "a2sdlc.domain",
@@ -77,6 +77,7 @@ forbidden_modules = [
     "a2sdlc.observability",
     "a2sdlc.evaluation",
     "a2sdlc.assembly",
+    "a2sdlc.runtime",
     "a2sdlc.adapters",
 ]
 

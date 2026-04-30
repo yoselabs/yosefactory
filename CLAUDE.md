@@ -23,6 +23,7 @@ make test-integration        # replay recorded GH adapter cassettes (no network)
 make record-integration      # re-record cassettes — needs GITHUB_TOKEN for iorlas/a2sdlc-smoke
 make security-audit          # check deps + secrets in working dir (fast)
 make check                   # full gate: lint + test + test-integration + coverage-diff + security-audit
+make smoke-local             # end-to-end smoke against a scratch local-origin repo (opt-in via ANTHROPIC_API_KEY)
 make bootstrap               # first-time setup: deps + harness config + pre-commit hooks
 agent-harness security-audit-history  # deep scan git history for deleted secrets (run once)
 ```

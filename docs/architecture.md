@@ -73,6 +73,14 @@ src/a2sdlc/
 │   ├── tracked_run.py           # dispatch-fn wrapper that feeds telemetry
 │   └── quality_gate.py          # post-implement make-check wrapper
 │
+├── runtime/                     # local-mode process primitives (stdlib-only)
+│   ├── branch.py                # run-branch name generation + parser, input-hash
+│   ├── dirty_tree.py            # working-tree cleanliness + protected-base guards
+│   ├── env_check.py             # REQUIRED_ENV aggregator + fail-fast formatter
+│   ├── isolation.py             # agent-isolation builder (pin SDK env/options)
+│   ├── lockfile.py              # exclusive PID lockfile + signal-handler cleanup
+│   └── state_migration.py       # lazy v0 → v1 state.json migrator
+│
 ├── config.py                    # stays flat — small, stable, imported everywhere
 │
 ├── adapters/                    # ports & adapters (platform I/O) — kind-first layout
@@ -95,6 +103,7 @@ src/a2sdlc/
 | `domain/` | **nothing** inside a2sdlc. Third-party types only (Pydantic, stdlib). |
 | `adapters/` | `domain/`, `config.py`. Never from `pipeline/`, `lifecycle/`, `assembly/`, `evaluation/`, `ingress/`, `gating/`, `effects/`, `middleware/`, `composition/`, `observability/`. |
 | `lifecycle/`, `assembly/`, `evaluation/`, `observability/` | `domain/`, `config.py`, `adapters/`. Not from each other. Not from `pipeline/`. |
+| `runtime/` | **stdlib only.** No imports from other a2sdlc packages (not even `domain/`). Local-mode process primitives — branch naming, lockfile, dirty-tree guards, env-check, agent isolation, state migration. Imported by `cli/run.py` and (for isolation) `pipeline/runner.py`. |
 | `ingress/`, `gating/`, `effects/`, `middleware/` | `domain/`, `config.py`, `adapters/`, `lifecycle/`. Not from `pipeline/`. Middleware may also import `gating/` (idempotency calls `gating.check_duplicate_run_id`). |
 | `composition/` | `domain/`, `config.py`, `adapters/`, `observability/`. Not from `pipeline/`. |
 | `pipeline/` | everything else. This is the composition layer. |
@@ -103,6 +112,20 @@ src/a2sdlc/
 
 **Invariant:** dependency arrows point inward (`adapters` → `domain`), never outward.
 `domain/` has zero imports from the rest of a2sdlc — this is non-negotiable.
+
+### Local-mode CLI seam
+
+`a2sdlc run` (the local-mode CLI added with the workflow-primitives spec)
+**bypasses the GH-event ingress/dispatch chain** and drives stages directly
+via `pipeline.stage_executor.StageExecutor.run`, with per-stage commit/push
+and `max_review_cycles` enforcement handled inline in `cli/run_pipeline.py`.
+This is a deliberate, temporary architectural seam: the GH path retains the
+full `ingress → gating → effects → middleware → dispatch` flow, while local
+mode short-circuits it because there is no PipelineEvent to parse and no
+ticket lifecycle to manage. Future ecosystems (`github`, `jira-github`)
+will continue to use the existing dispatch path. Re-unifying the two
+entry points is enumerated in §Out-of-scope follow-ups of the
+workflow-primitives spec and is a candidate for a follow-up shape.
 
 ## 3. Naming rule — folders name **product concerns**, not technical concerns
 
