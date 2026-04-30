@@ -378,4 +378,102 @@ def test_scripted_runner_emits_extractable_block() -> None:
     assert result.status == StageStatus.APPROVED
 
 
+class _CapturingRunner:
+    """Records every ``ticket_key`` it sees so tests can assert that
+    cycle 2+ invocations never collide on the deterministic session ID
+    derived via ``get_session_id(ticket_key, stage)``."""
+
+    def __init__(self, scripts: list[tuple[StageStatus | None, str]]):
+        self._scripts = list(scripts)
+        self.invocations: list[tuple[str, str, bool]] = []
+
+    async def run(self, **kwargs):  # noqa: ANN003
+        from a2sdlc.domain.run_result import RunResult
+
+        self.invocations.append(
+            (
+                str(kwargs.get("ticket_key", "")),
+                str(kwargs.get("stage", "")),
+                bool(kwargs.get("is_resume", False)),
+            )
+        )
+        if not self._scripts:
+            raise RuntimeError("scripted runner exhausted")
+        status, output = self._scripts.pop(0)
+        if status is None:
+            block = ""
+        else:
+            block = f'\n```a2sdlc\n{{"status": "{status.value}", "output": ""}}\n```\n'
+        return RunResult(
+            success=True,
+            output=output + block,
+            error=None,
+            session_id="test",
+            progress=None,
+        )
+
+
+def test_handover_loop_produces_distinct_session_ids_per_cycle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cycle 2 IMPLEMENT must use a session-id distinct from cycle 1.
+
+    The runner derives the SDK session id via
+    ``get_session_id(ticket_key, stage)``. If both cycles share the
+    same ``ticket_key``, the SDK CLI rejects the second
+    ``--session-id`` (a session with that ID already exists) and exits
+    non-zero — observed in production smoke as a 0-second SDK
+    ``ProcessError`` on the cycle-2 IMPLEMENT.
+
+    Asserts: the cycle-2 IMPLEMENT invocation's ticket_key differs from
+    cycle 1's, AND the runner is never called with ``is_resume=True``
+    against a stale (cross-cycle) session.
+    """
+    from a2sdlc.config import get_session_id
+
+    repo, _origin, base = _init_local_repo(tmp_path)
+    monkeypatch.chdir(repo)
+
+    captured = _CapturingRunner(
+        [
+            (StageStatus.COMPLETE, "spec"),
+            (StageStatus.COMPLETE, "impl1"),
+            (StageStatus.CHANGES_REQUESTED, "review1"),
+            (StageStatus.COMPLETE, "impl2"),
+            (StageStatus.APPROVED, "review2"),
+        ]
+    )
+    monkeypatch.setattr(
+        "a2sdlc.pipeline.runner.SdkStageRunner",
+        lambda **kw: captured,  # noqa: ARG005
+    )
+
+    cfg = _make_run_config(max_cycles=3)
+    run_pipeline_module.drive_pipeline(
+        repo=repo,
+        config=cfg,
+        base=base,
+        input_md=b"x\n",
+        run_branch="a2sdlc/auto/feature-x/20260430-333333-cycle",
+        label="TEST-1",
+    )
+
+    # Filter to IMPLEMENT calls only.
+    implement_calls = [c for c in captured.invocations if "implement" in c[1]]
+    assert len(implement_calls) == 2, captured.invocations
+
+    tk1, _, resume1 = implement_calls[0]
+    tk2, _, resume2 = implement_calls[1]
+
+    # Neither initial-cycle invocation may pass is_resume=True (resume
+    # is for follow-up structured-output prompts within one
+    # StageExecutor.run, not across handover cycles).
+    assert resume1 is False
+    assert resume2 is False
+
+    # Distinct ticket_key → distinct deterministic session id.
+    assert tk1 != tk2, (tk1, tk2)
+    assert get_session_id(tk1, "implement") != get_session_id(tk2, "implement")
+
+
 __all__ = ["ExecutionResult"]  # silence unused-import if reorganized

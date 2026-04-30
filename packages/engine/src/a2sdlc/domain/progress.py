@@ -70,13 +70,21 @@ class Metrics:
 
 @dataclass
 class StageEnd:
-    """Stage execution ends. Carries authoritative final metrics."""
+    """Stage execution ends. Carries authoritative final metrics.
+
+    ``verdict`` is populated for REVIEW stages from the parsed
+    ``status`` block (e.g. ``approved`` / ``changes_requested``);
+    ``None`` for non-REVIEW stages or when the stage produced no
+    parseable status. Renderers fall back to ``success`` for the
+    transition label when ``verdict`` is ``None``.
+    """
 
     stage: StageName
     success: bool
     error: str | None
     final_metrics: Metrics
     artifact_path: Path | None = None
+    verdict: str | None = None
 
 
 @dataclass(frozen=True)

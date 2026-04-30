@@ -139,6 +139,15 @@ async def _run_one_stage(
 
     system_prompt = assemble_system_prompt(stage.value, project_root / ".a2sdlc")
 
+    # Cycle-aware ticket key. The runner derives the SDK session ID via
+    # ``get_session_id(ticket_key, stage)`` — without a per-cycle
+    # discriminator, cycle-2+ invocations collide on the same session
+    # UUID and the Claude CLI exits non-zero on the duplicate
+    # ``--session-id``. Suffixing the cycle keeps each cycle's session
+    # distinct while preserving the executor's follow-up resume path
+    # within a single ``StageExecutor.run``.
+    cycle_ticket_key = f"{ticket_key}:c{cycle}"
+
     await progress_state.stage_start(
         stage,
         f"{ticket_key}:{stage.value}:{cycle}",
@@ -161,7 +170,7 @@ async def _run_one_stage(
             user_prompt=user_prompt,
             system_prompt=system_prompt,
             config=stage_config_obj,
-            ticket_key=ticket_key,
+            ticket_key=cycle_ticket_key,
             stage=stage,
             project_root=str(project_root),
             progress_state=progress_state,
@@ -193,12 +202,19 @@ async def _run_one_stage(
         # default ``stage_end()`` helper does not surface it). The
         # console subscriber prints the BEGIN/END output fences only
         # when artifact_path points to a real file.
+        # ``verdict`` carries the REVIEW status to renderers so the
+        # console labels ``approved`` vs ``handover → IMPLEMENT``
+        # instead of mis-labelling on ``StageEnd.success`` alone.
+        verdict_for_end: str | None = None
+        if stage == StageName.REVIEW and status is not None:
+            verdict_for_end = status.value
         end = StageEnd(
             stage=stage,
             success=success and error is None,
             error=error,
             final_metrics=progress_state.snapshot_metrics(),
             artifact_path=artifact,
+            verdict=verdict_for_end,
         )
         await progress_state._emit(end)  # noqa: SLF001 — local-mode emit-with-artifact
 
