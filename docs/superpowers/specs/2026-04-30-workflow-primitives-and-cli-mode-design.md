@@ -735,6 +735,55 @@ doesn't care which trigger fired.
     a `totals:` line; exit code is 0; **and** when required env vars
     are absent the target exits 0 with the banner line
     `smoke-local skipped: <VAR> not set`.
+16. **Isolation contract** (per §Agent isolation). With
+    `CLAUDE_CONFIG_DIR=/tmp/should-not-exist`,
+    `A2SDLC_PLUGIN_PATHS` set to a non-existent path, and a fake
+    `~/.claude/CLAUDE.md` on the test VM, `a2sdlc run` proceeds
+    successfully and produces an artifact identical (modulo
+    timestamps) to the same input run on a clean VM. Asserted in
+    integration + smoke tiers.
+
+## Agent isolation
+
+The engine invokes the Claude Agent SDK on the operator's machine
+(VM or local). Without explicit isolation, the agent process would
+inherit the operator's personal config — global `CLAUDE.md`,
+auto-memory, MCP servers, plugins, environment. That breaks
+reproducibility (smoke runs would produce different outputs depending
+on whose VM ran them) and is also a quiet correctness hazard (an
+operator's "always run pytest with -v" preference would silently
+change agent behavior).
+
+v1 spec'd isolation, all enforced at the SDK call site in
+`pipeline/runner.py`:
+
+| Surface | Rule | Mechanism |
+|---|---|---|
+| **User-level CLAUDE.md & auto-memory** | Excluded — agent never reads `~/.claude/CLAUDE.md` or its memory files | `ClaudeAgentOptions(setting_sources=["project", "local"])` — already enforced today, spec freezes it. |
+| **Plugins** | Engine controls; never inherited from user | `plugins=_resolve_plugins()` reads only the `A2SDLC_PLUGIN_PATHS` env var, ignores any other plugin discovery. |
+| **MCP servers** | Engine controls; never inherited from `~/.claude.json` or operator's `.mcp.json` | Engine passes an explicit `mcp_servers` list (empty in v1, configurable later via `.a2sdlc/config.yaml` `mcp:` block). The SDK must not auto-discover. |
+| **Working directory** | Pinned to the run-branch checkout root | `cwd=project_root`. Agent cannot reach the engine's source tree, the operator's home, or other projects on the VM. |
+| **Environment variables** | Engine passes a curated allowlist to the agent process; operator's shell env does not bleed in | `env={…}` constructed from the engine's own resolved config — `ANTHROPIC_API_KEY`, adapter `REQUIRED_ENV` — plus a small fixed set (`PATH`, `HOME`, `LANG`, locale). Everything else is dropped. |
+| **Tool allowlist** | Spec'd per stage in stage config | `allowed_tools` (already enforced). |
+| **Engine-owned commands** | Hard-block at SDK level | `PreToolUse` hook (already enforced) blocks `gh pr create`, `gh pr merge`, etc. — defense-in-depth alongside prompt guidance. |
+| **Permission mode** | `bypassPermissions` — intentional, agent runs unattended | Documented; the other isolation rules above compensate. |
+
+**Project-level `.claude/`** (the run-branch checkout's own
+`.claude/CLAUDE.md` if any) is *intentionally* loaded — it's how
+per-repo conventions reach the agent. The smoke harness's scratch
+repo therefore must **not** carry a stray `.claude/` from a copy of
+this engine repo; the harness creates a clean repo with only `.a2sdlc/`
++ `INPUT.md`.
+
+**`CLAUDE_CONFIG_DIR` / `CLAUDE_HOME`.** If set in the operator's
+environment, the engine **strips them** before invoking the SDK.
+Documented in §Failure modes as a non-fatal warning at startup
+("ignoring CLAUDE_CONFIG_DIR=…; engine controls SDK config").
+
+This isolation contract is testable: the smoke harness sets
+`CLAUDE_CONFIG_DIR=/tmp/should-not-exist` and a fake plugin path on
+the VM environment before calling `make smoke-local`; the run must
+still succeed (proving the engine ignored both).
 
 ## Testing strategy
 
