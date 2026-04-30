@@ -35,3 +35,37 @@ def test_forbidden_env_logged_when_present(caplog):
     caplog.set_level(logging.WARNING, logger="a2sdlc.runtime.isolation")
     build_sdk_env({"CLAUDE_CONFIG_DIR": "/tmp/x"}, required_env_names=set())
     assert any("CLAUDE_CONFIG_DIR" in r.message for r in caplog.records)
+
+
+def test_baseline_passes_posix_identity_and_cache_dirs():
+    """USER/LOGNAME/SHELL + TMPDIR + XDG_* must reach the SDK subprocess.
+
+    Without these, the agent's Bash tool falls back to ``/bin/sh``
+    instead of the operator's shell, and node/npm (under the Claude
+    CLI) miss their cache dirs — observed as cycle-2 SDK
+    ``ProcessError`` failures on long smoke runs.
+    """
+    src = {
+        "PATH": "/usr/bin",
+        "HOME": "/home/x",
+        "USER": "denis",
+        "LOGNAME": "denis",
+        "SHELL": "/bin/zsh",
+        "TMPDIR": "/var/folders/tmp",
+        "XDG_CACHE_HOME": "/home/x/.cache",
+        "XDG_CONFIG_HOME": "/home/x/.config",
+        "XDG_DATA_HOME": "/home/x/.local/share",
+        "XDG_RUNTIME_DIR": "/run/user/1000",
+    }
+    env = build_sdk_env(src, required_env_names=set())
+    for k in (
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "TMPDIR",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_RUNTIME_DIR",
+    ):
+        assert env[k] == src[k], k

@@ -138,6 +138,18 @@ async def run_stage(
         is_resume,
     )
 
+    # Capture the SDK subprocess's stderr line-by-line so a non-zero
+    # exit (which the SDK wraps in ``ProcessError`` with the unhelpful
+    # message ``Check stderr output for details``) surfaces real
+    # diagnostics on the engine's failure path. Bounded to keep noisy
+    # streams from exhausting memory.
+    stderr_lines: list[str] = []
+    _STDERR_CAP = 200
+
+    def _stderr_cb(line: str) -> None:
+        if len(stderr_lines) < _STDERR_CAP:
+            stderr_lines.append(line)
+
     options_kwargs: dict[str, Any] = {
         "system_prompt": system_prompt,
         "permission_mode": "bypassPermissions",
@@ -145,6 +157,7 @@ async def run_stage(
         "max_turns": config.max_turns,
         "model": config.model,
         "cwd": project_root,
+        "stderr": _stderr_cb,
         # Exclude user-level Claude Code settings (~/.claude/CLAUDE.md,
         # auto-memory) so the agent runs with only project + local context.
         # a2sdlc is a self-contained pipeline; personal instructions from the
@@ -230,9 +243,20 @@ async def run_stage(
         )
     except Exception as exc:
         logger.exception("SDK error during stage %s", stage)
+        # The SDK's ProcessError swallows the subprocess's stderr with a
+        # stub ``Check stderr output for details`` string. Surface the
+        # captured lines (last 30) on the engine's error so the operator
+        # can see the actual failure cause without re-running.
+        stderr_tail = "\n".join(stderr_lines[-30:]) if stderr_lines else ""
+        err_msg = f"sdk_error: {type(exc).__name__}: {exc}"
+        if stderr_tail:
+            err_msg = (
+                f"{err_msg}\n--- subprocess stderr (last 30 lines) ---\n{stderr_tail}"
+            )
+            logger.error("SDK subprocess stderr tail:\n%s", stderr_tail)
         return RunResult(
             success=False,
-            error=f"sdk_error: {type(exc).__name__}: {exc}",
+            error=err_msg,
             session_id=sid,
             tool_log=[e.name for e in progress_state.tool_log],
             progress=progress_state,

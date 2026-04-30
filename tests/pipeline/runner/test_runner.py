@@ -465,3 +465,4 @@ class TestRunStage:
 
 
 # NOTE: TestHandleAssistantMessage lives in tests/runner/test_handler.py
+# NOTE: Stderr-capture tests live in tests/pipeline/runner/test_stderr_capture.py

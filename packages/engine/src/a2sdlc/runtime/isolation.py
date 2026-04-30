@@ -23,7 +23,31 @@ from typing import Any
 
 logger = logging.getLogger("a2sdlc.runtime.isolation")
 
-_BASELINE_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TZ")
+_BASELINE_ENV = (
+    "PATH",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TERM",
+    "TZ",
+    # POSIX identity / shell — the agent's Bash tool spawns shells that
+    # need at least USER + SHELL set to behave correctly; LOGNAME pairs
+    # with USER. Without SHELL, login-shell defaults can fall back to
+    # ``/bin/sh`` and break interactive-style commands the agent emits.
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    # Caching / temp dirs — node + npm (the Claude CLI runtime) and
+    # python tooling fall back to bad defaults (or root-only paths)
+    # without these. Cycle-2 stages on a long run can hit subtle cache
+    # issues when TMPDIR is unset.
+    "TMPDIR",
+    "XDG_CACHE_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_RUNTIME_DIR",
+)
 _FORBIDDEN_ENV = ("CLAUDE_CONFIG_DIR", "CLAUDE_HOME")
 
 
