@@ -66,4 +66,27 @@ class RunContext:
     stage_executor: Any = None
 
 
-__all__ = ["RunContext"]
+@dataclass
+class PipelineRun:
+    """Persisted identity for a single workflow run (v1 schema).
+
+    Carries the engine-internal addressing (``workflow_id`` = run-branch
+    name) and the human/tracker-facing label (``ticket_key``) plus the
+    base-branch coordinates captured at workflow start. Per the workflow-
+    primitives design, ``state.json`` must only be loaded when its branch
+    matches the current branch — that invariant is enforced by callers.
+
+    Field defaults exist so partially-populated fixtures and migrations
+    can construct instances incrementally; production code paths should
+    set every field explicitly.
+    """
+
+    workflow_id: str = ""
+    ticket_key: str | None = None
+    base: str = ""
+    base_sha: str = ""
+    ecosystem: str = "local"
+    schema_version: int = 1
+
+
+__all__ = ["PipelineRun", "RunContext"]
