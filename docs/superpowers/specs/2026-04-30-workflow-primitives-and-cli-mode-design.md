@@ -274,47 +274,91 @@ Behavior, in this order:
 
 ### Console output cadence
 
-Three rhythms, all driven from the existing `ProgressEvent` stream
-(`domain/progress.py`) routed through the `console` subscriber:
+Three sections per stage, all driven from the existing `ProgressEvent`
+stream (`domain/progress.py`) routed through the `console` subscriber:
 
 1. **Stage start** — one line when a stage begins, naming the stage and
    the cycle number for re-entries: `[SPEC] starting (cycle 1)`.
-2. **Mid-stage progress** — short status lines, **throttled** via
-   `Throttle(min_interval≈2s)` (existing utility in
-   `adapters/subscriber/_throttle.py`). Only `Milestone` and
-   `GroupOpen`/`GroupClose` events render to console; tool-call spam is
-   dropped. One line per admitted event, prefixed with the stage tag.
-3. **Stage end** — the stats summary line at the terminal transition
-   (`done` / `handover` / `approved`), format
-   `<duration> · <turns> turns · <tokens-in> in / <tokens-out> out ·
-   <cost>` sourced from `StageRunStats` (`domain/stats.py`).
+2. **Mid-stage event log** — every progress event renders, including
+   tool calls. No throttling — local-mode is for inspection on a VM,
+   verbose is helpful. One line per event, prefixed with the stage tag
+   and indented for tool-call detail.
+3. **Stage end** — two blocks at the terminal transition (`done` /
+   `handover` / `approved`):
+   - **Output block.** The stage's primary artifact rendered inline —
+     for REVIEW the contents of the review markdown that
+     `LocalReviewAdapter` just wrote; for SPEC the acceptance criteria
+     it produced; for IMPLEMENT the summary of changes. This is the
+     content that would have been a tracker-side comment in the github
+     ecosystem; in local mode it lands on both stdout and the
+     branch-state file. Block is fenced with `--- output ---` /
+     `--- end output ---` so it's grep-friendly.
+   - **Stats line.** `<duration> · <turns> turns · <tokens-in> in /
+     <tokens-out> out · <cost>` sourced from `StageRunStats`
+     (`domain/stats.py`).
 4. **Run end** — a `totals:` aggregate line over all stage runs.
 
-The mid-stage stream stays terse on purpose: BAs running on a VM want
-"is it still alive and what is it doing roughly" rather than a tool-call
-log.
+The `_throttle.py` utility stays available for future ecosystems
+(github mode posts comments and *will* want throttling), but the
+`console` subscriber does not use it in v1.
 
 Sample output:
 
 ```
 $ a2sdlc run
 [SPEC]      starting (cycle 1)
-[SPEC]      reading INPUT.md from req/billing-v2 ...
-[SPEC]      drafting acceptance criteria ...
+[SPEC]      tool: read INPUT.md
+[SPEC]      tool: read docs/architecture.md
+[SPEC]      tool: write .a2sdlc/state/.../spec.md
+--- output ---
+## Acceptance criteria
+1. Charges with valid card succeed and return 2xx.
+2. Charges with empty cart return 400 with code EMPTY_CART.
+3. Idempotency-key reuse on the same cart returns the original charge.
+--- end output ---
 [SPEC]      done → IMPLEMENT     | 18.3s · 4 turns · 12.4k in / 3.1k out · $0.082
+
 [IMPLEMENT] starting (cycle 1)
-[IMPLEMENT] generating changes ...
-[IMPLEMENT] writing tests ...
+[IMPLEMENT] tool: edit src/billing/charge.py
+[IMPLEMENT] tool: edit src/billing/charge.py
+[IMPLEMENT] tool: write tests/billing/test_charge.py
+[IMPLEMENT] tool: bash 'pytest tests/billing -x'
+--- output ---
+Edited src/billing/charge.py: added EMPTY_CART guard at line 42.
+Added tests/billing/test_charge.py with 3 cases (success, empty-cart, idempotency).
+All tests pass.
+--- end output ---
 [IMPLEMENT] done → REVIEW        | 2m 41s · 9 turns · 38.2k in / 14.7k out · $0.412
+
 [REVIEW]    starting (cycle 1)
-[REVIEW]    inspecting diff ...
+[REVIEW]    tool: read src/billing/charge.py
+[REVIEW]    tool: read tests/billing/test_charge.py
+--- output ---
+verdict: changes_requested
+
+inline:
+  src/billing/charge.py:88
+    missing edge case for X — empty cart still hits the upstream API
+    when payment_method has retry_on_empty=True. add a guard before
+    line 88 or hoist the EMPTY_CART check.
+--- end output ---
 [REVIEW]    handover → IMPLEMENT | 41.2s · 3 turns · 22.1k in / 1.8k out · $0.071
-            (feedback: "missing edge case for X")
+
 [IMPLEMENT] starting (cycle 2)
-[IMPLEMENT] revising ...
+[IMPLEMENT] tool: edit src/billing/charge.py
+[IMPLEMENT] tool: bash 'pytest tests/billing -x'
+--- output ---
+Hoisted EMPTY_CART guard above the retry path. All tests pass.
+--- end output ---
 [IMPLEMENT] done → REVIEW        | 1m 04s · 5 turns · 19.8k in / 6.2k out · $0.184
+
 [REVIEW]    starting (cycle 2)
+[REVIEW]    tool: read src/billing/charge.py
+--- output ---
+verdict: approved
+--- end output ---
 [REVIEW]    approved             | 12.8s · 2 turns · 14.6k in / 0.4k out · $0.041
+
 done.
 branch: a2sdlc/auto/req-billing-v2/20260430-142208-a3f019
 totals: 5m 17s · 23 turns · 107.1k in / 26.2k out · $0.790
@@ -501,9 +545,11 @@ doesn't care which trigger fired.
     (duration, turns, tokens-in, tokens-out, cost), and a final
     `totals:` line aggregates across all stage runs.
 13. Console cadence: each stage prints exactly one `starting (cycle N)`
-    line on entry, throttled mid-stage progress lines (≥2s apart), and
-    one terminal stats line. Tool-call-level events do not render to
-    stdout.
+    line on entry, every progress event (including tool calls) inline
+    with no throttling, an `--- output ---` / `--- end output ---`
+    block carrying the stage's primary artifact, and one terminal stats
+    line. The same artifact content is the file `LocalReviewAdapter` /
+    `LocalFileWorkAdapter` writes into branch state.
 
 ## Out-of-scope follow-ups (already enumerated, captured here for tracking)
 
