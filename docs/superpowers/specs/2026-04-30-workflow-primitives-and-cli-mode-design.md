@@ -31,18 +31,20 @@ introducing engine-specific concepts now. Tracker-driven triggers,
 auto-merge, multi-pipeline coordination, and human-gate signals are
 deliberately deferred — additive later, never breaking changes.
 
-Appetite: **8–10 days.** The vocabulary (Workflow / Activity / Effect /
+Appetite: **10–12 days.** The vocabulary (Workflow / Activity / Effect /
 Signal / Trigger) stays *documentation-level* in v1 — code keeps existing
 type names — but the runtime surface added here is real engineering:
 `LocalReviewAdapter`, the new `WorkAdapter.write_stage_artifact` method
-and `LocalFileWorkAdapter` impl, the run-branch generator + parser pair,
-env-var validation + REQUIRED_ENV plumbing, lockfile + signal-handler
-cleanup, dirty-tree check, lazy v0→v1 migration, the failure-modes-table
-error surface, the per-stage stats event extension + `RunEnd` event, the
-console subscriber's three-rhythm renderer (start / event log / output
-block + stats / totals), and the `make smoke-local` end-to-end harness.
-Doing a real type rename inside the codebase is out of scope and would
-push to 12+ days.
+and `LocalFileWorkAdapter` impl, the `ReviewAdapter.post_review` return
+type change to `Path`, the run-branch generator + parser pair, env-var
+validation + REQUIRED_ENV plumbing, lockfile + signal-handler cleanup,
+dirty-tree check, lazy v0→v1 migration, the failure-modes-table error
+surface, the `StageEnd.artifact_path` extension + new
+`_format_tokens_precise` helper + `RunEnd` event, the console
+subscriber's three-rhythm renderer (start / event log / output block +
+stats / totals), and the `make smoke-local` end-to-end harness with its
+local-origin git plumbing. Doing a real type rename of the vocabulary
+inside the codebase is out of scope and would push to 14+ days.
 
 ## Non-goals
 
@@ -67,7 +69,13 @@ push to 12+ days.
   see §Failure modes for the exact lockfile + stale-lock semantics.
 - **No code rename of existing types** to the new vocabulary. The
   vocabulary is documentation-level; type names in the codebase stay as
-  they are unless a specific rename is part of an Important fix.
+  they are. Carve-outs (additive, not renames): adding `RunEnd` to the
+  `ProgressEvent` taxonomy; adding `artifact_path: Path | None` field
+  to `StageEnd`; adding `WorkAdapter.write_stage_artifact` method;
+  adding `_format_tokens_precise` helper. Carve-out (acknowledged
+  signature change, not a rename): `ReviewAdapter.post_review` return
+  type changes from `None` to `Path`. All existing call sites update
+  in this v1 effort.
 
 ## Workflow vocabulary
 
@@ -342,10 +350,42 @@ stream (`domain/progress.py`) routed through the `console` subscriber:
      ===== a2sdlc:stage-output END =====
      ```
    - **Stats line.** `<duration> · <turns> turns · <tokens-in> in /
-     <tokens-out> out · <cost>` sourced from `StageRunStats`
-     (`domain/stats.py`). Wiring: the existing `StageEnd`
-     `ProgressEvent` is extended to carry a `stage_stats:
-     StageRunStats` field; the `console` subscriber reads it.
+     <tokens-out> out · <cost>`. Wiring: the existing
+     `StageEnd.final_metrics: Metrics` field already carries the same
+     five numbers under different field names (`input_tokens`,
+     `output_tokens`, `total_cost_usd`, `num_turns`, `elapsed`). The
+     console subscriber **derives** the stats line directly from
+     `final_metrics` — no schema change to `StageEnd`, no parallel
+     `stage_stats` field. `domain/stats.py` `StageRunStats` remains
+     the per-stage retry accumulator used inside dispatch; the
+     console renderer doesn't read it.
+
+   **Artifact path routing.** The output block must be byte-equal to
+   the file the active adapter wrote. To avoid making the console
+   subscriber adapter-aware (it shouldn't know about
+   `WorkAdapter` / `ReviewAdapter`), the artifact path rides on the
+   event itself: `StageEnd` is extended with one new field,
+   `artifact_path: Path | None` (additive, default `None` so existing
+   constructors stay compatible). Dispatch sets it from the path the
+   active adapter returned at stage finish:
+
+   - **SPEC / IMPLEMENT** → path returned by
+     `WorkAdapter.write_stage_artifact(...)`.
+   - **REVIEW** → path returned by `LocalReviewAdapter.post_review(...)`.
+     `ReviewAdapter.post_review` gains a return-type change from
+     `None` to `Path` — this **is** a breaking change to the protocol
+     and is explicitly carved out in the same way as
+     `write_stage_artifact`. `GitHubReviewAdapter` and
+     `LocalNoopReviewAdapter` get the trivial impl
+     (`return Path("/dev/null")` for noop; the file the GH adapter
+     stages locally before posting for the GH impl). When REVIEW also
+     produced inline comments, dispatch concatenates the inline file
+     onto the main artifact bytes when reading for the output block —
+     `artifact_path` still references the primary review file.
+
+   `artifact_path is None` means "no output block to render" (e.g. a
+   stage that ends in error before producing artifacts); console
+   skips the block, prints only the stats line.
 4. **Run end** — a `totals:` aggregate line over all stage runs. Wiring:
    `pipeline/dispatch.py` emits a new `RunEnd` event in a `finally`
    block so it fires on **both success and failure paths**. The
@@ -366,6 +406,17 @@ stream (`domain/progress.py`) routed through the `console` subscriber:
        aggregate_stats: StageRunStats     # summed across all stage runs
        total_cycles:    dict[StageName, int]  # cycles per stage (e.g., {SPEC:1, IMPLEMENT:2, REVIEW:2})
    ```
+
+   **Provenance of `total_cycles` and `aggregate_stats`.** Both come
+   from `state.json`, which is the source of truth for cycle counts
+   (the handover loop must persist them so it can enforce
+   `max_review_cycles` across restarts). On terminal exit (success or
+   failure-via-`finally`), dispatch reads `state.json` one last time,
+   builds `RunEnd`, and emits it before releasing the lockfile. If
+   `state.json` is missing or unreadable (catastrophic case, e.g. the
+   run failed before step 6 of CLI surface), `RunEnd` is emitted with
+   `total_cycles={}` and `aggregate_stats=StageRunStats()` (zeros)
+   plus `success=False` and the error.
 
    Even on failure paths from §Failure modes (commit failure, push
    failure, max_review_cycles exceeded, internal/unhandled), `RunEnd`
@@ -438,16 +489,25 @@ branch: a2sdlc/auto/req-billing-v2/20260430-142208-a3f019
 totals: 5m 17s · 23 turns · 107.1k in / 26.2k out · $0.790
 ```
 
-**Stats line formatting.** All three numeric formatters reuse the
-existing helpers in `domain/progress_format.py` so the renderer stays
-consistent with the rest of the engine:
+**Stats line formatting.** Two formatters reuse existing helpers, one
+is added new:
 
-- **Duration** — `_format_duration(duration_ms / 1000)`. Yields `Xs`
-  below 60s, `Xm Ys` between 1m and 1h, `Xh Ym` above. Sub-second values
-  render as `0s`.
-- **Tokens (in / out)** — `_format_tokens(n)`. `n < 1000` renders as
-  `n` (no suffix); `1000 ≤ n < 1_000_000` renders `X.Yk` with one
-  decimal; `n ≥ 1_000_000` renders `X.YM`. `0` renders as `0`.
+- **Duration** — reuse `domain/progress_format._format_duration(seconds)`
+  unchanged. Console calls it as
+  `_format_duration(stage_run_stats.duration_ms / 1000)`. Yields `Xs`
+  under 60s, `Xm Ys` from 1m to 1h, `Xh Ym` above. Sub-second values
+  render as `0s` (the helper truncates with `int()`).
+- **Tokens (in / out)** — **add a new sibling helper**
+  `_format_tokens_precise(n)` in `domain/progress_format.py`. Existing
+  `_format_tokens(n)` returns integer `{k}k` (clamped to `1k` for any
+  positive n < 1500) which is fine for the status bar but too coarse
+  for stats lines. The new helper renders:
+  - `0` → `"0"`
+  - `1 ≤ n < 1000` → `"{n}"` (no suffix)
+  - `1000 ≤ n < 1_000_000` → `f"{n/1000:.1f}k"` (e.g. `12_400 → "12.4k"`)
+  - `n ≥ 1_000_000` → `f"{n/1_000_000:.1f}M"` (e.g. `2_500_000 → "2.5M"`)
+  Existing `_format_tokens` is unchanged — no ripple to status-bar
+  callers.
 - **Cost** — `f"${cost_usd:.2f}"` always two decimals; `0.0` renders
   as `$0.00` (used for free local models so the line shape is stable).
 
@@ -664,17 +724,17 @@ doesn't care which trigger fired.
     error message. The `aggregate_stats` cover whatever stages
     actually ran.
 15. **End-to-end smoke test against a real scratch repo.** A make
-    target (`make smoke-local`) sets up a fresh git repo in
-    `tmp/smoke-local/`, initializes a `req/billing-v2` base branch
-    with a small `INPUT.md` and a minimal `.a2sdlc/config.yaml`, runs
-    `a2sdlc run` from that directory, asserts the run-branch exists
-    locally and on the local origin, asserts all expected artifacts
-    are present (`spec.md`, `implement-cycle-1.md`, at least one
-    review file), asserts the stdout transcript contains the
-    `===== a2sdlc:stage-output BEGIN =====` / `END` fences and a
-    `totals:` line, and exits 0. The smoke runs in CI; the scratch
-    repo is created/destroyed within the make target, never
-    committed.
+    target (`make smoke-local`) implements the harness specified in
+    §Testing strategy → "End-to-end smoke" — see that section for
+    the full step list and cleanup policy. AC #15 specifically
+    requires: the run-branch exists locally **and** on the local
+    origin; all expected artifacts are present (`spec.md`, ≥1
+    `implement-cycle-<n>.md`, ≥1 review file under `reviews/`); the
+    stdout transcript contains the
+    `===== a2sdlc:stage-output BEGIN =====` / `END =====` fences and
+    a `totals:` line; exit code is 0; **and** when required env vars
+    are absent the target exits 0 with the banner line
+    `smoke-local skipped: <VAR> not set`.
 
 ## Testing strategy
 
@@ -696,7 +756,13 @@ guard fires; lockfile error fires on concurrent invocation.
 
 ### End-to-end smoke (real `a2sdlc run`)
 A `make smoke-local` target performs a *real* run end-to-end against
-a scratch repo created inside the harness:
+a scratch repo created inside the harness. **Scope: happy path only.**
+Failure-mode coverage (the 10-row §Failure modes table) lives in the
+unit + integration tiers — adding a smoke variant per failure mode is
+explicitly out of scope and would blow the appetite. Each row in
+§Failure modes maps to one integration-test case.
+
+Steps:
 
 1. Creates `tmp/smoke-local/repo/` (cleaned at start), `git init`s it,
    initializes a "local origin" via a bare repo at
@@ -704,28 +770,41 @@ a scratch repo created inside the harness:
    the working repo.
 2. Creates a base branch `req/smoke-feature` carrying a tiny
    `INPUT.md` (a deliberately small change request, e.g. "add a
-   greet() function returning 'hello, <name>!' and a unit test")
+   `greet()` function returning `'hello, <name>!'` and a unit test")
    plus a minimal `.a2sdlc/config.yaml` pointing at the local
    ecosystem.
 3. Commits + pushes the base to the local origin.
 4. Invokes `a2sdlc run` from inside the working repo with the
-   required env vars set from CI secrets (or skipped with a clear
-   message when secrets are absent — smoke is opt-in in that case).
-5. Captures stdout to a file; asserts:
+   required env vars set from CI secrets. **If a required env var is
+   absent, the target exits 0 with a single banner line:
+   `smoke-local skipped: <VAR> not set`** — grep-able in CI logs but
+   not a hard failure (smoke is opt-in when keys aren't available).
+5. Captures stdout to a file; asserts (matches AC #15 exactly):
    - exit code 0
-   - the run-branch exists on the local origin
+   - the run-branch exists locally **and** on the local origin
    - per-stage artifacts are present at the spec'd paths
-   - stdout contains the expected fences and a `totals:` line
-   - the run-branch's tip commit contains the agent-produced changes
-6. Tears down `tmp/smoke-local/` on exit (success or failure
-   preserves the directory under `tmp/smoke-local-failed-<ts>/` for
-   forensics).
+     (`spec.md`, ≥1 `implement-cycle-<n>.md`, ≥1 review file under
+     `reviews/`)
+   - stdout contains the `===== a2sdlc:stage-output BEGIN =====` /
+     `END =====` fences and a `totals:` line
+   - the run-branch's tip commit on origin contains the
+     agent-produced changes
+6. Tears down `tmp/smoke-local/` on success. **On failure**, the
+   harness preserves the entire directory under
+   `tmp/smoke-local-failed-<ts>/`. **Cleanup policy: only the most
+   recent failed run is preserved.** The harness deletes any older
+   `tmp/smoke-local-failed-*` directories at the start of each run,
+   bounded retention regardless of CI cadence.
+
+`tmp/` must be in the repo's `.gitignore` so the harness doesn't
+collide with the dirty-tree check from CLI step 4. Adding the
+`.gitignore` entry is part of the implementation plan.
 
 This is the spec's primary trust surface — unit and integration tests
 prove the wiring; the smoke proves the engine actually does the job.
 The implementation plan must produce the harness, the
 `make smoke-local` target, and a CI job that runs it (gated on the
-required env vars being present).
+required env vars being present, exits 0 with the banner when not).
 
 ## Out-of-scope follow-ups (already enumerated, captured here for tracking)
 
