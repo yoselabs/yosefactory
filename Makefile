@@ -1,4 +1,4 @@
-.PHONY: lint lint-harness lint-jscpd lint-actions fix test test-integration record-integration check coverage-diff security-audit arch bootstrap similar
+.PHONY: lint lint-harness lint-jscpd lint-actions fix test test-integration record-integration check coverage-diff security-audit arch bootstrap similar smoke-local
 
 lint: lint-harness lint-jscpd lint-actions
 
@@ -46,6 +46,9 @@ check: lint arch test test-integration coverage-diff security-audit
 
 similar: ## Report similarly-named functions/classes (advisory)
 	@uv run python scripts/find_similar.py
+
+smoke-local: ## End-to-end smoke against a scratch local-origin repo (opt-in via env)
+	@bash scripts/smoke_local.sh
 
 bootstrap: ## First-time setup after clone
 	uv sync

@@ -1,0 +1,30 @@
+name: smoke-local
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  smoke-local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      # Deliberate isolation pollution to verify AC #16: the engine
+      # must pin its SDK config and ignore operator-side env that
+      # could leak ~/.claude/CLAUDE.md, plugins, or MCP servers into
+      # agent behavior.
+      CLAUDE_CONFIG_DIR: /tmp/should-not-exist
+      A2SDLC_PLUGIN_PATHS: /tmp/should-not-exist
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install
+        run: |
+          pip install uv
+          uv sync
+      - name: Run smoke
+        run: make smoke-local

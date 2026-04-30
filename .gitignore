@@ -300,3 +300,7 @@ node_modules/
 
 # find_similar advisory output
 .similar-report.json
+
+# a2sdlc smoke harness scratch space
+tmp/
+tmp/smoke-local-failed-*
