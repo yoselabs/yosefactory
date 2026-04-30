@@ -282,8 +282,19 @@ def drive_pipeline(
         logger.info("project_config_unavailable", extra={"reason": str(exc)})
         project_config = None
 
+    # Build the env-passthrough allow-list from the active config + the
+    # wired adapters. Anything not in this set (besides the engine
+    # baseline + POSIX vars) is stripped from the SDK subprocess env.
+    from a2sdlc.cli.run import _ADAPTER_ENV  # noqa: PLC0415
+
+    required_env_names: set[str] = set(config.required_env)
+    for role in ("work", "review"):
+        adapter_id = getattr(config.adapters, role)
+        required_env_names.update(_ADAPTER_ENV.get(adapter_id, ()))
+
     runner = SdkStageRunner(
-        effort=getattr(project_config, "effort", None) if project_config else None
+        effort=getattr(project_config, "effort", None) if project_config else None,
+        required_env_names=frozenset(required_env_names),
     )
 
     def _stage_cfg(name: StageName):

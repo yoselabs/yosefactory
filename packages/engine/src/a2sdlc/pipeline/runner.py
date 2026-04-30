@@ -23,9 +23,17 @@ from a2sdlc.domain.models import StageName
 from a2sdlc.domain.run_result import RunResult
 from a2sdlc.domain.progress import ProgressState
 from a2sdlc.domain.progress_format import extract_target
-from a2sdlc.runtime.isolation import build_sdk_options_overrides
+from a2sdlc.runtime.isolation import build_sdk_env, build_sdk_options_overrides
 
 logger = logging.getLogger("a2sdlc.pipeline.runner")
+
+# Engine baseline — names that must always pass through to the SDK
+# subprocess if present. Both auth modes (API key + OAuth token) ship
+# in this set so smoke harnesses using either credential keep working
+# while ``CLAUDE_CONFIG_DIR`` / ``CLAUDE_HOME`` are still stripped.
+_ENGINE_REQUIRED_ENV: frozenset[str] = frozenset(
+    {"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"}
+)
 
 # Bash-subcommand denylist — the agent may not invoke any of these
 # because they touch the PR object, which is exclusively the engine's
@@ -116,6 +124,7 @@ async def run_stage(
     is_resume: bool = False,
     branch: str = "",
     effort: str | None = None,
+    required_env_names: frozenset[str] | None = None,
 ) -> RunResult:
     """Run a pipeline stage via Claude Agent SDK; mutates progress_state."""
     from claude_agent_sdk import ClaudeAgentOptions, query  # noqa: PLC0415
@@ -173,6 +182,16 @@ async def run_stage(
     # project/local pair and zeroes ``mcp_servers`` so the operator's
     # MCP config does not bleed into agent behaviour.
     options_kwargs.update(build_sdk_options_overrides())
+
+    # Spec §Agent isolation — curate the env handed to the SDK
+    # subprocess. ``CLAUDE_CONFIG_DIR`` / ``CLAUDE_HOME`` are stripped
+    # so an operator's polluted Claude config tree cannot influence
+    # agent behaviour; both auth credentials (API key + OAuth token)
+    # pass through when present.
+    env_names = (required_env_names or frozenset()) | _ENGINE_REQUIRED_ENV
+    options_kwargs["env"] = build_sdk_env(
+        dict(os.environ), required_env_names=set(env_names)
+    )
 
     options = ClaudeAgentOptions(**options_kwargs)
     if is_resume:
@@ -356,8 +375,14 @@ def _resolve_plugins() -> list[dict[str, str]]:
 class SdkStageRunner:
     """StageRunner backed by the Claude Agent SDK. Wraps ``run_stage``."""
 
-    def __init__(self, effort: str | None = None) -> None:
+    def __init__(
+        self,
+        effort: str | None = None,
+        *,
+        required_env_names: frozenset[str] | None = None,
+    ) -> None:
         self._effort = effort
+        self._required_env_names = required_env_names
 
     async def run(
         self,
@@ -382,4 +407,5 @@ class SdkStageRunner:
             is_resume=is_resume,
             branch=branch,
             effort=self._effort,
+            required_env_names=self._required_env_names,
         )
