@@ -160,7 +160,7 @@ jira+github) are additive.
 |---|---|---|
 | Work | `LocalFileWorkAdapter` (existing, extended) | Reads `INPUT.md` from base HEAD as the "ticket"; progress comments go to `.a2sdlc/state/<branch>/progress.md`; status transitions update local markers. |
 | Review | **`LocalReviewAdapter` (new)** | `post_review` writes `.a2sdlc/state/<branch>/reviews/<ts>-cycle-<n>.md`; `post_inline_comments` writes `<ts>-cycle-<n>-inline.md` (format below). PR-lifecycle methods (`create_draft_pr`, `merge_pr`, `mark_pr_ready`, `get_approvals`) return safe no-op defaults. |
-| Subscribers | `console`, `mlflow_trace` | Console prints stage transitions to stdout; MLflow records run metadata. |
+| Subscribers | `console`, `mlflow_trace` | Console prints stage transitions and per-stage stats summaries (duration / turns / tokens / cost) to stdout, plus a final `totals:` line; MLflow records the same numbers as run metrics. |
 
 `LocalNoopReviewAdapter` is preserved for tests that want a true no-op; the
 new `LocalReviewAdapter` is the user-facing local mode that produces
@@ -277,17 +277,27 @@ Sample output:
 ```
 $ a2sdlc run
 [SPEC]      reading INPUT.md from req/billing-v2 ...
-[SPEC]      done → IMPLEMENT
+[SPEC]      done → IMPLEMENT     | 18.3s · 4 turns · 12.4k in / 3.1k out · $0.082
 [IMPLEMENT] generating changes ...
-[IMPLEMENT] done → REVIEW
+[IMPLEMENT] done → REVIEW        | 2m 41s · 9 turns · 38.2k in / 14.7k out · $0.412
 [REVIEW]    inspecting diff ...
-[REVIEW]    handover → IMPLEMENT (feedback: "missing edge case for X")
+[REVIEW]    handover → IMPLEMENT | 41.2s · 3 turns · 22.1k in / 1.8k out · $0.071
+            (feedback: "missing edge case for X")
 [IMPLEMENT] revising ...
-[IMPLEMENT] done → REVIEW
-[REVIEW]    approved
+[IMPLEMENT] done → REVIEW        | 1m 04s · 5 turns · 19.8k in / 6.2k out · $0.184
+[REVIEW]    approved             | 12.8s · 2 turns · 14.6k in / 0.4k out · $0.041
 done.
 branch: a2sdlc/auto/req-billing-v2/20260430-142208-a3f019
+totals: 5m 17s · 23 turns · 107.1k in / 26.2k out · $0.790
 ```
+
+The trailing line per stage is the **stage stats summary** — same fields
+the status-bar surface already accumulates (`domain/stats.py`
+`StageRunStats`). The summary fires at the stage's terminal transition
+(done / handover / approved). Format: `<duration> · <turns> turns ·
+<tokens-in> in / <tokens-out> out · <cost>`. Token counts are formatted
+with `k`/`M` suffixes, cost as USD with two decimals. The final
+`totals:` line aggregates across all stage runs in the workflow.
 
 ## Fail-fast on missing env vars
 
@@ -462,6 +472,10 @@ doesn't care which trigger fired.
     `schema_version` is accepted on read, surfaces a `state.migrated`
     log line, and is rewritten with `schema_version=1` on the next
     stage-finish commit (not eagerly).
+12. Per-stage stats summary line is printed at every stage terminal
+    transition (`done` / `handover` / `approved`) with all five fields
+    (duration, turns, tokens-in, tokens-out, cost), and a final
+    `totals:` line aggregates across all stage runs.
 
 ## Out-of-scope follow-ups (already enumerated, captured here for tracking)
 
