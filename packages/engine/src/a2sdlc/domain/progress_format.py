@@ -86,6 +86,25 @@ def _format_tokens(tokens: int) -> str:
     return f"{k}k"
 
 
+def _format_tokens_precise(tokens: int) -> str:
+    """Spec §Stats line formatting.
+
+    `_format_tokens` (integer Xk) is too coarse for stats-line use.
+    This sibling helper renders:
+      0           -> "0"
+      1..999      -> "{n}"
+      1k..<1M     -> "X.Yk" with one decimal
+      >=1M        -> "X.YM" with one decimal
+    """
+    if tokens <= 0:
+        return "0"
+    if tokens < 1_000:
+        return str(tokens)
+    if tokens < 1_000_000:
+        return f"{tokens / 1000:.1f}k"
+    return f"{tokens / 1_000_000:.1f}M"
+
+
 def _format_milestone_time(seconds: float) -> str:
     m, s = int(seconds) // 60, int(seconds) % 60
     return f"{m}:{s:02d}"
