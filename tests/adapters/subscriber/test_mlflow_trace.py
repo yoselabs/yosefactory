@@ -227,6 +227,81 @@ async def test_metrics_without_stage_is_safe(fake_mlflow) -> None:
     assert fake_mlflow.spans == []
 
 
+def test_start_run_uses_workflow_id_and_identity_tags(monkeypatch) -> None:
+    """GIVEN a workflow_id and identity fields
+    WHEN ``start_run`` is invoked
+    THEN ``mlflow.start_run`` is called with run_name=workflow_id and the
+         identity tags (base, base_sha, ecosystem, input_hash, engine_version,
+         ticket_key) are forwarded."""
+    run_names: list[str | None] = []
+    tag_sets: list[dict[str, str]] = []
+
+    def fake_start_run(
+        run_name: str | None = None,
+        tags: dict[str, str] | None = None,
+    ) -> object:
+        run_names.append(run_name)
+        tag_sets.append(dict(tags or {}))
+        return object()
+
+    monkeypatch.setattr(
+        "a2sdlc.adapters.subscriber.mlflow_trace.mlflow.start_run",
+        fake_start_run,
+    )
+
+    sub = MlflowTraceSubscriber()
+    sub.start_run(
+        workflow_id="a2sdlc/auto/x/20260430-142208-a3f019",
+        ticket_key="ABC-123",
+        base="req/x",
+        base_sha="0" * 40,
+        ecosystem="local",
+        input_hash="a3f019",
+        engine_version="abc1234",
+    )
+
+    assert run_names == ["a2sdlc/auto/x/20260430-142208-a3f019"]
+    tags = tag_sets[0]
+    assert tags["ticket_key"] == "ABC-123"
+    assert tags["base"] == "req/x"
+    assert tags["base_sha"] == "0" * 40
+    assert tags["ecosystem"] == "local"
+    assert tags["input_hash"] == "a3f019"
+    assert tags["engine_version"] == "abc1234"
+
+
+def test_start_run_omits_ticket_key_when_none(monkeypatch) -> None:
+    """GIVEN no ticket_key (autonomous run)
+    WHEN ``start_run`` is invoked
+    THEN the ``ticket_key`` tag is omitted entirely."""
+    tag_sets: list[dict[str, str]] = []
+
+    def fake_start_run(
+        run_name: str | None = None,  # noqa: ARG001
+        tags: dict[str, str] | None = None,
+    ) -> object:
+        tag_sets.append(dict(tags or {}))
+        return object()
+
+    monkeypatch.setattr(
+        "a2sdlc.adapters.subscriber.mlflow_trace.mlflow.start_run",
+        fake_start_run,
+    )
+
+    sub = MlflowTraceSubscriber()
+    sub.start_run(
+        workflow_id="x",
+        ticket_key=None,
+        base="b",
+        base_sha="0" * 40,
+        ecosystem="local",
+        input_hash="aaaaaa",
+        engine_version="v",
+    )
+
+    assert "ticket_key" not in tag_sets[0]
+
+
 @pytest.mark.asyncio
 async def test_two_consecutive_stages_each_get_own_root(fake_mlflow) -> None:
     """GIVEN two stages run in sequence on the same subscriber instance

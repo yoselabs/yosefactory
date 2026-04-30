@@ -37,6 +37,35 @@ class MlflowTraceSubscriber:
         self._stage_span: LiveSpan | None = None
         self._tool_span: LiveSpan | None = None
 
+    def start_run(
+        self,
+        *,
+        workflow_id: str,
+        ticket_key: str | None,
+        base: str,
+        base_sha: str,
+        ecosystem: str,
+        input_hash: str,
+        engine_version: str,
+    ) -> object:
+        """Open the MLflow parent run for a workflow with identity tags.
+
+        Spec §MLflow correlation: ``run_name`` is the workflow_id (which is
+        also the run-branch name). Tags carry the identity fields needed to
+        correlate runs across replays / re-records / parallel A/B tests.
+        ``ticket_key`` is omitted when the run is autonomous (no ticket).
+        """
+        tags: dict[str, str] = {
+            "base": base,
+            "base_sha": base_sha,
+            "ecosystem": ecosystem,
+            "input_hash": input_hash,
+            "engine_version": engine_version,
+        }
+        if ticket_key:
+            tags["ticket_key"] = ticket_key
+        return mlflow.start_run(run_name=workflow_id, tags=tags)
+
     async def handle(self, event: ProgressEvent) -> None:
         if isinstance(event, StageStart):
             self._stage_span = mlflow.start_span_no_context(
