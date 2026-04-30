@@ -15,6 +15,7 @@ from a2sdlc.domain.models import StageName
 from a2sdlc.domain.run_context import RunContext
 from a2sdlc.domain.run_intent import RunIntent
 from a2sdlc.domain.run_result import DispatchResult
+from a2sdlc.domain.stats import StageRunStats
 from a2sdlc.lifecycle.comment import CommentManager
 from a2sdlc.lifecycle.pr import PRLifecycle
 from a2sdlc import ingress
@@ -28,7 +29,29 @@ from a2sdlc.stages import get_stage
 
 
 async def dispatch(ctx: RunContext) -> DispatchResult:
-    """Run one pipeline stage. Returns what happened."""
+    """Run one pipeline stage. Returns what happened.
+
+    Wraps the run loop in try/except/finally so ``RunEnd`` is emitted on
+    every terminal exit path — handled returns, blocked outcomes, AND
+    unhandled exceptions (spec §Console output cadence, AC #14). The
+    finally block is best-effort and never raises.
+    """
+    success = True
+    error: str | None = None
+    try:
+        return await _dispatch_body(ctx)
+    except Exception as exc:
+        success = False
+        error = str(exc) or exc.__class__.__name__
+        raise
+    finally:
+        try:
+            await _emit_run_end(ctx, success=success, error=error)
+        except Exception:  # noqa: BLE001
+            ctx.logger.exception("dispatch.run_end_emit_failed")
+
+
+async def _dispatch_body(ctx: RunContext) -> DispatchResult:
     parsed = ingress.parse_event(ctx)
     if isinstance(parsed, ingress.ParsedSkip):
         return DispatchResult(stage=StageName.SPEC, error=parsed.reason)
@@ -55,6 +78,72 @@ async def dispatch(ctx: RunContext) -> DispatchResult:
 
     stack = with_idempotency(with_telemetry(run_stage))
     return await stack(ctx, intent)
+
+
+async def _emit_run_end(ctx: RunContext, *, success: bool, error: str | None) -> None:
+    """Emit terminal ``RunEnd`` via ``ctx.progress_state``.
+
+    Best-effort: resolves ``workflow_id`` from whichever per-run field
+    is populated, and falls back to empty stats/cycles when state.json
+    is unreadable or hasn't been authored with the v1 fields yet
+    (loader lands in Task 17/18).
+    """
+    workflow_id = _resolve_workflow_id(ctx)
+    aggregate = StageRunStats()
+    cycles: dict[StageName, int] = {}
+    try:
+        raw = ctx.git.read_state() if ctx.git is not None else None
+        if raw:
+            import json
+
+            data = json.loads(raw)
+            agg = data.get("aggregate_stats") or {}
+            aggregate = StageRunStats(
+                cost_usd=float(agg.get("cost_usd", 0) or 0),
+                tokens_in=int(agg.get("tokens_in", 0) or 0),
+                tokens_out=int(agg.get("tokens_out", 0) or 0),
+                duration_ms=int(agg.get("duration_ms", 0) or 0),
+                num_turns=int(agg.get("num_turns", 0) or 0),
+            )
+            raw_cycles = data.get("total_cycles") or {}
+            for name, count in raw_cycles.items():
+                try:
+                    cycles[StageName(name)] = int(count)
+                except (ValueError, TypeError):
+                    continue
+    except Exception:  # noqa: BLE001
+        # State unreadable / wrong shape — fall back to defaults.
+        pass
+
+    if ctx.progress_state is None:
+        return
+    await ctx.progress_state.run_end(
+        workflow_id=workflow_id,
+        success=success,
+        error=error,
+        aggregate_stats=aggregate,
+        total_cycles=cycles,
+    )
+
+
+def _resolve_workflow_id(ctx: RunContext) -> str:
+    """Best-effort workflow_id resolution.
+
+    Order: ``ctx.run.workflow_id`` (the canonical PipelineRun identity)
+    → ``ctx.intent.branch`` (populated once ingress resolves intent)
+    → empty string. Never raises.
+    """
+    run = getattr(ctx, "run", None)
+    if run is not None:
+        wid = getattr(run, "workflow_id", "") or ""
+        if wid:
+            return wid
+    intent = getattr(ctx, "intent", None)
+    if intent is not None:
+        branch = getattr(intent, "branch", "") or ""
+        if branch:
+            return branch
+    return ""
 
 
 def _ensure_draft_pr(ctx: RunContext, intent: RunIntent) -> int | None:

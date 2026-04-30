@@ -214,6 +214,28 @@ class ProgressState:
             StageEnd(stage=stage, success=success, error=error, final_metrics=final)
         )
 
+    async def run_end(
+        self,
+        *,
+        workflow_id: str,
+        success: bool,
+        error: str | None,
+        aggregate_stats: StageRunStats,
+        total_cycles: dict[StageName, int],
+    ) -> None:
+        """Emit terminal ``RunEnd`` event. Best-effort: dispatch's
+        finally block calls this and swallows any failures.
+        """
+        await self._emit(
+            RunEnd(
+                workflow_id=workflow_id,
+                success=success,
+                error=error,
+                aggregate_stats=aggregate_stats,
+                total_cycles=total_cycles,
+            )
+        )
+
     async def add_tool_call(self, name: str, target: str) -> None:
         elapsed = time.monotonic() - self.start_time
         entry = ToolEntry(timestamp=elapsed, name=name, target=target)
