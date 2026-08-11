@@ -1,6 +1,6 @@
 # yosefactory
 
-Process workflows for my own software work, driven from Claude Code / Claude Desktop over MCP.
+Process workflows over my own work — code, and increasingly not only code — driven from Claude Code / Claude Desktop over MCP.
 
 **Status: pre-alpha, scaffold only.** No workflows written yet.
 

@@ -1,6 +1,6 @@
 # yosefactory
 
-Personal workflow platform. Process workflows Denis runs his own software work through, driven from Claude Code / Claude Desktop over MCP.
+Personal workflow platform. Process workflows Denis runs his own work through — software first, but deliberately not limited to it — driven from Claude Code / Claude Desktop over MCP.
 
 **Not** a product, **not** a framework for other people, **not** a general agent runtime. One user. If a design choice only makes sense for a second user, it is out of scope.
 
