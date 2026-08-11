@@ -60,7 +60,7 @@ decisions/        — build-time ADRs only
 ## Constraints that travel with the code
 
 - **D002** — nothing is ever deleted. Applies to `ledger/`, not to source.
-- **D005** — lab-internal. A demo to [redacted] people intersects this and has not been re-checked.
+- **D005** — no party outside Denis holds approval rights over what this work is, where it is published, or who may see it. Publishing is his call alone; commissioning is downstream of published receipts, never upstream permission.
 - **D011** — the friction threshold. Before building any part of an adopted tool's job, all three must hold: a named blocked requirement (cited by entity id), a dated seam-failure receipt with the failure quoted, and a build that is a *predicate* rather than a replacement. Prediction is not a receipt.
 - **D012** — the corpus does not move into an external tool. This repo does not absorb P160.
 - **D013** — every adoption candidate gets a dated coverage receipt. That includes `claude-agent-sdk` and Managed Agents.
