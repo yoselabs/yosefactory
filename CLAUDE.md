@@ -1,4 +1,4 @@
-# a2factory
+# yosefactory
 
 Personal workflow platform. Process workflows Denis runs his own software work through, driven from Claude Code / Claude Desktop over MCP.
 
@@ -29,14 +29,14 @@ From `philosophy.md` C2, refined by P131 concept 09 into five layers:
 
 > *If this changed next month, would existing ledger rows still be readable and comparable?*
 > **Yes** → `workflows/`, keep it soft, versioned, disposable.
-> **No** → `src/a2factory/protocol/`, freeze it and make it small.
+> **No** → `src/yosefactory/protocol/`, freeze it and make it small.
 
 `protocol/` is meant to stay tiny. Rigidity there is cheap because the surface is small, and it is what makes everything above it replaceable. Resist growing it.
 
 ## Layout
 
 ```
-src/a2factory/
+src/yosefactory/
   protocol/    L1 — unit of work, states, ledger row shape, the typed question (M600)
   runtime/     L2 — Claude Agent SDK harness, hooks, session plumbing
   server/         — MCP surface. Thin. Exposes workflows and nothing else.

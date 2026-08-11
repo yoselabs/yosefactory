@@ -1,4 +1,4 @@
-# a2factory
+# yosefactory
 
 Process workflows for my own software work, driven from Claude Code / Claude Desktop over MCP.
 
@@ -30,7 +30,7 @@ The clock starts at the first such commit.
 ## Layout
 
 ```
-src/a2factory/
+src/yosefactory/
   protocol/    rigid and small — units of work, states, ledger row, typed questions
   runtime/     the Claude Agent SDK harness
   server/      the MCP surface

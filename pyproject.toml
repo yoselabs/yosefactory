@@ -1,5 +1,5 @@
 [project]
-name = "a2factory"
+name = "yosefactory"
 version = "0.1.0"
 description = "Personal workflow platform — process workflows for Denis's own software work, exposed over MCP."
 readme = "README.md"

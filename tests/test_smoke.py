@@ -8,9 +8,9 @@ has something to fail on when the environment breaks.
 
 
 def test_package_imports() -> None:
-    import a2factory
+    import yosefactory
 
-    assert a2factory is not None
+    assert yosefactory is not None
 
 
 def test_layers_exist() -> None:
@@ -18,7 +18,7 @@ def test_layers_exist() -> None:
     import importlib
 
     for layer in ("protocol", "runtime", "server", "workflows"):
-        assert importlib.import_module(f"a2factory.{layer}") is not None
+        assert importlib.import_module(f"yosefactory.{layer}") is not None
 
 
 def test_harness_is_importable() -> None:
