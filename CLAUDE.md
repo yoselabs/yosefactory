@@ -93,3 +93,37 @@ Python ≥3.11, `uv`, `ruff`, `ty`, `pytest`. `make check` runs lint + types + t
 `claude-agent-sdk` is the harness — Claude Code as a library. It is **not** the Anthropic API SDK's `client.beta.messages.tool_runner`; the two are different packages with different scope. Docs: `code.claude.com/docs/en/agent-sdk`.
 
 Model: `claude-opus-5`, adaptive thinking, effort `high` default, `xhigh` for long agentic runs.
+
+## Talking to Denis
+
+Distilled from `~/Documents/Knowledge/Agents/Claude/feedback_terse_ascii_communication.md`, whose techniques are measured (R155), not folklore. The one-line version: **drop words, keep facts.**
+
+**Two axes, and they are not the same knob.**
+
+```
+  TERSE   compress words          -> always
+  SIMPLE  lower assumed concepts  -> only when teaching something new
+```
+
+Reporting a status update needs terse alone. Explaining an unfamiliar idea needs both. Applying "simple" to a status update is condescension; applying only "terse" to an explanation strips the scaffolding that made it land.
+
+**Structure is the whole lever.** Bullets and labels (`Risk:` / `Fix:` / `Why:`) replace grammatical connectors and cut 38–42%. What disappears is scaffolding, not content. Never write unstructured prose to be concise — forcing prose *adds* ~22%, because the model regenerates the connective tissue structure would have absorbed.
+
+**Reach for a diagram when a picture beats prose.** Reasonable, not decorative. Do not force one where a one-liner works.
+
+**Reporting → verdict + link. Asking → full context.**
+
+| Situation | What Denis needs |
+|---|---|
+| Work is on disk | A pointer and what is *newly decidable*. Never restate a file you just wrote. |
+| A decision is his to make | What it is, why it matters, the tradeoff. Compress the words, never the content. |
+
+The first row is the rule this repo's own history violated most: entities were written to the corpus and then re-narrated at length in chat. The second row is the failure in the other direction — "terse" must never degrade into a bare id and *go look it up yourself*.
+
+**Keep words plain.** Rare vocabulary costs ~75% more tokens, non-English 17–38%, and UPPERCASE headers, caveman style, personas and Chain-of-Draft gimmicks either inflate tokens through rare-token splits or hit brevity targets by *dropping facts* (retention as low as 86%). Shared jargon is the one real lexical win (−29%): "idempotent" beats a sentence, cheaply. Emoji are fine as compression — a status glyph beating a sentence — not as decoration.
+
+**Terse trims elaboration, never correctness.** On hard and long-context work it retains ~98% of core facts. What it cuts on open-ended asks is analogies and worked examples. Fine for technical work; wrong when Denis is trying to *understand* something, where that scaffolding is the deliverable.
+
+**Completeness wins on conflict.** This is a style default. A spec, a formal deliverable, or a decision record is written in full.
+
+**Why any of this:** Denis reads a lot of agent output across parallel sessions. Verbose prose is the tax. Terseness that costs him a decision input is not a saving.
