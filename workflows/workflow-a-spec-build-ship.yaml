@@ -1,0 +1,57 @@
+name: workflow-a-spec-build-ship
+description: >
+  How Denis works today, as an ordered list of stages. Hard-coded, not
+  parameterized — a fresh stage list per new workflow (H572). Observed
+  from a2web's own git history and openspec/ layout, not invented.
+
+stages:
+  - id: spec
+    does: >
+      Write proposal.md (why / what changes / capabilities / impact),
+      design.md (technical decisions, alternatives rejected), tasks.md
+      (checklist) under openspec/changes/<change-id>/.
+    tool: openspec change
+    suspend_when:
+      - question: decision
+        trigger: >
+          the "Why" cannot be written without a call only the operator
+          can make (which system to target, which tradeoff to accept)
+      - question: ambiguity
+        trigger: the raw ask maps to more than one plausible capability
+
+  - id: build
+    does: >
+      Implement tasks.md items one at a time, checking each off as it
+      lands. Run make lint / make ty / relevant test file after each
+      group of tasks, not only at the end.
+    suspend_when:
+      - question: gate-failed
+        trigger: a test or type check fails and the fix is not mechanical
+      - question: out-of-depth
+        trigger: >
+          implementation surfaces something the spec didn't anticipate
+          (a wrong assumption in design.md, a missing seam) — corrected
+          in design.md inline, per a2web's own "earlier draft assumed X,
+          corrected once Y" convention, not silently
+      - question: decision
+        trigger: a design.md assumption turns out wrong and the fix branches
+
+  - id: ship
+    does: >
+      Full suite green (make check). Live smoke test if the change
+      touches an external system. openspec archive <change-id>. Commit,
+      referencing the change/task id in the message — a2web's own git
+      log runs feat(...)/fix(...) commits paired with a following
+      chore(openspec): archive ... commit.
+    tool: openspec archive
+    suspend_when:
+      - question: gate-failed
+        trigger: make check is not green
+      - question: cost-approval
+        trigger: the smoke test would spend against a live external system
+      - question: decision
+        trigger: the commit would touch files outside the change's stated Impact
+
+# Deliberately not shared with workflow-b: no common stage schema module,
+# no imported types. If this file and workflow-b's end up identical in
+# shape, that identity is Session 2's finding, not this session's design.

@@ -1,0 +1,15 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff check (src + tests)
+        entry: uv run ruff check src/ tests/
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: ty
+        name: ty check (src)
+        entry: uv run ty check src/
+        language: system
+        pass_filenames: false
+        always_run: true

@@ -1,0 +1,26 @@
+seq = 2
+date = "2026-08-12"
+event = "run"
+workflow = "workflow-b-input-to-scientific-format"
+stage_run = "capture,classify,formalize,falsifiability_check,file"
+target_repo = "a2web"
+input = "raw observation from the workflow-a run: shipping add-a2web-feedback-channel required a bead id, but none existed for it, and no gate in either the spec or build stage would have caught the gap"
+outcome = "filed"
+output_ref = "P160 S061"
+note = """
+Ran the input-to-scientific-format transform (M301) on a real,
+unfiled observation surfaced by workflow-a's own run in this session
+— not a toy input. classify called it an observation rather than a
+claim (checkable against git log + bd list at the time), formalize
+produced the signal shape (observed / why it matters / caveats),
+falsifiability_check stated a condition that would refute it (three
+more openspec changes arriving at ship with a pre-existing bead),
+file minted a new entity (S061) rather than extending one, since
+nothing existing named this gap.
+
+Neither of workflow-b's suspend_when clauses fired: the input was
+already unambiguous (clearly an observation) and clearly needed a new
+file rather than an extension. That absence is itself worth carrying
+into Session 2 — on this one input, B's stage list needed no
+escalation where A's did.
+"""

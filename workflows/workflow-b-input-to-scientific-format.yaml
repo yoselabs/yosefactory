@@ -1,0 +1,49 @@
+name: workflow-b-input-to-scientific-format
+description: >
+  "Translation of inputs into a scientific format" — Denis's first named
+  demand. Written independently of workflow-a: no shared stage schema,
+  no shared vocabulary borrowed on purpose. Grounded in M301 (requirement
+  rigorizer): raw dictated idea/complaint -> rigorous restatement. Denis
+  "explicitly wants the smart-idea-to-formal-requirement transform to
+  exist."
+
+stages:
+  - id: capture
+    does: >
+      Record the raw input verbatim — what was actually said or
+      observed, with its source and date. No paraphrase at this stage;
+      paraphrasing before capture is how the original claim gets lost.
+
+  - id: classify
+    does: >
+      Decide what kind of thing this is before formalizing it:
+      an observation (something that happened, checkable against a
+      record) or a claim (something believed true, not yet checked).
+      The answer picks the target shape in the next stage.
+    suspend_when:
+      - question: ambiguity
+        trigger: the raw input reads as both, or as neither
+
+  - id: formalize
+    does: >
+      Restate rigorously in the shape classify() picked.
+      Observation -> what was observed / source / why it matters /
+      caveats. Claim -> the claim / the reasoning behind it / what
+      would prove it wrong / the cheapest way to check.
+
+  - id: falsifiability_check
+    does: >
+      A formalized claim that cannot be wrong in a checkable way is
+      not yet science-shaped. State a condition under which the
+      restatement would be false, or send it back to formalize.
+    suspend_when:
+      - question: out-of-depth
+        trigger: no falsifier can be found after one revision pass
+
+  - id: file
+    does: >
+      Attach the restatement to an existing record if it clearly
+      extends one, mint a new one otherwise.
+    suspend_when:
+      - question: decision
+        trigger: it is unclear whether this extends an existing record

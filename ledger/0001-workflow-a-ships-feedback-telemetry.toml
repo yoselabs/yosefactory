@@ -1,0 +1,28 @@
+seq = 1
+date = "2026-08-12"
+event = "run"
+workflow = "workflow-a-spec-build-ship"
+stage_run = "ship"
+target_repo = "a2web"
+target_change = "add-a2web-feedback-channel"
+outcome = "shipped"
+commits = ["983c810", "5ab739a", "a4f04b7"]
+note = """
+D014's clock start. Picked up an already-spec'd-and-built a2web change
+(proposal/design/tasks complete, prior session) and ran it through
+workflow-a's ship stage: verify make check (1822 passed, 92% cov, arch
+179 passed), verify diff matches proposal's stated Impact, openspec
+archive, commit, close the tracking bead.
+
+Only the ship stage was exercised through the platform this run — spec
+and build happened before this session existed. That is a real
+limitation on this run as evidence for workflow-a's full stage list,
+recorded rather than hidden (Session 2 should weight it accordingly).
+
+One unanticipated suspension point: the commit-message convention
+observed in a2web's git log requires a bead id, and none existed for
+this change. Not covered by any suspend_when clause in
+workflow-a-spec-build-ship.yaml. Resolved in-session (bead a2web-uh6
+created retroactively) rather than escalated. Written back to P160 as
+S061, wired to H572.
+"""
