@@ -1,6 +1,6 @@
 # yosefactory
 
-Personal workflow platform. Process workflows Denis runs his own work through — software first, but deliberately not limited to it — driven from Claude Code / Claude Desktop over MCP.
+Personal workflow platform. Process workflows the operator runs their own work through — software first, but deliberately not limited to it — driven from Claude Code / Claude Desktop over MCP.
 
 **Not** a product, **not** a framework for other people, **not** a general agent runtime. One user. If a design choice only makes sense for a second user, it is out of scope.
 
@@ -8,12 +8,14 @@ Personal workflow platform. Process workflows Denis runs his own work through �
 
 The design is done and lives elsewhere. Do not re-derive it.
 
+*The paths below are a local, private knowledge base — they resolve on the operator's machine only. If you are reading this from a clone, treat the entity ids (D014, H572, M600, …) as stable names for decisions recorded there, not as links you can follow.*
+
 - **`~/Documents/Knowledge/Projects/160-ai-factory/handover-2026-08-03-build.md`** — the bootstrap brief. Read it in full, then the nine entities it links under "Read before writing code".
 - **`~/Documents/Knowledge/Projects/160-ai-factory/`** — the corpus. 1,065 entities. Decisions are `decisions/D0NN-*.md`, arguments are `philosophy.md`, open structural questions are `tensions.md`.
 
 ## Success criterion
 
-**D014**, authored by Denis before any code existed:
+**D014**, authored by the operator before any code existed:
 
 - **Unit** — a commit to `~/Workspaces/a2web` produced through this platform.
 - **Threshold** — 7 consecutive days without one.
@@ -60,7 +62,7 @@ decisions/        — build-time ADRs only
 ## Constraints that travel with the code
 
 - **D002** — nothing is ever deleted. Applies to `ledger/`, not to source.
-- **D005** — no party outside Denis holds approval rights over what this work is, where it is published, or who may see it. Publishing is his call alone; commissioning is downstream of published receipts, never upstream permission.
+- **D005** — no party outside the operator holds approval rights over what this work is, where it is published, or who may see it. Publishing is their call alone; commissioning is downstream of published receipts, never upstream permission.
 - **D011** — the friction threshold. Before building any part of an adopted tool's job, all three must hold: a named blocked requirement (cited by entity id), a dated seam-failure receipt with the failure quoted, and a build that is a *predicate* rather than a replacement. Prediction is not a receipt.
 - **D012** — the corpus does not move into an external tool. This repo does not absorb P160.
 - **D013** — every adoption candidate gets a dated coverage receipt. That includes `claude-agent-sdk` and Managed Agents.
@@ -94,36 +96,42 @@ Python ≥3.11, `uv`, `ruff`, `ty`, `pytest`. `make check` runs lint + types + t
 
 Model: `claude-opus-5`, adaptive thinking, effort `high` default, `xhigh` for long agentic runs.
 
-## Talking to Denis
+## Communication
 
-Distilled from `~/Documents/Knowledge/Agents/Claude/feedback_terse_ascii_communication.md`, whose techniques are measured (R155), not folklore. The one-line version: **drop words, keep facts.**
+The one-line version: **drop words, keep facts.** Everything below is measured token-efficiency behaviour, not style preference.
+
+**Scope: everywhere.** Reasoning and internal deliberation, agent-to-agent messages, user-facing replies, the documents this repo produces, and the code itself — comments, names, commit messages. One exception, below.
+
+**ASCII diagrams are human-facing only.** Reach for one when a picture beats prose *for a person reading a reply*. Never in documents, code, commit messages, or agent-to-agent traffic: there a diagram is decoration that another model has to parse back into facts, and it survives edits badly.
+
+This is not "no code blocks in documents". A directory tree, a schema, a command, a sample payload — anything whose literal shape *is* the content — belongs wherever it is clearest. The rule is against drawing a picture of an idea, not against showing a structure verbatim.
 
 **Two axes, and they are not the same knob.**
 
-```
-  TERSE   compress words          -> always
-  SIMPLE  lower assumed concepts  -> only when teaching something new
-```
+| Axis | Means | When |
+|---|---|---|
+| Terse | compress words | always |
+| Simple | lower assumed concepts | only when teaching something new |
 
-Reporting a status update needs terse alone. Explaining an unfamiliar idea needs both. Applying "simple" to a status update is condescension; applying only "terse" to an explanation strips the scaffolding that made it land.
+A status update needs terse alone. An unfamiliar idea needs both. Applying "simple" to a status update reads as condescension; applying only "terse" to an explanation strips the scaffolding that made it land.
 
-**Structure is the whole lever.** Bullets and labels (`Risk:` / `Fix:` / `Why:`) replace grammatical connectors and cut 38–42%. What disappears is scaffolding, not content. Never write unstructured prose to be concise — forcing prose *adds* ~22%, because the model regenerates the connective tissue structure would have absorbed.
+**Structure is the whole lever.** Bullets and labels (`Risk:` / `Fix:` / `Why:`) replace grammatical connectors and cut 38-42%. What disappears is scaffolding, not content. Never write unstructured prose in order to be concise - forcing prose *adds* ~22%, because the connective tissue that structure would have absorbed gets regenerated as words.
 
-**Reach for a diagram when a picture beats prose.** Reasonable, not decorative. Do not force one where a one-liner works.
+**Reporting -> verdict + link. Asking -> full context.**
 
-**Reporting → verdict + link. Asking → full context.**
-
-| Situation | What Denis needs |
+| Situation | What the reader needs |
 |---|---|
 | Work is on disk | A pointer and what is *newly decidable*. Never restate a file you just wrote. |
-| A decision is his to make | What it is, why it matters, the tradeoff. Compress the words, never the content. |
+| A decision is theirs to make | What it is, why it matters, the tradeoff. Compress the words, never the content. |
 
-The first row is the rule this repo's own history violated most: entities were written to the corpus and then re-narrated at length in chat. The second row is the failure in the other direction — "terse" must never degrade into a bare id and *go look it up yourself*.
+The first row is the one this repo's own history violated most: entities written to the knowledge base, then re-narrated at length in chat. The second is the failure in the other direction - terseness must never degrade into a bare identifier and *go look it up yourself*.
 
-**Keep words plain.** Rare vocabulary costs ~75% more tokens, non-English 17–38%, and UPPERCASE headers, caveman style, personas and Chain-of-Draft gimmicks either inflate tokens through rare-token splits or hit brevity targets by *dropping facts* (retention as low as 86%). Shared jargon is the one real lexical win (−29%): "idempotent" beats a sentence, cheaply. Emoji are fine as compression — a status glyph beating a sentence — not as decoration.
+**Keep words plain.** Rare vocabulary costs ~75% more tokens and non-English 17-38%. UPPERCASE headers, caveman style, personas and Chain-of-Draft gimmicks either inflate tokens through rare-token splits or hit brevity targets by *dropping facts* - retention as low as 86%. Shared jargon is the one real lexical win (-29%): "idempotent" beats a sentence, cheaply. Emoji are fine as compression, where a status glyph beats a sentence; not as decoration.
 
-**Terse trims elaboration, never correctness.** On hard and long-context work it retains ~98% of core facts. What it cuts on open-ended asks is analogies and worked examples. Fine for technical work; wrong when Denis is trying to *understand* something, where that scaffolding is the deliverable.
+**In code specifically.** Names carry the meaning, so comments do not repeat them. Write a comment only for a constraint the code cannot show - never to narrate what the next line does or to justify the change to a reviewer, which is noise the moment the branch merges. Commit messages: what changed and why it had to, not a tour of the diff.
+
+**Terse trims elaboration, never correctness.** On hard and long-context work it retains ~98% of core facts. What it cuts on open-ended asks is analogies and worked examples - fine for technical work, wrong when someone is trying to *understand* something, where that scaffolding is the deliverable.
 
 **Completeness wins on conflict.** This is a style default. A spec, a formal deliverable, or a decision record is written in full.
 
-**Why any of this:** Denis reads a lot of agent output across parallel sessions. Verbose prose is the tax. Terseness that costs him a decision input is not a saving.
+**Why:** an operator reading agent output across many parallel sessions pays a tax on verbose prose. But terseness that costs them a decision input is not a saving.
