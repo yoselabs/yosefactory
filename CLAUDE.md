@@ -8,9 +8,11 @@ Personal workflow platform. Process workflows the operator runs their own work t
 
 The design is done and lives elsewhere. Do not re-derive it.
 
+**P160 is this repo's design authority, and it is a live reference an agent is expected to read from and write back to — not background reading.** Before proposing anything structural, look it up there. When the build contradicts it, correct it there. A session that builds without touching P160 either got lucky or skipped the check.
+
 *The paths below are a local, private knowledge base — they resolve on the operator's machine only. If you are reading this from a clone, treat the entity ids (D014, H572, M600, …) as stable names for decisions recorded there, not as links you can follow.*
 
-- **`~/Documents/Knowledge/Projects/160-ai-factory/handover-2026-08-03-build.md`** — the bootstrap brief. Read it in full, then the nine entities it links under "Read before writing code".
+- **`~/Documents/Knowledge/Projects/160-ai-factory/handover-2026-08-12-build.md`** — the bootstrap brief. Read it in full, then the nine entities it links under "Read before writing code".
 - **`~/Documents/Knowledge/Projects/160-ai-factory/`** — the corpus. 1,065 entities. Decisions are `decisions/D0NN-*.md`, arguments are `philosophy.md`, open structural questions are `tensions.md`.
 
 ## Success criterion
@@ -58,6 +60,23 @@ decisions/        — build-time ADRs only
 | A decision about **how it got built** | `decisions/` here |
 
 **Write-back is mandatory** (D015). When the build falsifies a design entity — a mechanism that will not build as specified, a hypothesis the first run refutes, a suspension point that never materialises — write the correction into P160 **against the entity id**. The handover cites ids throughout precisely so this is possible.
+
+### How, concretely
+
+From `~/Documents/Knowledge/Projects/160-ai-factory/` (local only). Files are truth; every `_index.md` is derived — regenerate, never hand-edit, and never hand-write link YAML.
+
+```sh
+python3 tools/recall.py "does the ledger row need a cost field"  # read: what to load for THIS question
+python3 tools/capture.py signal "…" --origin fleet --strength measured   # write: allocates the id
+python3 tools/wire.py edits.txt          # link both sides ("S412 supports H101")
+python3 tools/index.py                   # regenerate indexes + lint the graph
+```
+
+Three rules that are not obvious:
+
+- **Never hand-number an entity.** Parallel sessions have collided on ids twice; `capture.py` reads the filesystem at write time.
+- **Corrections append to `## Trail`, dated.** Nothing in P160 is overwritten or deleted (D002).
+- **Evidence this repo produces is `origin: fleet`, and usually `nature: experience`** — it happened, on a named system, with an artifact. That is P160's load-bearing signal type and the one the design record is thinnest on. Carry `experienced_on: yosefactory`, a dated source pointing at the commit or ledger row, and the verbatim symptom.
 
 ## Constraints that travel with the code
 

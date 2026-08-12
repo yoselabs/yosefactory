@@ -53,7 +53,7 @@ Python ≥3.11, `uv`, `ruff`, `ty`, `pytest`.
 
 ## Design
 
-The design record lives in the knowledge base, not here: `~/Documents/Knowledge/Projects/160-ai-factory/`. Start from `handover-2026-08-03-build.md`. See `CLAUDE.md` for the working contract.
+The design record lives in a private knowledge base, not here — it is referenced as **P160** throughout `CLAUDE.md` and the build ADRs. Decision ids (`D014`, `H572`, `M600`, …) are stable names for entries in that record; they will not resolve from a clone. `CLAUDE.md` has the working contract and the local paths.
 
 ## License
 
