@@ -24,9 +24,6 @@ dependencies = [
     "fastmcp>=3.4,<4",
 ]
 
-[project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio", "ruff", "ty"]
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -45,3 +42,53 @@ select = ["F", "S", "T10", "T20", "ASYNC", "E", "W", "I", "UP", "B", "C4", "RUF"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.codespell]
+# bench/corpus (source PDFs, binary) + bench/outputs (raw engine output, incl.
+# scanned-page OCR text) are generated/fixture data, not authored content —
+# real typos there are the engines' problem, not this repo's.
+#
+# tests/fixtures/*.html likewise: those are pages CAPTURED VERBATIM from live
+# sites. Editing one to satisfy a spellchecker would make it a hand-written
+# approximation — the precise defect dom-schema exists to prevent — so the
+# fixture is authoritative and the linter yields to it, never the reverse.
+skip = "uv.lock,.venv,.git,*.pyc,.ruff_cache,.pytest_cache"
+# doctrine/glossary coinages the dictionary flags but we mean on purpose.
+ignore-words-list = "wins,ontology,noqa"
+check-filenames = ""
+
+# yosefactory is single-package (src/yosefactory/), not a shelf-style packages/*/
+# monorepo — deptry runs once from the root (see `make deps`), so it gets a real
+# root [tool.deptry] block instead of shelf's per-package invocation.
+[tool.deptry]
+known_first_party = ["yosefactory"]
+
+# ── coverage — measured on every `make test`; floor enforced (no silent rot) ───
+[tool.coverage.run]
+branch = true
+source = ["src"]
+omit = ["*/tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "\\.\\.\\.",  # protocol/abstract stubs
+]
+[dependency-groups]
+# Shelf's linting preset (docs/linting.md), pruned to what this repo actually
+# uses — dropped the shelf-package-specific test deps it ships with
+# (browser-cookie3, python-docx, convert-md, anyllm, zendriver, hypothesis):
+# none of those apply until a real consumer exists in this repo for them.
+dev = [
+    "pytest>=8,<9",
+    "pytest-cov>=6,<8",       # coverage measurement + floor
+    "ruff>=0.7,<1",           # lint + format
+    "ty>=0.0.1a8",            # type checking (Astral)
+    "codespell>=2.3,<3",      # typos in code, docstrings, and docs
+    "deptry>=0.20,<1",        # dependency hygiene: unused / missing / transitive
+    "pytest-asyncio>=0.24,<1",  # async test support (the harness/MCP surface is async)
+]

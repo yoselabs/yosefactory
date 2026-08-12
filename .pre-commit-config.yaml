@@ -13,3 +13,9 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+      - id: shelf-guard
+        name: forbid local shelf source
+        entry: make guard
+        language: system
+        pass_filenames: false
+        always_run: true

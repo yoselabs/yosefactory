@@ -234,3 +234,18 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 - Do not commit or push without clear authority from the active profile or the current user request.
 - If a required sync or push is blocked, stop and report the exact command and error.
 <!-- END BEADS INTEGRATION -->
+
+### Overrides to the managed block above
+
+- **`bd remember`/`bd prime`: not for persistent agent memory.** This operator already runs a
+  global, cross-project memory system at `~/Documents/Knowledge/Agents/Claude/`, loaded every
+  session regardless of repo. `bd` is the durable work-item tracker (issues that outlive a
+  session); the memory system is where facts, feedback, and project context persist. Don't
+  reach for `bd remember` as a substitute for either.
+- **`TaskCreate`/`TaskUpdate` still apply.** They track *this session's* steps; `bd` tracks
+  *repo-durable* work items across sessions. Different scope, not a duplicate — use both.
+- **Status-mapping convention** (docs/runbooks/adopt-beads.md §1.3 in `~/Workspaces/shelf`):
+  a real `blocks` dependency for "waiting on another tracked issue," native `deferred` for
+  "shelved, nothing specific blocking it," manual `--status blocked` only for "waiting on
+  something with no bead of its own." Never invent a synthetic blocking issue for the middle
+  case.

@@ -125,4 +125,12 @@ bd prime                # Refresh Beads context
 - Keep persistent project memory in Beads via `bd remember`; do not create ad hoc memory files.
 
 **Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
+
+### Override
+
+`bd remember` is not this repo's memory system — the operator already runs a global,
+cross-project one at `~/Documents/Knowledge/Agents/Claude/`. Use `bd` for durable
+work-item tracking only. Session-scoped step tracking (Claude Code's `TaskCreate`) is a
+different job than `bd`'s durable issues; use both, don't treat one as a substitute for
+the other.
 <!-- END BEADS CODEX SETUP -->
