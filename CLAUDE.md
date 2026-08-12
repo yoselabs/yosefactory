@@ -12,7 +12,13 @@ The design is done and lives elsewhere. Do not re-derive it.
 
 *The paths below are a local, private knowledge base — they resolve on the operator's machine only. If you are reading this from a clone, treat the entity ids (D014, H572, M600, …) as stable names for decisions recorded there, not as links you can follow.*
 
-**Design record: project 160, at `~/Documents/Knowledge/Projects/160-ai-factory/`.** Three files, in this order:
+**Design record: project 160**, at `~/Documents/Knowledge/Projects/160-ai-factory/` — or resolve it, since ids are the stable reference and paths are not:
+
+```sh
+python3 ~/Documents/Knowledge/tools/kproj.py P160
+```
+
+Three files, in this order:
 
 | File | Read it when |
 |---|---|
