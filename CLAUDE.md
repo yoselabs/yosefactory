@@ -12,8 +12,15 @@ The design is done and lives elsewhere. Do not re-derive it.
 
 *The paths below are a local, private knowledge base — they resolve on the operator's machine only. If you are reading this from a clone, treat the entity ids (D014, H572, M600, …) as stable names for decisions recorded there, not as links you can follow.*
 
-- **`~/Documents/Knowledge/Projects/160-ai-factory/handover-2026-08-12-build.md`** — the bootstrap brief. Read it in full, then the nine entities it links under "Read before writing code".
-- **`~/Documents/Knowledge/Projects/160-ai-factory/`** — the corpus. 1,065 entities. Decisions are `decisions/D0NN-*.md`, arguments are `philosophy.md`, open structural questions are `tensions.md`.
+**Design record: project 160, at `~/Documents/Knowledge/Projects/160-ai-factory/`.** Three files, in this order:
+
+| File | Read it when |
+|---|---|
+| `build-loop.md` | **first, every session.** The operating protocol: what to load, when to write back, how to close. Short. |
+| `handover-2026-08-12-build.md` | the bootstrap brief — once, in full, before writing code, plus the nine entities it links |
+| the corpus itself | never wholesale. 1,065 entities; reach for them via `tools/recall.py`, per `build-loop.md` |
+
+Decisions are `decisions/D0NN-*.md`, arguments are `philosophy.md`, open structural questions are `tensions.md`.
 
 ## Success criterion
 
@@ -63,20 +70,12 @@ decisions/        — build-time ADRs only
 
 ### How, concretely
 
-From `~/Documents/Knowledge/Projects/160-ai-factory/` (local only). Files are truth; every `_index.md` is derived — regenerate, never hand-edit, and never hand-write link YAML.
+**`P160/build-loop.md` is the procedure** — what to load at session open, the three triggers that force a write-back, what *not* to write back, and how to close. It is deliberately the only copy; the commands and the schema live over there and drift over there.
 
-```sh
-python3 tools/recall.py "does the ledger row need a cost field"  # read: what to load for THIS question
-python3 tools/capture.py signal "…" --origin fleet --strength measured   # write: allocates the id
-python3 tools/wire.py edits.txt          # link both sides ("S412 supports H101")
-python3 tools/index.py                   # regenerate indexes + lint the graph
-```
+Two rules worth carrying here, because violating them costs a cleanup rather than a correction:
 
-Three rules that are not obvious:
-
-- **Never hand-number an entity.** Parallel sessions have collided on ids twice; `capture.py` reads the filesystem at write time.
-- **Corrections append to `## Trail`, dated.** Nothing in P160 is overwritten or deleted (D002).
-- **Evidence this repo produces is `origin: fleet`, and usually `nature: experience`** — it happened, on a named system, with an artifact. That is P160's load-bearing signal type and the one the design record is thinnest on. Carry `experienced_on: yosefactory`, a dated source pointing at the commit or ledger row, and the verbatim symptom.
+- **Never hand-number or hand-link an entity.** Parallel sessions have collided on ids twice. `capture.py` allocates; `wire.py` links both sides.
+- **Two commits that name each other.** The commit here cites the entity ids it acted on or refuted; the K commit cites this repo's SHA. That is the entire cross-repo traceability mechanism.
 
 ## Constraints that travel with the code
 
