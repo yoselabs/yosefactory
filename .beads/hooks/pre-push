@@ -31,3 +31,13 @@ if command -v bd >/dev/null 2>&1; then
   if [ $_bd_exit -ne 0 ]; then exit $_bd_exit; fi
 fi
 # --- END BEADS INTEGRATION v1.1.2 ---
+
+# yosefactory addition (not beads-managed, won't be touched by bd upgrades):
+# `bd hooks run pre-push` above does NOT push the Dolt data ref
+# (refs/dolt/data) — git push and bd dolt push are two separate remote
+# syncs. Chain it here so a plain `git push` can never leave the beads
+# queue behind on the remote. Non-fatal: a network hiccup on the Dolt
+# push must not block the code push.
+if command -v bd >/dev/null 2>&1; then
+  bd dolt push || echo >&2 "beads: 'bd dolt push' failed — beads queue not synced to remote, push it manually"
+fi
