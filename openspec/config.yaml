@@ -1,5 +1,31 @@
 schema: spec-driven
 
+context: |
+  yosefactory — a personal workflow platform for one operator. Not a product, not a
+  framework, no second user. If a design choice only makes sense for a second user,
+  it is out of scope.
+
+  Changes arrive here as promotions from the design record (K project 160). A change
+  should name the promotion's entity id. Explore clarifies what a promotion requires;
+  it does not authorize building, and it may overturn the promotion instead — which is
+  written back against that id, never softened into a smaller change.
+
+  The structural rule: if this changed next month, would existing ledger rows still be
+  readable and comparable? Yes -> workflows/, soft and disposable. No -> protocol/,
+  frozen and small. protocol/ is meant to stay tiny; resist growing it.
+
+  Do not propose: a web UI or dashboard, an own agent harness, a daemon/orchestrator/
+  queue, multiple harnesses behind a seam, or anything scoped to a second user. Each
+  has a revisit trigger recorded in K; triggers fire on evidence, not enthusiasm.
+
+  Stack: Python >=3.11, uv, ruff, ty, pytest. `make check` runs lint + types + tests.
+  claude-agent-sdk is the harness and is not rebuilt.
+
+rules:
+  proposal:
+    - Cite the promotion's entity id from K project 160, or say plainly that there is none.
+    - Include a Non-goals section. Scope widening is this repo's known failure mode.
+
 # Project context (optional)
 # This is shown to AI when creating artifacts.
 # Add your tech stack, conventions, style guides, domain knowledge, etc.
