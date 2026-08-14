@@ -1,0 +1,40 @@
+seq = 3
+date = "2026-08-14"
+event = "analysis"
+workflow = "workflow-a-spec-build-ship,workflow-b-input-to-scientific-format"
+stage_run = "n/a — analysis of Session 1's run evidence, not a new workflow run"
+outcome = "T17 not settled, leans against pure self-declared-escalation; M600 sized at n=1"
+output_ref = "P160 tensions.md T17, S062, M600 trail"
+note = """
+Session 2 per the handover: read the A/B diff, answer T17, size M600.
+No new a2web work, no code written in this repo — analysis only,
+matching the handover's own Session 1 (build) / Session 2 (read)
+split.
+
+Structural diff: both workflows converged, unprompted, on the same
+{id, does, suspend_when: [{question, trigger}]} stage record shape,
+and reused M600's existing typed-question vocabulary (a real but
+weak convergence signal, since both authors already knew that
+vocabulary — not a blind test). Real differences: A's stages carry
+a `tool:` field (openspec), B's don't (pure cognitive transform); A
+declares suspend_when on every stage, B only on 3 of 5.
+
+T17: the one real suspension (S061) did not force control flow into
+a stage body — the list stayed intact, Position A's specific failure
+mode didn't fire. But it also wasn't absorbed by any declared
+suspend_when clause; it was patched by the agent executing the list,
+outside the workflow definition. A third outcome neither T17 position
+named. Written into tensions.md T17 as a first probe, explicitly not
+settling — n=1.
+
+M600 sizing: 0 of 11 authored suspend_when clauses fired across both
+real runs; the one real suspension matched none of them. Captured as
+P160 S062, wired into M600's trail. Reads as evidence for M600 as
+runtime infrastructure catching what per-stage authoring misses,
+not as vindication of careful-enough authoring — thin, but real.
+
+Deferred: no protocol/ extraction. The identified substrate candidate
+(the stage record shape) is tightly coupled to M600's own vocabulary,
+not separable from it — extraction, if warranted, belongs with
+Session 3's M600 decision, not here.
+"""
