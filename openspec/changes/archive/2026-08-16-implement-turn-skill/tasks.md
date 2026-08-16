@@ -93,7 +93,10 @@
 - [x] 9.2 Two-turn acceptance test with the fake executor: turn one plans one item from an empty
       backlog and commits; turn two, as a fresh call sharing nothing but the repository, claims and
       acts on it
-- [ ] 9.3 Report to the director what building taught, including whether the executor seam carried
+- [x] 9.3 Report to the director what building taught, including whether the executor seam carried
       the frame a turn needs
-- [ ] 9.4 Write back to P160 against the entity ids this change refuted or confirmed, per
-      `build-loop.md`, and cite the ids in the commit message
+- [x] 9.4 Write back to P160 against the entity ids this change refuted or confirmed. Ruled by the
+      director 2026-08-16: workers supply the finding, the director authors the entity id, because
+      several sessions writing to K collide on ids. Written as S192 from this change's findings.
+      `build-loop.md` still says the repo session writes back — that predates the fleet and the
+      director has it recorded as owed.
