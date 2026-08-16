@@ -1,0 +1,37 @@
+## 1. Push mechanics
+
+- [ ] 1.1 `PublishResult` (repo, status: pushed/skipped/rejected, detail) and `PublicationFailed`
+      (a `RuntimeWarning` subclass) in `runtime/turn.py`.
+- [ ] 1.2 `_current_branch(repo)` — `git rev-parse --abbrev-ref HEAD`, `None` on detached HEAD.
+- [ ] 1.3 `_has_remote(repo, name="origin")` — `git remote get-url origin`, boolean.
+- [ ] 1.4 `push_repo(repo)` — explicit refspec `<branch>:<branch>`, no force, no tags; skip (not
+      reject) when no remote or detached HEAD; classify a non-zero exit as `rejected`.
+
+## 2. Wire publication into `take_turn`
+
+- [ ] 2.1 `publish(places, record)` — no-ops (returns `None`) unless `record.outcome is
+      Outcome.ADVANCED`; otherwise pushes `places.workspace` then `places.queue`, in that order, and
+      warns once per rejected push via `warnings.warn(..., PublicationFailed)`.
+- [ ] 2.2 Every `take_turn` return path (nothing-ready, planning, acting) calls `publish` on its
+      record before returning it, unchanged, to the caller.
+
+## 3. Tests
+
+- [ ] 3.1 A `bare_remote` fixture — `git init --bare` — usable as `origin` for either the `repo` or
+      `workspace` fixture, entirely local, no network dependency.
+- [ ] 3.2 An advanced turn with `origin` configured on both places pushes both, workspace before
+      queue (assert via the target refs on each bare remote, and via call order if needed).
+- [ ] 3.3 A turn with no remote configured on either place publishes nothing and raises no warning.
+- [ ] 3.4 A rejected push (bare remote pre-loaded with a commit the local branch does not have) warns
+      via `PublicationFailed` and does not raise past `take_turn` — the record returned is unaffected.
+- [ ] 3.5 A `blocked` outcome and a `failed` outcome both publish nothing, asserted by the target
+      branch being absent (or unchanged) on the bare remote after the turn.
+- [ ] 3.6 `make check` green.
+
+## 4. What this does not prove
+
+- [ ] 4.1 No test exercises a real network remote (GitHub, or any non-local `origin`) — every test
+      uses a local bare repository. This proves the git plumbing and the outcome gate; it does not
+      prove the platform can publish across an actual network boundary, with real auth and real
+      latency. Consistent with [[S195]]: stated, not built, and not the first time this gap has been
+      left for a receipt against the real thing.
