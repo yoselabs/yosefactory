@@ -4,10 +4,17 @@ Frozen because every row ever written is compared against every other row. The i
 `backlog` are a different axis and share three spellings with `Outcome` by coincidence: an item is
 `blocked` for as long as something blocks it, a *turn* is `blocked` for the one turn that hit it.
 
-`outcome` and `failure_kind` are two axes and not one field. The first is exactly four words and is
-frozen; the second says why a failure happened, is shaped by whichever executor ran, and is expected
-to change. Widening the first to carry the second would conflate *did this advance* with *why did it
-break* and cost the four-value contract that governing decisions are typed against.
+`outcome` is one axis and the reason fields beside it are another. The first is exactly four words
+and is frozen; `failure_kind` says why a failure happened and `blocked_kind` says what a block is
+waiting on, both shaped by whichever executor ran and both expected to change. Widening `outcome` to
+carry either would conflate *did this advance* with *why did it stop* and cost the four-value
+contract that governing decisions are typed against.
+
+Two nullable reason fields, each valid for exactly one outcome, is one short of a pattern worth
+collapsing into a single field whose vocabulary depends on `outcome`. Two closed sets validate
+independently and a value means something without consulting `outcome` first, so they stay separate
+until a third outcome earns a typed reason — the candidate being *why was nothing ready* — at which
+point all three unify and the migration is paid once.
 
 `nothing-ready` is not success. Nothing in this package may treat it as one — the failure this
 record exists to make visible is a long run of green turns that produced nothing, and a reader that
@@ -64,6 +71,28 @@ class FailureKind(StrEnum):
     VERSION_MISMATCH = "version_mismatch"
 
 
+class BlockedKind(StrEnum):
+    """What a blocked turn is waiting on. A second axis over `Outcome`, never a widening of it.
+
+    Three facts narrowed to the single word `blocked` before this existed: an item that entered
+    `blocked` awaiting something, an agent denied a tool it asked for, and an agent that declined the
+    work. The first two are resumable and the third is not, so a reader of `outcome` alone cannot
+    tell *wait* from *this will never move*.
+
+    **These are not item states, and the reason is that nothing would write them.** A refusal is a
+    fact about one executor invocation, not a place an item sits — the item is still `doing` when the
+    agent declines. A state needs a writer or the same fact has two representations, which is the
+    argument that keeps `terminal` a predicate rather than a state (architecture.md §3).
+
+    `awaiting` names where the detail is rather than copying it: the item's own `awaiting` object
+    holds the block's `kind`, `ref`, deadline and timeout policy.
+    """
+
+    AWAITING = "awaiting"
+    NEEDS_APPROVAL = "needs_approval"
+    REFUSED = "refused"
+
+
 class EnforcedBy(StrEnum):
     """Who authored the verdict. A killed process writes nothing, so the supervisor writes for it."""
 
@@ -75,6 +104,13 @@ class EnforcedBy(StrEnum):
 # the agent never supplies it. Kept as a name rather than a comment because both writers construct
 # records and only one of them is allowed to claim this field is meaningful.
 SUPERVISOR_OWNED: Final = ("dirty",)
+
+# The kinds something can arrive to clear. `refused` is absent by design: nothing arrives that
+# changes a refusal, and the answer to one is a human re-deciding the goal — D019's falsify-and-
+# succeed rather than a resumption. `needs_approval` is here and is nonetheless unbounded, because a
+# permission denial writes no question and so acquires no deadline and nothing sweeps it; that
+# violates S172 and violated it before this set existed.
+RESUMABLE: Final = frozenset({BlockedKind.AWAITING, BlockedKind.NEEDS_APPROVAL})
 
 # This repository is public and the stream is committed. Home-rooted absolute paths identify the
 # machine, so they never reach a record — caught at write time rather than at review time.
@@ -94,6 +130,31 @@ class IndependentCheck(Protocol):
     name: str
 
     def __call__(self) -> CheckResult: ...
+
+
+def _check_reason(value: Any, vocabulary: type[StrEnum], field_name: str, only_for: Outcome, outcome: Outcome) -> None:
+    """A reason field is drawn from its own closed set and says nothing on any other outcome."""
+    if value is None:
+        return
+    if not isinstance(value, vocabulary):
+        raise RecordError(f"{field_name} must be one of {[member.value for member in vocabulary]}, got {value!r}")
+    if outcome is not only_for:
+        raise RecordError(
+            f"{field_name} {value.value!r} on outcome {outcome.value!r}; "
+            f"only {only_for.value!r} has a reason to give"
+        )
+
+
+def _read_reason(payload: dict[str, Any], vocabulary: type[StrEnum], field_name: str) -> Any:
+    """A missing key is null rather than an error: records predate every field that was added."""
+    raw = payload.get(field_name)
+    if raw is None:
+        return None
+    try:
+        return vocabulary(raw)
+    except ValueError as exc:
+        valid = [member.value for member in vocabulary]
+        raise RecordError(f"unknown {field_name} {raw!r}; valid: {valid}") from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +187,8 @@ class TurnRecord:
     # Null is a real value, not a gap: a supervisor writing for a process it killed has no executor
     # reason to give, and `enforced_by` already says who ended the run.
     failure_kind: FailureKind | None = None
+    # Null here means the writer gave no reason, never that the block is resumable or that it is not.
+    blocked_kind: BlockedKind | None = None
 
     def __post_init__(self) -> None:
         if not self.run_id:
@@ -134,14 +197,8 @@ class TurnRecord:
             raise RecordError(f"outcome must be one of {[o.value for o in Outcome]}, got {self.outcome!r}")
         if not isinstance(self.enforced_by, EnforcedBy):
             raise RecordError(f"enforced_by must be one of {[e.value for e in EnforcedBy]}, got {self.enforced_by!r}")
-        if self.failure_kind is not None:
-            if not isinstance(self.failure_kind, FailureKind):
-                raise RecordError(f"failure_kind must be one of {[k.value for k in FailureKind]}, got {self.failure_kind!r}")
-            if self.outcome is not Outcome.FAILED:
-                raise RecordError(
-                    f"failure_kind {self.failure_kind.value!r} on outcome {self.outcome.value!r}; "
-                    f"only {Outcome.FAILED.value!r} has a reason to give"
-                )
+        _check_reason(self.failure_kind, FailureKind, "failure_kind", Outcome.FAILED, self.outcome)
+        _check_reason(self.blocked_kind, BlockedKind, "blocked_kind", Outcome.BLOCKED, self.outcome)
         for field_name in ("started_at", "ended_at"):
             if not getattr(self, field_name):
                 raise RecordError(f"a turn record must carry {field_name}")
@@ -161,6 +218,7 @@ class TurnRecord:
             "isolated": self.isolated,
             "note": self.note,
             "failure_kind": self.failure_kind.value if self.failure_kind is not None else None,
+            "blocked_kind": self.blocked_kind.value if self.blocked_kind is not None else None,
         }
 
     def with_note(self, note: str) -> TurnRecord:
@@ -182,11 +240,8 @@ def from_dict(payload: Any) -> TurnRecord:
         enforced_by = EnforcedBy(payload["enforced_by"])
     except ValueError as exc:
         raise RecordError(f"unknown enforced_by {payload['enforced_by']!r}; valid: {[e.value for e in EnforcedBy]}") from exc
-    raw_kind = payload.get("failure_kind")
-    try:
-        failure_kind = FailureKind(raw_kind) if raw_kind is not None else None
-    except ValueError as exc:
-        raise RecordError(f"unknown failure_kind {raw_kind!r}; valid: {[k.value for k in FailureKind]}") from exc
+    failure_kind = _read_reason(payload, FailureKind, "failure_kind")
+    blocked_kind = _read_reason(payload, BlockedKind, "blocked_kind")
     for flag in ("dirty", "isolated"):
         if not isinstance(payload[flag], bool):
             raise RecordError(f"{flag} must be a boolean, got {payload[flag]!r}")
@@ -200,9 +255,25 @@ def from_dict(payload: Any) -> TurnRecord:
         isolated=payload["isolated"],
         note=str(payload.get("note", "")),
         failure_kind=failure_kind,
+        blocked_kind=blocked_kind,
     )
 
 
 def counts_as_progress(outcome: Outcome) -> bool:
     """The single place progress is defined. `nothing-ready` and `blocked` are not it."""
     return outcome is Outcome.ADVANCED
+
+
+def resumable(kind: BlockedKind | None) -> bool | None:
+    """Whether something can arrive that clears the block. `None` when the record does not say.
+
+    The single place resumability is defined, for the same reason `counts_as_progress` is: a planner
+    and a stall detector reading one word differently is the failure this field exists to prevent.
+
+    Derived and never stored — a boolean beside the kind is two representations of one fact, and the
+    copy that drifts is the one the detector reads. Tri-state on purpose: folding an absent kind into
+    either answer manufactures a fact a caller would act on, so a caller must handle all three.
+    """
+    if kind is None:
+        return None
+    return kind in RESUMABLE

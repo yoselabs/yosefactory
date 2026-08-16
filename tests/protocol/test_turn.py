@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from yosefactory.protocol.turn import (
+    BlockedKind,
     CheckResult,
     EnforcedBy,
     FailureKind,
@@ -13,6 +14,7 @@ from yosefactory.protocol.turn import (
     TurnRecord,
     counts_as_progress,
     from_dict,
+    resumable,
 )
 
 
@@ -149,6 +151,80 @@ def test_a_failure_kind_round_trips() -> None:
     record = a_record(outcome=Outcome.FAILED, failure_kind=FailureKind.AUTH)
 
     assert from_dict(record.to_dict()) == record
+
+
+def test_a_wait_is_distinguishable_from_a_dead_end() -> None:
+    """One of these clears when something arrives; nothing arrives that changes the other."""
+    waiting = a_record(outcome=Outcome.BLOCKED, blocked_kind=BlockedKind.AWAITING)
+    dead_end = a_record(outcome=Outcome.BLOCKED, blocked_kind=BlockedKind.REFUSED)
+
+    assert waiting.outcome is dead_end.outcome
+    assert resumable(waiting.blocked_kind) is True
+    assert resumable(dead_end.blocked_kind) is False
+
+
+def test_resumability_is_unknown_rather_than_either_answer_when_the_kind_is_null() -> None:
+    """A binary predicate would have to fold this into a wait or a dead end, and both are lies."""
+    assert resumable(a_record(outcome=Outcome.BLOCKED).blocked_kind) is None
+
+
+def test_a_denied_tool_is_resumable_and_a_refusal_is_not() -> None:
+    assert resumable(BlockedKind.NEEDS_APPROVAL) is True
+    assert resumable(BlockedKind.REFUSED) is False
+
+
+@pytest.mark.parametrize("outcome", [Outcome.ADVANCED, Outcome.NOTHING_READY, Outcome.FAILED])
+def test_a_blocked_kind_on_anything_but_blocked_is_rejected(outcome: Outcome) -> None:
+    with pytest.raises(RecordError, match=r"blocked_kind 'refused' on outcome"):
+        a_record(outcome=outcome, blocked_kind=BlockedKind.REFUSED)
+
+
+def test_a_blocked_kind_outside_the_set_is_rejected() -> None:
+    with pytest.raises(RecordError, match="blocked_kind must be one of"):
+        a_record(outcome=Outcome.BLOCKED, blocked_kind="stuck")
+
+
+def test_an_unknown_blocked_kind_in_a_payload_is_rejected_by_name() -> None:
+    payload = {**a_record(outcome=Outcome.BLOCKED).to_dict(), "blocked_kind": "stuck"}
+
+    with pytest.raises(RecordError, match=r"unknown blocked_kind 'stuck'"):
+        from_dict(payload)
+
+
+def test_a_blocked_record_written_before_the_field_still_reads() -> None:
+    payload = a_record(outcome=Outcome.BLOCKED).to_dict()
+    del payload["blocked_kind"]
+    record = from_dict(payload)
+
+    assert record.blocked_kind is None
+    assert resumable(record.blocked_kind) is None
+
+
+def test_a_blocked_kind_round_trips() -> None:
+    record = a_record(outcome=Outcome.BLOCKED, blocked_kind=BlockedKind.NEEDS_APPROVAL)
+
+    assert from_dict(record.to_dict()) == record
+
+
+def test_the_two_reason_axes_cannot_collide() -> None:
+    """Neither field can appear beside the other, because no record carries both outcomes."""
+    with pytest.raises(RecordError, match="on outcome 'blocked'"):
+        a_record(outcome=Outcome.BLOCKED, blocked_kind=BlockedKind.AWAITING, failure_kind=FailureKind.CRASH)
+
+
+def test_every_executor_outcome_that_blocks_can_say_why() -> None:
+    """A new vendor stop reason narrowing to `blocked` must break this rather than reopen the collapse.
+
+    The failure-kind detector next to this one earns its place on a near-miss: assembling that set
+    from the executor's typed failures alone would have dropped `budget_exhausted`. Same risk here.
+    """
+    from yosefactory.executor.outcome import _TO_PROTOCOL, RunOutcome
+
+    blocking = {outcome for outcome, narrowed in _TO_PROTOCOL.items() if narrowed is Outcome.BLOCKED}
+    recordable = {kind.value for kind in BlockedKind}
+
+    assert blocking == {RunOutcome.NEEDS_APPROVAL, RunOutcome.REFUSED}
+    assert {outcome.value for outcome in blocking} <= recordable
 
 
 def test_every_executor_failure_kind_can_be_recorded() -> None:
