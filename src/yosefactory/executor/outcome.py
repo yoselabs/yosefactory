@@ -6,8 +6,10 @@ executor do*, changes as vendors change, and is therefore soft by the same test 
 other.
 
 The narrowing loses information on purpose, with one exception that is not allowed to be lost: a
-factory starved of quota must never read as a broken model. Until a record can carry a typed
-failure kind, the kind travels in the record's note — degraded, but never absent.
+factory starved of quota must never read as a broken model, and a run stopped by a permission denial
+or a refusal must never read as one that broke. Both survive as a typed field on the turn record —
+`failure_kind` for the first, `blocked_kind` for the second — derived here, beside `protocol_outcome`,
+because the executor is what knows which of its endings means which.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from yosefactory.protocol.turn import Outcome
+from yosefactory.protocol.turn import BlockedKind, Outcome
 
 
 class RunOutcome(StrEnum):
@@ -55,6 +57,20 @@ _TO_PROTOCOL: dict[RunOutcome, Outcome] = {
     RunOutcome.FAILED: Outcome.FAILED,
 }
 
+# The other half of the same narrowing, for the two endings `_TO_PROTOCOL` sends to `BLOCKED`. Kept
+# as its own total mapping rather than a branch in the property below, so a new `RunOutcome` that
+# ought to carry a blocked kind cannot be added to one dict and forgotten in the other — the test
+# that checks both mappings agree would have nothing to check against.
+_TO_BLOCKED_KIND: dict[RunOutcome, BlockedKind | None] = {
+    RunOutcome.SUCCESS: None,
+    RunOutcome.NEEDS_APPROVAL: BlockedKind.NEEDS_APPROVAL,
+    RunOutcome.REFUSED: BlockedKind.REFUSED,
+    RunOutcome.BUDGET_EXHAUSTED: None,
+    RunOutcome.TURN_LIMIT: None,
+    RunOutcome.CANCELLED: None,
+    RunOutcome.FAILED: None,
+}
+
 
 @dataclass(frozen=True, slots=True)
 class Usage:
@@ -84,13 +100,12 @@ class RunResult:
     def protocol_outcome(self) -> Outcome:
         return _TO_PROTOCOL[self.outcome]
 
-    def note(self) -> str:
-        """Carries the failure kind until a record can hold it as a typed field of its own."""
-        parts = [self.outcome.value]
-        if self.failure_kind is not None:
-            parts.append(f"kind={self.failure_kind.value}")
-        if self.exit_code is not None:
-            parts.append(f"exit={self.exit_code}")
-        if self.detail:
-            parts.append(self.detail)
-        return "; ".join(parts)
+    @property
+    def blocked_kind(self) -> BlockedKind | None:
+        """Which of the two blocking endings this is, or `None` for every other outcome.
+
+        Derived from `outcome` rather than stored, on the same argument as `protocol_outcome`: the
+        executor is the one component that knows what its own ending means, so the mapping lives here
+        rather than being reconstructed by whoever writes the record.
+        """
+        return _TO_BLOCKED_KIND[self.outcome]

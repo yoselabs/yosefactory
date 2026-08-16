@@ -179,16 +179,21 @@ def test_outcomes_narrow_to_the_four_the_record_holds(tmp_path: Path) -> None:
     assert Outcome.NOTHING_READY not in {narrowed(outcome) for outcome in RunOutcome}
 
 
-def test_the_failure_kind_survives_into_the_record_note(tmp_path: Path) -> None:
-    """Until a record can hold a typed failure kind, it travels here rather than being dropped."""
+def test_a_denied_approval_and_a_refusal_carry_the_matching_blocked_kind(tmp_path: Path) -> None:
+    """`blocked_kind` is derived from `outcome`, the same way `protocol_outcome` already is."""
+    from yosefactory.executor.outcome import BlockedKind, RunResult, Usage
+
+    for outcome, expected in ((RunOutcome.NEEDS_APPROVAL, BlockedKind.NEEDS_APPROVAL), (RunOutcome.REFUSED, BlockedKind.REFUSED)):
+        result = RunResult(outcome=outcome, usage=Usage(), transcript_path=tmp_path, exit_code=0, dirty=False)
+        assert result.blocked_kind is expected
+        assert result.protocol_outcome is Outcome.BLOCKED
+
+
+def test_every_other_outcome_carries_no_blocked_kind(tmp_path: Path) -> None:
     from yosefactory.executor.outcome import RunResult, Usage
 
-    result = RunResult(
-        outcome=RunOutcome.FAILED,
-        usage=Usage(),
-        transcript_path=tmp_path,
-        exit_code=1,
-        dirty=False,
-        failure_kind=FailureKind.RATE_LIMIT,
-    )
-    assert "kind=rate_limit" in result.note()
+    for outcome in RunOutcome:
+        if outcome in (RunOutcome.NEEDS_APPROVAL, RunOutcome.REFUSED):
+            continue
+        result = RunResult(outcome=outcome, usage=Usage(), transcript_path=tmp_path, exit_code=0, dirty=False)
+        assert result.blocked_kind is None

@@ -32,7 +32,7 @@ from yosefactory.executor.outcome import RunOutcome, RunResult
 from yosefactory.protocol import backlog, question
 from yosefactory.protocol.eventlog import Declaration, FoldedLog, LogError
 from yosefactory.protocol.eventlog import load as load_log
-from yosefactory.protocol.turn import EnforcedBy, FailureKind, Outcome, TurnRecord
+from yosefactory.protocol.turn import BlockedKind, EnforcedBy, FailureKind, Outcome, TurnRecord
 from yosefactory.runtime import runs, verify
 from yosefactory.runtime.config import Guardrails
 from yosefactory.runtime.supervise import single_flight, tree_is_dirty
@@ -85,9 +85,8 @@ class Executor(Protocol):
 # a test rather than silently record no reason.
 _RUN_LEVEL_KIND: dict[RunOutcome, FailureKind | None] = {
     RunOutcome.SUCCESS: None,
-    # Null under both readings of these two. They are recorded as `failed` today and belong under
-    # `blocked` with a `blocked_kind`; either way the reason they carry is not a failure kind, so
-    # this mapping does not have to be revisited when that lands.
+    # Null on both: the reason they carry is a `blocked_kind`, not a failure kind — routed to
+    # `Outcome.BLOCKED` in `_dispose` before this mapping is ever consulted for them.
     RunOutcome.NEEDS_APPROVAL: None,
     RunOutcome.REFUSED: None,
     RunOutcome.BUDGET_EXHAUSTED: FailureKind.BUDGET_EXHAUSTED,
@@ -427,10 +426,30 @@ def _dispose(
             failure_kind=kind,
         )
 
+    def blocked(detail: str, kind: BlockedKind | None) -> TurnRecord:
+        return _finish(
+            repo,
+            started,
+            run_id,
+            slug,
+            Outcome.BLOCKED,
+            EnforcedBy.HARNESS,
+            note=f"{subject}: {detail}",
+            paths=touched,
+            isolated=isolated,
+            blocked_kind=kind,
+        )
+
     if result.outcome is not RunOutcome.SUCCESS:
         # The reason travels in the typed field, so the note no longer restates it. A reason narrated
         # into free text is a reason that was known and then discarded at the moment it became durable.
-        return failed(f"executor reported {result.outcome.value}: {result.detail}", failure_kind_of(result))
+        # The outcome itself comes from the executor's own declared mapping rather than being asserted
+        # here: a permission denial and a refusal are the run stopping, not the run breaking, and a
+        # branch that sent every non-success ending to `failed` is what left `blocked_kind` unwritable.
+        detail = f"executor reported {result.outcome.value}: {result.detail}"
+        if result.protocol_outcome is Outcome.BLOCKED:
+            return blocked(detail, result.blocked_kind)
+        return failed(detail, failure_kind_of(result))
 
     proposed = read_proposal(proposal_path, planning=planning)
     if isinstance(proposed, Refusal):
@@ -497,6 +516,7 @@ def _finish(
     paths: Sequence[Path],
     isolated: bool,
     failure_kind: FailureKind | None = None,
+    blocked_kind: BlockedKind | None = None,
 ) -> TurnRecord:
     runs_dir = repo / RUNS
     record = TurnRecord(
@@ -509,6 +529,7 @@ def _finish(
         isolated=isolated,
         note=note,
         failure_kind=failure_kind,
+        blocked_kind=blocked_kind,
     )
     written = runs.append(runs_dir, slug, record)
     commit(repo, [*paths, written, written.with_suffix(".start")], f"turn({run_id}): {outcome.value} — {note}")

@@ -19,7 +19,7 @@ from yosefactory.executor.invocation import Invocation
 from yosefactory.executor.outcome import FailureKind, RunOutcome, RunResult, Usage
 from yosefactory.protocol import backlog
 from yosefactory.protocol.eventlog import LogError
-from yosefactory.protocol.turn import EnforcedBy, Outcome, starved
+from yosefactory.protocol.turn import BlockedKind, EnforcedBy, Outcome, resumable, starved
 from yosefactory.protocol.turn import FailureKind as ProtocolFailureKind
 from yosefactory.runtime import turn
 from yosefactory.runtime.config import Guardrails
@@ -526,6 +526,28 @@ def test_a_starved_run_writes_a_record_that_says_so(repo: Path, limits: Guardrai
     assert record.outcome is Outcome.FAILED
     assert record.failure_kind is ProtocolFailureKind.BUDGET_EXHAUSTED
     assert starved(record.failure_kind) is True
+
+
+def test_a_denied_approval_is_recorded_as_blocked_not_failed(repo: Path, limits: Guardrails) -> None:
+    """The live defect: every non-success ending used to narrow to `failed`, so a run stopped by a
+    permission denial read as broken. It is a wait, and something arriving can clear it."""
+    seed_item(repo)
+    record = take(repo, FakeExecutor(outcome=RunOutcome.NEEDS_APPROVAL), limits)
+
+    assert record.outcome is Outcome.BLOCKED
+    assert record.blocked_kind is BlockedKind.NEEDS_APPROVAL
+    assert record.failure_kind is None
+    assert resumable(record.blocked_kind) is True
+
+
+def test_a_refusal_is_recorded_as_blocked_and_not_resumable(repo: Path, limits: Guardrails) -> None:
+    """Also blocked, and distinguishably not a wait: nothing arrives that changes a refusal."""
+    seed_item(repo)
+    record = take(repo, FakeExecutor(outcome=RunOutcome.REFUSED), limits)
+
+    assert record.outcome is Outcome.BLOCKED
+    assert record.blocked_kind is BlockedKind.REFUSED
+    assert resumable(record.blocked_kind) is False
 
 
 def test_the_note_no_longer_restates_the_reason(repo: Path, limits: Guardrails) -> None:
