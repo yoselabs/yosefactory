@@ -63,7 +63,7 @@
 ## 8. Close
 
 - [x] 8.1 `make check` green — ruff, ty, pytest
-- [ ] 8.2 Ledger row appended for this session, in the existing `ledger/` format
-- [ ] 8.3 Commit with an explicit pathspec listing only this change's files (never `git add .`, never a directory), `PREK_ALLOW_NO_CONFIG=1`, citing D021 / I9 / D002
-- [ ] 8.4 Report to the visionary session: what shipped, what the three uncalled guards still owe, and the debt's named owner
-- [ ] 8.5 Write-back check: did anything here contradict a P160 entity? If yes, capture against the id before closing; if no, say so explicitly rather than staying silent
+- [x] 8.2 Ledger row appended for this session, in the existing `ledger/` format
+- [x] 8.3 Commit with an explicit pathspec listing only this change's files (never `git add .`, never a directory), `PREK_ALLOW_NO_CONFIG=1`, citing D021 / I9 / D002
+- [x] 8.4 Report to the visionary session: what shipped, what the three uncalled guards still owe, and the debt's named owner
+- [x] 8.5 Write-back check: yes — the `dirty` finding is the unnamed second face of architecture.md §7b rule 2. Supplied to the director, who authored it as S187 plus a §7b amendment. Workers supply findings; P160 authorship stays with the director, so two sessions never hold `capture.py` at once
