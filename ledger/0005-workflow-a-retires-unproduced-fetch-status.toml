@@ -1,0 +1,86 @@
+seq = 5
+date = "2026-08-16"
+event = "run"
+workflow = "workflow-a-spec-build-ship"
+stage_run = "spec -> build -> ship (all three)"
+target_repo = "a2web"
+target_change = "retire-unproduced-fetch-status"
+outcome = "shipped"
+commits = ["11f5b84", "52b7f86", "60d5c51"]
+note = """
+Second D014-countable run, and the first through workflow-a's FULL stage
+list. Run 1 (seq 1) exercised ship only, because spec and build predated
+the session; that limitation was recorded rather than hidden and this run
+was chosen to answer it.
+
+The change is not one of a2web's five open ones. None of them can go
+end-to-end: all five already have proposal/design/tasks written, so any of
+them would have reproduced run 1's ship-only shape, and three (19/19,
+40/40, 32/32) are ship-only by construction. Picked bead a2web-0br
+instead and specced it from nothing — FetchStatus declared three members
+(ok, failed, partial) and produced two, so `partial` sat on a live wire
+contract with no code path able to emit it. Small, real, and it forces a
+genuine decision (remove it, or give it a producer) rather than a
+mechanical edit. That the dispatch said "prefer the smallest change that
+can go through ALL THREE stages" and none of the five could is the reason
+for the deviation, not a preference.
+
+Spec: proposal + design + delta + tasks written this session; the design
+rejects the give-it-a-producer branch on evidence (ADR-0019 traces
+retrieval_incomplete as ORTHOGONAL to status, so a `partial` status puts
+one fact on two axes that can then disagree). Build: member removed, plus
+an architecture guard asserting every declared member has a producer,
+with comparisons excluded — `status == FetchStatus.partial` is exactly the
+dead consumer branch the defect creates, so counting it would make the
+guard vouch for the bug. Ship: make check green (1890 tests, 92.15%
+coverage, 186 architecture tests, tach clean), no wire-golden re-bless,
+openspec archive, commit pair plus a bead-close commit, matching a2web's
+own convention.
+
+PROVENANCE, and its limit. Both commits carry
+`Co-Authored-By: yosefactory <yosefactory@users.noreply.github.com>`
+alongside the harness's own trailer, per Denis's authorisation of
+yosefactory as a second co-author. **This was applied by hand.** It is a
+self-report, not machine-attested: nothing in the platform emitted it and
+nothing verified it, so a later reader must not treat it as evidence that
+the platform produced the commit — only as this session's claim that it
+did. The automatic version is being designed separately. Until that
+lands, every trailer in this repo's ledger has the same standing.
+
+Two unanticipated suspension points, neither covered by any suspend_when
+clause in workflow-a-spec-build-ship.yaml:
+
+1. `make check` failed on `test_architecture_registry_is_complete.py` — a
+   new architecture guard must be registered in docs/architecture/README.md.
+   Mechanical, caught by the repo's own structure, resolved in-session. It
+   is the same CLASS as run 1's missing-bead-id surprise (seq 1, written
+   back as S061): a repo-local convention enforced somewhere the change's
+   stated Impact did not name. Two runs, two instances, different
+   conventions. The gap is not "the workflow forgot beads"; it is that the
+   build stage has no clause for "a repo invariant outside the change's
+   declared surface rejects the work."
+
+2. `git commit -F <file> -- <paths>` is the correct form; `git commit --
+   <paths> -m "..."` is NOT — git parses the -m and its argument as
+   pathspecs and fails. Article V's written form puts the pathspec last,
+   which reads as though the message can follow. Cost one failed commit,
+   no damage.
+
+A third finding, about Article V's own safety net rather than about
+workflow-a: the prescribed fallback
+`git add <new> && git commit -- <paths> || git restore --staged <new>`
+silently does nothing when the commit is piped (`| tail`), because `||`
+then tests the exit status of the LAST command in the pipeline, not the
+commit. The failed commit above left the new file staged with the restore
+never running. Caught by checking `git diff --cached` rather than by
+trusting the guard, per Article XII.
+
+What could make this run weaker evidence than it looks, stated plainly:
+the change is small and touches no external system, so the ship stage's
+cost-approval and smoke-test paths were never exercised — `make bench` was
+neither required nor run. And the spec stage produced no suspension at
+all: the decision the bead named was answerable from ADR-0019 and the
+source, so no `question: decision` was raised. A run in which every stage
+executed but only one of nine suspend_when triggers fired is evidence
+about the stage LIST, not yet about the suspension mechanism.
+"""
