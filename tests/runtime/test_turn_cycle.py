@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import warnings
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -58,6 +59,33 @@ def repo(tmp_path: Path) -> Path:
     git(root, "add", "seed.txt")
     git(root, "commit", "-q", "-m", "seed")
     return root
+
+
+def bare_remote(tmp_path: Path, name: str = "remote") -> Path:
+    remote = tmp_path / name
+    remote.mkdir()
+    git(remote, "init", "--bare", "-q")
+    return remote
+
+
+def set_origin(repo: Path, remote: Path) -> None:
+    git(repo, "remote", "add", "origin", str(remote))
+
+
+def diverged_remote(tmp_path: Path, name: str, branch: str) -> Path:
+    """A bare remote pre-loaded with a commit the eventual pusher does not have — a guaranteed reject."""
+    remote = bare_remote(tmp_path, name)
+    scratch = tmp_path / f"{name}-scratch"
+    scratch.mkdir()
+    git(scratch, "init", "-q")
+    git(scratch, "checkout", "-q", "-b", branch)
+    git(scratch, "config", "user.email", "t@example.invalid")
+    git(scratch, "config", "user.name", "T")
+    (scratch / "other.txt").write_text("other\n", encoding="utf-8")
+    git(scratch, "add", "other.txt")
+    git(scratch, "commit", "-q", "-m", "unrelated")
+    git(scratch, "push", str(remote), f"{branch}:{branch}")
+    return remote
 
 
 @pytest.fixture
@@ -831,3 +859,111 @@ def test_two_different_queues_targeting_one_workspace_still_serialize(
         take_split(other_queue, workspace, executor, limits)
 
     assert not executor.calls
+
+
+# 11. Publication — D022
+
+
+def test_an_advanced_turn_publishes_workspace_before_queue(
+    repo: Path, workspace: Path, tmp_path: Path, limits: Guardrails, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    queue_remote = bare_remote(tmp_path, "queue-remote")
+    workspace_remote = bare_remote(tmp_path, "workspace-remote")
+    set_origin(repo, queue_remote)
+    set_origin(workspace, workspace_remote)
+    seed_item(repo)
+
+    calls: list[Path] = []
+    original = turn.push_repo
+
+    def spy(target: Path) -> turn.PublishResult:
+        calls.append(target)
+        return original(target)
+
+    monkeypatch.setattr(turn, "push_repo", spy)
+    executor = FakeExecutor(proposal={"event": "done", "effects": ["a commit"], "verified_by": "tests"})
+
+    record = take_split(repo, workspace, executor, limits)
+
+    assert record.outcome is Outcome.ADVANCED
+    assert calls == [workspace, repo], "the workspace publishes before the queue"
+    branch = git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    assert git(queue_remote, "rev-parse", branch) == git(repo, "rev-parse", branch)
+    branch = git(workspace, "rev-parse", "--abbrev-ref", "HEAD")
+    assert git(workspace_remote, "rev-parse", branch) == git(workspace, "rev-parse", branch)
+
+
+def test_no_remote_configured_publishes_nothing_and_warns_nothing(repo: Path, workspace: Path, limits: Guardrails) -> None:
+    seed_item(repo)
+    executor = FakeExecutor(proposal={"event": "done", "effects": ["a commit"], "verified_by": "tests"})
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        record = take_split(repo, workspace, executor, limits)
+
+    assert record.outcome is Outcome.ADVANCED
+
+
+def test_a_rejected_push_warns_and_does_not_fail_the_turn(
+    repo: Path, workspace: Path, tmp_path: Path, limits: Guardrails
+) -> None:
+    branch = git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    workspace_remote = bare_remote(tmp_path, "workspace-remote")
+    queue_remote = diverged_remote(tmp_path, "queue-remote", branch)
+    set_origin(workspace, workspace_remote)
+    set_origin(repo, queue_remote)
+    seed_item(repo)
+    executor = FakeExecutor(proposal={"event": "done", "effects": ["a commit"], "verified_by": "tests"})
+
+    with pytest.warns(turn.PublicationFailed, match="rejected"):
+        record = take_split(repo, workspace, executor, limits)
+
+    assert record.outcome is Outcome.ADVANCED, "a publication failure never touches the turn's own record"
+    workspace_branch = git(workspace, "rev-parse", "--abbrev-ref", "HEAD")
+    assert git(workspace_remote, "rev-parse", workspace_branch) == git(workspace, "rev-parse", workspace_branch), (
+        "the workspace push still succeeded even though the queue push was rejected"
+    )
+
+
+def test_a_failed_turn_publishes_nothing(repo: Path, workspace: Path, tmp_path: Path, limits: Guardrails) -> None:
+    queue_remote = bare_remote(tmp_path, "queue-remote")
+    workspace_remote = bare_remote(tmp_path, "workspace-remote")
+    set_origin(repo, queue_remote)
+    set_origin(workspace, workspace_remote)
+    seed_item(repo)
+    executor = FakeExecutor(outcome=RunOutcome.FAILED, kind=FailureKind.CRASH)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        record = take_split(repo, workspace, executor, limits)
+
+    assert record.outcome is Outcome.FAILED
+    branch = git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    assert git(queue_remote, "branch", "--list", branch) == ""
+
+
+def test_a_blocked_turn_publishes_nothing(repo: Path, workspace: Path, tmp_path: Path, limits: Guardrails) -> None:
+    queue_remote = bare_remote(tmp_path, "queue-remote")
+    workspace_remote = bare_remote(tmp_path, "workspace-remote")
+    set_origin(repo, queue_remote)
+    set_origin(workspace, workspace_remote)
+    seed_item(repo)
+    awaiting = {
+        "kind": "question",
+        "ref": "q-2",
+        "who": "denis",
+        "since": "now",
+        "return_to": "ready",
+        "nudge_at": [],
+        "deadline": "later",
+        "on_timeout": "escalate",
+    }
+    executor = FakeExecutor(proposal={"event": "blocked", "awaiting": awaiting})
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        record = take_split(repo, workspace, executor, limits)
+
+    assert record.outcome is Outcome.BLOCKED
+    branch = git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    assert git(queue_remote, "branch", "--list", branch) == ""

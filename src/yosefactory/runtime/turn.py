@@ -20,6 +20,7 @@ import json
 import os
 import secrets
 import subprocess
+import warnings
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -380,6 +381,69 @@ def _git(repo: Path, argv: list[str], env: dict[str, str], *, check: bool = True
     return completed
 
 
+class PublicationFailed(RuntimeWarning):
+    """A push was attempted and rejected. Reported once here; D022 forbids retrying it blind."""
+
+
+@dataclass(frozen=True, slots=True)
+class PublishResult:
+    """What happened when one repository was asked to publish. Never raised — always returned."""
+
+    repo: Path
+    status: str  # "pushed" | "skipped" | "rejected"
+    detail: str = ""
+
+
+def _current_branch(repo: Path) -> str | None:
+    completed = _git(repo, ["rev-parse", "--abbrev-ref", "HEAD"], dict(os.environ), check=False)
+    if completed.returncode != 0:
+        return None
+    branch = completed.stdout.strip()
+    return None if not branch or branch == "HEAD" else branch
+
+
+def _has_remote(repo: Path, name: str = "origin") -> bool:
+    completed = _git(repo, ["remote", "get-url", name], dict(os.environ), check=False)
+    return completed.returncode == 0
+
+
+def push_repo(repo: Path) -> PublishResult:
+    """Push the current branch to `origin`, by explicit refspec. No force, no tags, no new remote.
+
+    A missing remote or a detached HEAD is a skip — D022 grants push to an already-configured
+    remote, so a repository with none is out of scope rather than misconfigured, and there is no
+    branch name to push from a detached HEAD. Only an attempted, rejected push is `rejected`.
+    """
+    if not _has_remote(repo):
+        return PublishResult(repo=repo, status="skipped", detail="no origin remote configured")
+    branch = _current_branch(repo)
+    if branch is None:
+        return PublishResult(repo=repo, status="skipped", detail="HEAD is detached; nothing named to push")
+    completed = _git(repo, ["push", "origin", f"{branch}:{branch}"], dict(os.environ), check=False)
+    if completed.returncode == 0:
+        return PublishResult(repo=repo, status="pushed", detail=branch)
+    tail = (completed.stderr or completed.stdout).strip().splitlines()[-1:] or ["no output"]
+    return PublishResult(repo=repo, status="rejected", detail=tail[0])
+
+
+def publish(places: Places, record: TurnRecord) -> tuple[PublishResult, PublishResult] | None:
+    """Push workspace, then queue — only for a turn that advanced, and never inside its transaction.
+
+    `None` for every other outcome: `blocked` carries no verification receipt for the workspace
+    (`may_write_done` only ever runs on a `done` proposal), so publishing it would publish on trust
+    rather than on the evidence `advanced` requires. Workspace before queue, so a published record
+    never points at a commit that is not yet public (`turn-publication`).
+    """
+    if record.outcome is not Outcome.ADVANCED:
+        return None
+    workspace_result = push_repo(places.workspace)
+    queue_result = push_repo(places.queue)
+    for result in (workspace_result, queue_result):
+        if result.status == "rejected":
+            warnings.warn(f"publish: {result.repo} push rejected: {result.detail}", PublicationFailed, stacklevel=2)
+    return workspace_result, queue_result
+
+
 def take_turn(
     places: Places,
     executor: Executor,
@@ -432,7 +496,7 @@ def take_turn(
         target = pick([item for item in present if eligible(item)])
 
         if target is None and not should_plan(present):
-            return _finish(
+            record = _finish(
                 places,
                 started,
                 run_id,
@@ -443,6 +507,8 @@ def take_turn(
                 paths=[],
                 isolated=isolated,
             )
+            publish(places, record)
+            return record
 
         invocation = Invocation(skill=skill, proposal_path=proposal_path)
 
@@ -451,7 +517,7 @@ def take_turn(
                 result = executor(
                     planning_frame, places.workspace, limits, run_id=run_id, runs_dir=places.ledger, invocation=invocation
                 )
-                return _dispose(
+                record = _dispose(
                     places,
                     started,
                     run_id,
@@ -465,6 +531,8 @@ def take_turn(
                     test_command=test_command,
                     question_deadline_hours=limits.question_deadline_hours,
                 )
+                publish(places, record)
+                return record
 
         item_path = places.queue / ITEMS / f"{target.id}.jsonl"
         attempt = int((backlog.lease(target) or {}).get("attempt", 0)) + 1
@@ -487,7 +555,7 @@ def take_turn(
         frame = backlog.frame(backlog.load(item_path))
         with _workspace_lock(places):
             result = executor(frame, places.workspace, limits, run_id=run_id, runs_dir=places.ledger, invocation=invocation)
-            return _dispose(
+            record = _dispose(
                 places,
                 started,
                 run_id,
@@ -501,6 +569,8 @@ def take_turn(
                 test_command=test_command,
                 question_deadline_hours=limits.question_deadline_hours,
             )
+            publish(places, record)
+            return record
 
 
 def _dispose(
