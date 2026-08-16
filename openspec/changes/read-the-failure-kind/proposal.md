@@ -26,11 +26,26 @@ misnames starvation as breakage spends a real investigation on a healthy factory
 
 ## What Changes
 
-**1. The kind gets a writer.** `runtime/turn.py` maps the executor's result to a typed
-`failure_kind` and passes it to `TurnRecord`. The mapping covers the run-level `RunOutcome`
-stops as well as the typed executor kinds, which finally gives `budget_exhausted`,
-`turn_limit` and `cancelled` a producer — today nothing in `src/` even imports
-`protocol.turn.FailureKind`, so the union's three widest values are unreachable in principle.
+**1. The kind gets a writer, and it reads the value rather than deducing it.**
+`runtime/turn.py` maps the executor's result to a typed `failure_kind` and passes it to
+`TurnRecord`. The mapping covers the run-level `RunOutcome` stops as well as the typed
+executor kinds, which finally gives `budget_exhausted`, `turn_limit` and `cancelled` a
+producer — today nothing in `src/` even imports `protocol.turn.FailureKind`.
+
+Where the value comes from is settled by measurement, not by this change: **the binary states
+it.** `terminal_reason` is a native field on every terminal event (`budget_exhausted` against
+`completed`), and `--max-budget-usd` exists at this version. `classify` in
+`executor/stream.py` ignores the field entirely — verified by reading; the string does not
+appear in that module — while the repo's own success fixture at
+`tests/executor/test_stream.py:27` has been carrying `"terminal_reason": "completed"`
+unread. **No heuristic is proposed for a value the binary reports.**
+
+**1b. And starvation is currently misfiled, not merely unread.** `classify` branches on
+`error_max_turns` and has no branch for `error_max_budget_usd`, so a budget-exhausted
+terminal event falls through to the final line and is returned as `FailureKind.TASK_ERROR` —
+the most generic *broken* value in the set. §7b rule 3 forbids folding `rate_limit` into a
+generic failure; its sibling is being folded into one at the first hop, one layer below the
+record boundary the handoff was watching. Reading `terminal_reason` is what closes it.
 
 **2. The detector reads it, in two classes rather than nine branches.** One predicate beside
 `counts_as_progress` in `protocol/turn.py`, over a two-member set:
@@ -62,12 +77,18 @@ never installed — the record path never called it and hand-rolled its own stri
 **live** workaround is `runtime/turn.py:397`, which holds the typed kind and stringifies it
 into free text one line before constructing a record with a typed field for it. Both go.
 
-**5. Scope item, argued rather than assumed — the supervisor records its own reason.**
-`govern()` knows exactly why it killed a run, and `turn_limit` is already in the union.
-Withholding it makes the harness's own stops the least legible failures in the stream, and
-they are the ones most likely to recur. Proposed: a turn-ceiling kill records `turn_limit`.
-Null stays legal and stays the right answer where the writer genuinely does not know. **This
-item is separable — strike it and the rest of the change stands.**
+**5. The supervisor records its own reason.** *Adopted; no longer separable.* `govern()`
+knows exactly why it killed a run, and `turn_limit` is already in the union. Withholding it
+makes the harness's own stops the least legible failures in the stream, and they are the ones
+most likely to recur. A turn-ceiling kill records `turn_limit`; a wall-clock kill records
+null and says so in the note, since the union has no value for it and this change adds none.
+Null stays legal and stays the right answer where the writer genuinely does not know.
+
+**Not in scope, because it is already done.** The dispatch warned that a verdict flushed in
+the grace window would be attributed to the agent on a harness kill. Checked against disk
+before revising: `supervise.py` evaluates `stop.by_harness` first and it wins
+unconditionally, landed in `2a08238`. The hazard was real and is closed. Named here so a
+later reader does not restore it while believing they are fixing it.
 
 ## Non-goals
 
@@ -118,13 +139,23 @@ None.
 | `src/yosefactory/runtime/turn.py` | map `RunResult` → `failure_kind`; pass it through `_finish`; drop the f-string workaround |
 | `src/yosefactory/runtime/stall.py` | three-state verdict, exit code 2, report names starvation |
 | `src/yosefactory/runtime/supervise.py` | scope item 5 only — `turn_limit` on a ceiling kill |
-| `src/yosefactory/executor/outcome.py` | remove `RunResult.note()` |
-| `tests/executor/test_stream.py` | retarget the one `note()` assertion to the typed field |
+| `src/yosefactory/executor/stream.py` | **not mine** — read `terminal_reason`; branch `error_max_budget_usd` (item 1b) |
+| `src/yosefactory/executor/outcome.py` | **deferred** — remove `RunResult.note()` |
+| `tests/executor/test_stream.py` | deferred with the above |
 | `tests/{protocol,runtime}/` | new cases for the predicate, the writer, and the three states |
 
-**Concurrency, for the director rather than for me.** `executor/outcome.py` belongs to
-`implement-claude-executor`, which reports complete but is **not archived**. Removing
-`note()` edits a file inside another worker's live change directory's scope. Under Article IV
-that is not mine to decide: either that change archives first, or item 4's `note()` removal
-is deferred. The rest of item 4 — the `runtime/turn.py` f-string, which is the workaround
-that was actually load-bearing — is entirely within this change's files.
+**Concurrency, for the director rather than for me.** Both files under
+`src/yosefactory/executor/` belong to `implement-claude-executor`, which is being spec'd now.
+Under Article IV neither is mine:
+
+- **`outcome.py` — deferred by ruling.** The `note()` removal waits for that change to
+  archive. The half of item 4 that was actually load-bearing, the `runtime/turn.py` f-string,
+  is entirely within this change's files and proceeds.
+- **`stream.py` — item 1b is not mine to implement, and this change depends on it.** The
+  misfiling happens inside `classify`, which returns `TASK_ERROR` for a budget stop. Nothing
+  downstream can recover the distinction from that return value, so my mapping cannot repair
+  it at my layer — it can only faithfully record whatever `classify` decided. **Item 1b needs
+  an owner who holds `executor/stream.py`.** Until it lands, items 1–5 give
+  `budget_exhausted` a producer that no executor path will ever reach, and the honest
+  description of this change on its own is: the record can finally carry the distinction, and
+  one of the two starvation values still arrives mislabelled.

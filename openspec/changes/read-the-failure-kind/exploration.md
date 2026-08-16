@@ -47,9 +47,37 @@ executor.outcome.FailureKind 6                  auth rate_limit crash bad_output
 carrying no reason of their own, so a set mirroring only the typed kinds would leave a
 starved run indistinguishable from a broken one. That is right, and **the function that
 performs the flattening does not exist.** `RunOutcome.BUDGET_EXHAUSTED` is never turned into
-`FailureKind.BUDGET_EXHAUSTED` anywhere. The starved-vs-broken distinction — rule 3, the one
-value that may never fold into a generic failure — is unreachable today in principle, not
-merely unread.
+`FailureKind.BUDGET_EXHAUSTED` anywhere.
+
+**Revised after YF-4's measurement, 2026-08-16.** The first draft of this finding said the
+distinction was unreachable *in principle*. That was wrong in the direction that matters: it
+is reachable and **reported**, not inferred. `terminal_reason` is a native field on every
+terminal event — `budget_exhausted` against `completed` — and `--max-budget-usd` exists on
+this binary at this version, which falsifies S183's *nine surfaces, zero cost caps* on this
+surface. Confirmed here by reading, not taken on report: `classify` in `executor/stream.py`
+derives from `subtype`, `api_error_status`, `stop_reason` and `permission_denials`, and the
+string `terminal_reason` appears nowhere in that module.
+
+**And the field is already on disk in this repository's own test data.** The success fixture
+at `tests/executor/test_stream.py:27` carries `"terminal_reason": "completed"`. It was
+captured and never read. Third instance of *authoring is not persisting*, and the cheapest
+one to have caught.
+
+## F2b — starvation is not merely unread, it is actively misfiled
+
+Worse than the gap above, and found while verifying it. `classify` has a branch for
+`error_max_turns` and none for `error_max_budget_usd`. A budget-exhausted terminal event
+therefore falls through every branch to the final line:
+
+```python
+return RunOutcome.FAILED, FailureKind.TASK_ERROR, subtype or "the agent reported an error"
+```
+
+So today a starved run is not recorded as an unknown reason. It is recorded as
+`task_error` — the most generic *broken* value in the set. §7b rule 3 forbids folding
+`rate_limit` into a generic failure; its sibling is being folded into one right now, at the
+first hop, before the record boundary the whole handoff was concerned with. The narrowing
+that loses the distinction happens one layer earlier than anyone was watching.
 
 ## F3 — debt 2, verified, with a correction
 
@@ -158,11 +186,27 @@ the window is a starvation failure. Anything else is STALLED, including:
 
 ## Open questions carried into the proposal
 
-1. **Should the supervisor record its own reason?** `govern()` knows precisely why it killed
-   a run — wall clock or turn ceiling — and `turn_limit` is already in the union. Withholding
-   it makes the harness's own stops the least legible failures in the stream and they are the
-   ones most likely to recur. Argued for in the proposal as an explicit scope item so it can
-   be struck rather than discovered.
-2. **The wall-clock kill has no value in the union.** If (1) is adopted, a turn-ceiling kill
-   maps to `turn_limit` and a wall-clock kill maps to nothing. Default taken: leave it null
-   rather than add a tenth value, and say so in the record's note.
+1. **Should the supervisor record its own reason?** *Resolved: yes, adopted by the director.*
+   `govern()` knows precisely why it killed a run — wall clock or turn ceiling — and
+   `turn_limit` is already in the union. Withholding it makes the harness's own stops the
+   least legible failures in the stream and they are the ones most likely to recur.
+2. **The wall-clock kill has no value in the union.** A turn-ceiling kill maps to
+   `turn_limit`; a wall-clock kill maps to nothing. Default taken: leave it null rather than
+   add a tenth value, and say so in the record's note.
+
+## F7 — a report about `enforced_by` checked against disk, and it does not hold
+
+The dispatch warned that on a wall-clock stop the agent flushes a terminal event inside the
+grace window, so `verdict()` answers and `govern` writes `enforced_by: agent` for a run the
+harness killed — a mis-attribution not to inherit.
+
+**Checked before revising against it (Article XII), and `supervise.py` already rules the
+other way.** The `stop.by_harness` branch is evaluated *before* the flushed verdict and wins
+unconditionally, with a comment citing the same measurement:
+
+> A stopped run is the harness's ending regardless of what the agent managed to say. […] who
+> stopped the run decides who authored the ending.
+
+Landed in `2a08238`, *"guardrails: who stopped the run decides who authored the ending"*. The
+hazard is real and was closed; the report describes the code before that commit. Nothing to
+inherit and nothing to fix — recorded here so the next reader does not "fix" it back.
