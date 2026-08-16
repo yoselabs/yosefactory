@@ -4,6 +4,11 @@ Frozen because every row ever written is compared against every other row. The i
 `backlog` are a different axis and share three spellings with `Outcome` by coincidence: an item is
 `blocked` for as long as something blocks it, a *turn* is `blocked` for the one turn that hit it.
 
+`outcome` and `failure_kind` are two axes and not one field. The first is exactly four words and is
+frozen; the second says why a failure happened, is shaped by whichever executor ran, and is expected
+to change. Widening the first to carry the second would conflate *did this advance* with *why did it
+break* and cost the four-value contract that governing decisions are typed against.
+
 `nothing-ready` is not success. Nothing in this package may treat it as one — the failure this
 record exists to make visible is a long run of green turns that produced nothing, and a reader that
 scores green as healthy cannot see it.
@@ -28,6 +33,35 @@ class Outcome(StrEnum):
     BLOCKED = "blocked"
     NOTHING_READY = "nothing-ready"
     FAILED = "failed"
+
+
+class FailureKind(StrEnum):
+    """Why a turn failed. A second axis over `Outcome`, never a widening of it.
+
+    `Outcome` answers *did the turn advance* and is frozen because every row is compared against
+    every other row. This answers *why did it fail*, is shaped by whatever executor ran, and is
+    expected to change as vendors do — soft by the same test that freezes the other.
+
+    The values flatten the executor's two failing vocabularies onto the one question. Its run-level
+    stops (`budget_exhausted`, `turn_limit`, `cancelled`) all narrow to `FAILED` carrying no reason
+    of their own, so a set mirroring only its typed failure kinds would still leave a starved run
+    indistinguishable from a broken one. The names of the two vocabularies are disjoint, so a reader
+    never has to know which level a value came from.
+
+    `rate_limit` is the one that may never fold into a generic failure — architecture.md §7b rule 3.
+    The model draws from the same rolling window as the operator's own interactive use, so a factory
+    starved of quota waits and a factory whose model is broken gets fixed.
+    """
+
+    BUDGET_EXHAUSTED = "budget_exhausted"
+    TURN_LIMIT = "turn_limit"
+    CANCELLED = "cancelled"
+    AUTH = "auth"
+    RATE_LIMIT = "rate_limit"
+    CRASH = "crash"
+    BAD_OUTPUT = "bad_output"
+    TASK_ERROR = "task_error"
+    VERSION_MISMATCH = "version_mismatch"
 
 
 class EnforcedBy(StrEnum):
@@ -89,6 +123,9 @@ class TurnRecord:
     dirty: bool
     isolated: bool
     note: str = ""
+    # Null is a real value, not a gap: a supervisor writing for a process it killed has no executor
+    # reason to give, and `enforced_by` already says who ended the run.
+    failure_kind: FailureKind | None = None
 
     def __post_init__(self) -> None:
         if not self.run_id:
@@ -97,6 +134,14 @@ class TurnRecord:
             raise RecordError(f"outcome must be one of {[o.value for o in Outcome]}, got {self.outcome!r}")
         if not isinstance(self.enforced_by, EnforcedBy):
             raise RecordError(f"enforced_by must be one of {[e.value for e in EnforcedBy]}, got {self.enforced_by!r}")
+        if self.failure_kind is not None:
+            if not isinstance(self.failure_kind, FailureKind):
+                raise RecordError(f"failure_kind must be one of {[k.value for k in FailureKind]}, got {self.failure_kind!r}")
+            if self.outcome is not Outcome.FAILED:
+                raise RecordError(
+                    f"failure_kind {self.failure_kind.value!r} on outcome {self.outcome.value!r}; "
+                    f"only {Outcome.FAILED.value!r} has a reason to give"
+                )
         for field_name in ("started_at", "ended_at"):
             if not getattr(self, field_name):
                 raise RecordError(f"a turn record must carry {field_name}")
@@ -115,6 +160,7 @@ class TurnRecord:
             "dirty": self.dirty,
             "isolated": self.isolated,
             "note": self.note,
+            "failure_kind": self.failure_kind.value if self.failure_kind is not None else None,
         }
 
     def with_note(self, note: str) -> TurnRecord:
@@ -136,6 +182,11 @@ def from_dict(payload: Any) -> TurnRecord:
         enforced_by = EnforcedBy(payload["enforced_by"])
     except ValueError as exc:
         raise RecordError(f"unknown enforced_by {payload['enforced_by']!r}; valid: {[e.value for e in EnforcedBy]}") from exc
+    raw_kind = payload.get("failure_kind")
+    try:
+        failure_kind = FailureKind(raw_kind) if raw_kind is not None else None
+    except ValueError as exc:
+        raise RecordError(f"unknown failure_kind {raw_kind!r}; valid: {[k.value for k in FailureKind]}") from exc
     for flag in ("dirty", "isolated"):
         if not isinstance(payload[flag], bool):
             raise RecordError(f"{flag} must be a boolean, got {payload[flag]!r}")
@@ -148,6 +199,7 @@ def from_dict(payload: Any) -> TurnRecord:
         dirty=payload["dirty"],
         isolated=payload["isolated"],
         note=str(payload.get("note", "")),
+        failure_kind=failure_kind,
     )
 
 

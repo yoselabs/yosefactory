@@ -11,6 +11,14 @@ Two properties this module must keep, because the rest of the design leans on th
   them, so replay order comes from `ts` and `event_id`, never from position in the file.
 * **Loud.** An unknown event, an illegal transition or a malformed line fails the read. A reader
   that skips what it does not understand reports a state that never existed.
+
+Loud is not the same as intolerant. An event may declare several rules and the first whose
+`from_states` matches wins, so a declaration can absorb a record it can name — a sweeper's late
+`timed_out` landing on a question answered a second earlier — while everything nobody named still
+fails. The line to hold: reject what could only come from a bug, absorb what a correct actor could
+legitimately have written, and declare each such case as a rule. The checkable form of that is
+whether the writer could have avoided the race; a timer-driven writer reads and appends as two steps
+and cannot fuse them, a deliberate one has already read the log it is closing.
 """
 
 from __future__ import annotations
@@ -64,7 +72,9 @@ class Declaration:
     initial: str
     states: frozenset[str]
     terminal: frozenset[str]
-    rules: Mapping[str, Rule]
+    rules: Mapping[str, Rule | tuple[Rule, ...]]
+    """One event, one rule, or several tried in order. An event with one legal shape says so in one
+    line; an event whose legal shape depends on where it arrives lists them, most specific first."""
 
 
 @dataclass(frozen=True)
@@ -144,16 +154,17 @@ def _fold(records: Sequence[Record], declaration: Declaration, source: str) -> s
     arrivals: list[tuple[str, Record]] = []
     for position, record in enumerate(records):
         name = str(record["event"])
-        rule = declaration.rules.get(name)
+        declared = declaration.rules.get(name)
         line = record["_line"]
-        if rule is None:
+        if declared is None:
             raise LogError(f"unknown event {name!r}", source=source, line=line)
+        rules = (declared,) if isinstance(declared, Rule) else declared
         if position == 0 and name != declaration.initial:
             raise LogError(f"log opens with {name!r}; expected {declaration.initial!r}", source=source, line=line)
         if position > 0 and name == declaration.initial:
             raise LogError(f"{name!r} may only be the first event", source=source, line=line)
-        if position > 0:
-            _check_from(rule, state, name, declaration, source, line)
+        # The initial event arrives at no state, so there is nothing to match against.
+        rule = rules[0] if position == 0 else _select(rules, state, name, declaration, source, line)
         _check_payload(rule, record, name, source, line)
         target = _target(rule, state, arrivals, name, source, line)
         if target is not None:
@@ -164,16 +175,40 @@ def _fold(records: Sequence[Record], declaration: Declaration, source: str) -> s
     return state
 
 
-def _check_from(rule: Rule, state: str, name: str, declaration: Declaration, source: str, line: int) -> None:
-    if rule.from_states == ANY:
-        return
+def _select(rules: Sequence[Rule], state: str, name: str, declaration: Declaration, source: str, line: int) -> Rule:
+    """The first rule that matches, which is what makes an absorbed case declarable rather than global.
+
+    There is no separate terminal guard. A `frozenset` of non-terminal names cannot match a terminal
+    state, so for every single-rule declaration the guard and the membership test rejected exactly
+    the same records — it only chose the wording, which is what it still does here. Dropping it from
+    the match path is what lets a rule name a terminal state on purpose.
+    """
+    for rule in rules:
+        if _matches(rule, state, declaration):
+            return rule
     if state in declaration.terminal:
         raise LogError(f"{name!r} is illegal from terminal state {state!r}", source=source, line=line)
+    raise LogError(f"{name!r} is illegal from state {state!r}; legal from: {_legal(rules)}", source=source, line=line)
+
+
+def _matches(rule: Rule, state: str, declaration: Declaration) -> bool:
+    if rule.from_states == ANY:
+        return True
     if rule.from_states == ANY_NON_TERMINAL:
-        return
-    if state not in rule.from_states:
-        legal = ", ".join(sorted(rule.from_states)) if isinstance(rule.from_states, frozenset) else str(rule.from_states)
-        raise LogError(f"{name!r} is illegal from state {state!r}; legal from: {legal}", source=source, line=line)
+        return state not in declaration.terminal
+    return state in rule.from_states
+
+
+def _legal(rules: Sequence[Rule]) -> str:
+    """Every state the event is legal from, as a fact about the declaration rather than about which
+    rule happened to be tried."""
+    named: set[str] = set()
+    for rule in rules:
+        if isinstance(rule.from_states, frozenset):
+            named |= rule.from_states
+        else:
+            named.add(str(rule.from_states))
+    return ", ".join(sorted(named))
 
 
 def _check_payload(rule: Rule, record: Record, name: str, source: str, line: int) -> None:

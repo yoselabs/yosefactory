@@ -7,6 +7,7 @@ import pytest
 from yosefactory.protocol.turn import (
     CheckResult,
     EnforcedBy,
+    FailureKind,
     Outcome,
     RecordError,
     TurnRecord,
@@ -90,3 +91,77 @@ def test_round_trip_preserves_every_field() -> None:
 def test_a_failed_check_must_say_what_it_saw() -> None:
     with pytest.raises(RecordError, match="what it observed"):
         CheckResult(name="tests", passed=False, detail="")
+
+
+def test_starved_and_broken_are_distinguishable_without_reading_free_text() -> None:
+    """architecture.md §7b rule 3: rate_limit may never fold into a generic failure.
+
+    The model draws from the same rolling window as Denis's own interactive use, so one of these
+    waits and the other gets fixed.
+    """
+    starved = a_record(outcome=Outcome.FAILED, failure_kind=FailureKind.RATE_LIMIT)
+    broken = a_record(outcome=Outcome.FAILED, failure_kind=FailureKind.CRASH)
+
+    assert starved.outcome is broken.outcome
+    assert starved.to_dict()["failure_kind"] == "rate_limit"
+    assert broken.to_dict()["failure_kind"] == "crash"
+
+
+def test_a_run_level_stop_is_a_failure_kind_too() -> None:
+    """`budget_exhausted` narrows to `failed` carrying no typed kind of its own, so it needs one."""
+    assert a_record(outcome=Outcome.FAILED, failure_kind=FailureKind.BUDGET_EXHAUSTED).failure_kind is FailureKind.BUDGET_EXHAUSTED
+
+
+@pytest.mark.parametrize("outcome", [Outcome.ADVANCED, Outcome.BLOCKED, Outcome.NOTHING_READY])
+def test_a_failure_kind_on_anything_but_failed_is_rejected(outcome: Outcome) -> None:
+    with pytest.raises(RecordError, match=r"failure_kind 'crash' on outcome"):
+        a_record(outcome=outcome, failure_kind=FailureKind.CRASH)
+
+
+def test_a_failure_kind_outside_the_set_is_rejected() -> None:
+    with pytest.raises(RecordError, match="failure_kind must be one of"):
+        a_record(outcome=Outcome.FAILED, failure_kind="quota")
+
+
+def test_a_harness_kill_needs_no_failure_kind() -> None:
+    """A supervisor writing for a process it killed has no executor reason; `enforced_by` says who."""
+    record = a_record(outcome=Outcome.FAILED, enforced_by=EnforcedBy.HARNESS)
+
+    assert record.failure_kind is None
+    assert record.to_dict()["failure_kind"] is None
+
+
+def test_a_record_written_before_the_field_still_reads() -> None:
+    payload = a_record(outcome=Outcome.FAILED).to_dict()
+    del payload["failure_kind"]
+
+    assert from_dict(payload).failure_kind is None
+
+
+def test_an_unknown_failure_kind_in_a_payload_is_rejected_by_name() -> None:
+    payload = {**a_record(outcome=Outcome.FAILED).to_dict(), "failure_kind": "quota"}
+
+    with pytest.raises(RecordError, match=r"unknown failure_kind 'quota'"):
+        from_dict(payload)
+
+
+def test_a_failure_kind_round_trips() -> None:
+    record = a_record(outcome=Outcome.FAILED, failure_kind=FailureKind.AUTH)
+
+    assert from_dict(record.to_dict()) == record
+
+
+def test_every_executor_failure_kind_can_be_recorded() -> None:
+    """A new vendor reason must break this test rather than become an unrecordable record.
+
+    The executor's two failing vocabularies flatten onto one question here — its run-level stops that
+    narrow to `failed`, and its typed failure kinds — so both are checked.
+    """
+    from yosefactory.executor.outcome import FailureKind as ExecutorFailureKind
+    from yosefactory.executor.outcome import RunOutcome
+
+    recordable = {kind.value for kind in FailureKind}
+
+    assert {kind.value for kind in ExecutorFailureKind} <= recordable
+    narrowing_to_failed = {RunOutcome.BUDGET_EXHAUSTED, RunOutcome.TURN_LIMIT, RunOutcome.CANCELLED}
+    assert {outcome.value for outcome in narrowing_to_failed} <= recordable

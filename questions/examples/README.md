@@ -1,8 +1,7 @@
 # Worked examples
 
-Four question logs, each demonstrating scenarios from
-`openspec/changes/define-question-frame-format/specs/question-frame/spec.md`. They are examples,
-not real questions — nothing waits on them.
+Five question logs, each demonstrating scenarios from `openspec/specs/question-frame/spec.md`. They
+are examples, not real questions — nothing waits on them.
 
 | File | Folds to | Demonstrates |
 |---|---|---|
@@ -10,6 +9,7 @@ not real questions — nothing waits on them.
 | `q-20260816T171331Z-b7e40a52.jsonl` | `awaiting` | a request with `to: loop:shelf` — the same object as a question, differing only in who answers (D020) |
 | `q-20260816T171402Z-5c1de9f7.jsonl` | `timed_out` | the deadline passing and the sweeper appending the answer that was pre-registered at ask time |
 | `q-20260817T080200Z-9ab35e04.jsonl` | `answered` | a rejection that is a reply: `verdict: reject` with a `cause` and `next: retry` |
+| `q-20260818T164500Z-d41c8e37.jsonl` | `answered` | the race: Denis answers at 17:00:02, the sweeper appends `timed_out` at 17:00:03. The late record is absorbed, retained, and changes nothing |
 
 ## The acceptance test
 
@@ -18,38 +18,43 @@ that one and leaves the other suspended* — is the first two rows read together
 within ninety seconds of each other by the same loop. The answer appended to `3f9a2c1d` names
 that `qid` and nothing else; `b7e40a52` is untouched and still folds to `awaiting`.
 
-Check it by hand, using the declaration this format supplies to the shared fold:
+Check it by running the declaration, which is committed at
+`src/yosefactory/protocol/question.py` and folded over every file here by
+`tests/protocol/test_question_fold.py` under `make check`:
 
 ```python
 import pathlib
-from yosefactory.protocol.eventlog import Declaration, Rule, load
-
-QUESTION = Declaration(
-    initial="asked",
-    states=frozenset({"awaiting", "answered", "timed_out", "cancelled"}),
-    terminal=frozenset({"answered", "timed_out", "cancelled"}),
-    rules={
-        "asked": Rule(frozenset(), "awaiting",
-                      required=(("item",), ("kind",), ("to",), ("text",), ("answer_type",),
-                                ("return_to",), ("deadline",), ("on_timeout",)),
-                      patterns={("on_timeout",): r"escalate|default:.+|abandon:.+"}),
-        "nudged": Rule(frozenset({"awaiting"}), None, required=(("reason",),)),
-        "noted": Rule(frozenset({"awaiting"}), None, required=(("body",),)),
-        "answered": Rule(frozenset({"awaiting"}), "answered", required=(("verdict",), ("answer",))),
-        "timed_out": Rule(frozenset({"awaiting"}), "timed_out", required=(("policy",), ("answer",))),
-        "cancelled": Rule(frozenset({"awaiting"}), "cancelled", required=(("reason",),)),
-    },
-)
+from yosefactory.protocol import question
 
 for path in sorted(pathlib.Path("questions/examples").glob("*.jsonl")):
-    folded = load(path, QUESTION)
+    folded = question.load(path)
     print(folded.id, folded.state, folded.terminal)
 ```
 
-Run against these fixtures it prints `answered`, `awaiting`, `timed_out`, `answered`. The
-declaration is not committed anywhere yet — the fixtures were checked by running it from a
-scratch script, and committing it alongside a test that runs under `make check` is sequenced
-separately.
+It prints `answered`, `awaiting`, `timed_out`, `answered`, `answered`.
+
+The declaration used to live here as a snippet instead, and it was wrong within a day of being
+written: it scoped `noted` to `awaiting`, while the spec and the item declaration both make a note
+legal from any state, closed included. A claim nobody executes is a claim nobody checks, which is why
+it is code and a test now rather than a code block.
+
+## The race, and why it is absorbed rather than tolerated
+
+`q-20260818T164500Z-d41c8e37` is the fifth row and the reason `timed_out` carries **two** rules:
+
+```
+timed_out  from awaiting        -> timed_out, requiring policy and answer
+           from any terminal    -> no state change, requiring nothing
+```
+
+Both writers were correct. The sweeper read the log before the answer landed and cannot fuse its read
+and its append into one step, so it could not have avoided the race. That is the test the format
+applies — **could the writer have avoided it?** — and it is why `answered` and `cancelled` get no such
+rule: a deliberate writer has already read the log it is closing, so a second one is a defect and
+fails the read.
+
+The late record is kept and stays visible (`question.absorbed(folded)`), because a sweeper that is
+simply wrong about deadlines looks identical to one that lost a fair race if the record is discarded.
 
 ## Reading them
 

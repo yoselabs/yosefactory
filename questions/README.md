@@ -3,9 +3,10 @@
 A branch that cannot proceed writes a question here, and dies. An answer appended later resumes
 exactly that branch, and only that branch.
 
-**Normative source: `openspec/changes/define-question-frame-format/specs/question-frame/spec.md`**
-(after archive: `openspec/specs/question-frame/spec.md`). This file is the working summary; where
-the two disagree, the spec wins.
+**Normative source: `openspec/specs/question-frame/spec.md`.** This file is the working summary;
+where the two disagree, the spec wins. The declaration itself is code:
+`src/yosefactory/protocol/question.py`, folded over the examples by
+`tests/protocol/test_question_fold.py`.
 
 Design record: M600 (the mechanism), D020 (a request is the same object), S099 (branch-level
 halting is correlation-id based), S172 (every loop must close), `architecture.md` §5.
@@ -71,7 +72,9 @@ and questions supply this one:
 - `terminal`: `answered`, `timed_out`, `cancelled` (a predicate, never a written state)
 - `rules`: `asked` → `awaiting`; `nudged` leaves the state alone while awaiting; `noted` leaves
   it alone from any state, closed included; `answered`, `timed_out`, `cancelled` each move
-  `awaiting` to their own name
+  `awaiting` to their own name. `timed_out` carries a **second** rule — from any terminal state it
+  changes nothing — because a sweeper cannot fuse its read of the log with its append and so cannot
+  avoid losing a race to an answer that lands first
 
 That is D020 made structural: a request, a question, and a work item are one object in different
 states, so a second parser would be a modelling error rather than a convenience.
@@ -84,12 +87,21 @@ Fold the records in `(ts, event_id)` order — never by position in the file, si
 - duplicate delivery collapses on `event_id`: the same event twice is one event; the same
   `event_id` carrying *different* content fails the read rather than picking a winner
 
-The fold is loud. An unknown event, an illegal transition, or a malformed line fails the read
-instead of yielding a state that never existed. Tolerance is not needed for retries: a retried
-close carries the same `event_id` and collapses, so a second close under a *different* id is a
-genuine double-write rather than delivery noise — so a terminal event appended to an
-already-terminal question is a fault to repair by hand, not a state to infer. Whoever appends a
-terminal event reads the log first; a sweeper never times out a question that already closed.
+The fold is loud, and loud is not the same as intolerant. An unknown event, an illegal transition, or
+a malformed line fails the read instead of yielding a state that never existed. What the declaration
+absorbs, it absorbs by naming:
+
+> **Reject what could only come from a bug. Absorb what a correct actor could legitimately have
+> written — and declare each such case explicitly.**
+
+The checkable form is **could the writer have avoided the race?** A sweeper reads the log and appends
+as two steps and cannot fuse them, so a `timed_out` landing a second after an answer is absorbed: the
+question keeps the state it reached, and the late record is retained and visible. A canceller or an
+answerer is deliberate and has already read the log it is closing, so a second deliberate close still
+fails the read.
+
+Tolerance is not needed for retries either: a retried close carries the same `event_id` and collapses
+on it, so a second close under a *different* id is never delivery noise.
 
 ## Closing, always
 
@@ -100,10 +112,14 @@ Every question carries a `deadline` and an `on_timeout`:
   this question then. It may not be chosen or edited afterwards.
 - `abandon:<reason>` — close as terminal without an answer
 
+The question is the single owner of these two fields wherever a question exists: a backlog item
+suspended on one names it and reads them from it rather than holding a second copy. An item blocked on
+another *item* has no question, so that block carries its own bound — nothing else can.
+
 Past the deadline with no terminal record, a sweeper appends `timed_out` carrying the policy's
-outcome, so the loop closes the question itself. An answer arriving early terminates it first and
-the sweeper is then a no-op — wake on timer *or* activity, whichever comes first, without the two
-coordinating.
+outcome, so the loop closes the question itself. An answer arriving early terminates it first and the
+sweeper's record is then absorbed — wake on timer *or* activity, whichever comes first, without the
+two coordinating and without either writer having to win.
 
 ## Kinds
 

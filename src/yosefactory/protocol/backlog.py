@@ -39,7 +39,13 @@ TERMINAL = frozenset({"done", "cancelled", "poison", "duplicate", "abandoned"})
 _AWAITING_KIND = "question|request|item"
 _ON_TIMEOUT = r"escalate|default:.+|abandon:.+"
 
-_AWAITING_FIELDS = ("kind", "ref", "who", "since", "return_to", "nudge_at", "deadline", "on_timeout")
+# `deadline` and `on_timeout` are not here, and the reason is conditional: a block on a question
+# reads them from the question, where they already live, and a second copy is the one that drifts. A
+# block of `kind: item` has no question, so it carries them itself — nothing else can, and a block
+# with no bound anywhere hangs forever (S172). "Required only when kind is item" is a predicate over
+# two fields of one record, which a declaration cannot express, so that half stays writer-enforced.
+# The pattern below still checks the value wherever it does appear, since patterns skip absent fields.
+_AWAITING_FIELDS = ("kind", "ref", "who", "since", "return_to", "nudge_at")
 
 ITEM = Declaration(
     initial="created",
