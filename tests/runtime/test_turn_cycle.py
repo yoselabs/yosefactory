@@ -160,7 +160,16 @@ def take(repo: Path, executor: Any, limits: Guardrails, **kwargs: Any) -> Any:
     )
 
 
-def take_split(queue: Path, workspace: Path, executor: Any, limits: Guardrails, **kwargs: Any) -> Any:
+def take_split(
+    queue: Path,
+    workspace: Path,
+    executor: Any,
+    limits: Guardrails,
+    *,
+    publish_queue: bool = True,
+    publish_workspace: bool = True,
+    **kwargs: Any,
+) -> Any:
     """Queue and workspace as two distinct repositories, each with its own lock file."""
     kwargs.setdefault("test_command", TRUE_COMMAND)
     places = turn.Places(
@@ -169,6 +178,8 @@ def take_split(queue: Path, workspace: Path, executor: Any, limits: Guardrails, 
         queue_lock=queue / turn.LOCK,
         workspace=workspace,
         workspace_lock=workspace / turn.LOCK,
+        publish_queue=publish_queue,
+        publish_workspace=publish_workspace,
     )
     return turn.take_turn(places, executor, limits=limits, owner="tester", skill=SKILL, proposal_dir=queue.parent, **kwargs)
 
@@ -967,3 +978,93 @@ def test_a_blocked_turn_publishes_nothing(repo: Path, workspace: Path, tmp_path:
     assert record.outcome is Outcome.BLOCKED
     branch = git(repo, "rev-parse", "--abbrev-ref", "HEAD")
     assert git(queue_remote, "branch", "--list", branch) == ""
+
+
+# 12. Declining publication per place -- `decline-publication-per-place`
+
+
+def test_a_declined_workspace_is_never_pushed(
+    repo: Path, workspace: Path, tmp_path: Path, limits: Guardrails, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`push_repo` must never be called for a declined place -- checked by spy, not by outcome."""
+    queue_remote = bare_remote(tmp_path, "queue-remote")
+    workspace_remote = bare_remote(tmp_path, "workspace-remote")
+    set_origin(repo, queue_remote)
+    set_origin(workspace, workspace_remote)
+    seed_item(repo)
+
+    calls: list[Path] = []
+    original = turn.push_repo
+
+    def spy(target: Path) -> turn.PublishResult:
+        calls.append(target)
+        return original(target)
+
+    monkeypatch.setattr(turn, "push_repo", spy)
+    executor = FakeExecutor(proposal={"event": "done", "effects": ["a commit"], "verified_by": "tests"})
+
+    record = take_split(repo, workspace, executor, limits, publish_workspace=False)
+
+    assert record.outcome is Outcome.ADVANCED
+    assert calls == [repo], "push_repo was never invoked for the declined workspace"
+    branch = git(workspace, "rev-parse", "--abbrev-ref", "HEAD")
+    assert git(workspace_remote, "branch", "--list", branch) == "", "nothing reached the workspace remote"
+    # The queue, not declined, still published normally.
+    assert git(queue_remote, "rev-parse", branch) == git(repo, "rev-parse", branch)
+
+
+def test_declined_is_not_conflated_with_skipped_even_with_a_real_remote(
+    repo: Path, workspace: Path, tmp_path: Path, limits: Guardrails
+) -> None:
+    """A declined place with a real, reachable origin must still report `declined`, not `skipped`.
+
+    Proves the check happens before `push_repo` runs, not by classifying `push_repo`'s own result:
+    the remote below is real and reachable, so a `skipped` result would only occur if the decline
+    check were bypassed and `push_repo` fell through to "no remote" some other way -- it should
+    never be consulted at all.
+    """
+    queue_remote = bare_remote(tmp_path, "queue-remote")
+    workspace_remote = bare_remote(tmp_path, "workspace-remote")
+    set_origin(repo, queue_remote)
+    set_origin(workspace, workspace_remote)
+    seed_item(repo)
+    executor = FakeExecutor(proposal={"event": "done", "effects": ["a commit"], "verified_by": "tests"})
+
+    places = turn.Places(
+        queue=repo,
+        ledger=repo / turn.RUNS,
+        queue_lock=repo / turn.LOCK,
+        workspace=workspace,
+        workspace_lock=workspace / turn.LOCK,
+        publish_workspace=False,
+    )
+    record = turn.take_turn(
+        places, executor, limits=limits, owner="tester", skill=SKILL, proposal_dir=repo.parent, test_command=TRUE_COMMAND
+    )
+    assert record.outcome is Outcome.ADVANCED
+
+    result = turn.publish(places, record)
+    assert result is not None
+    workspace_result, queue_result = result
+    assert workspace_result.status == "declined"
+    assert queue_result.status == "pushed"
+
+
+def test_an_unstated_publish_choice_publishes_both_places_exactly_as_before(
+    repo: Path, workspace: Path, tmp_path: Path, limits: Guardrails
+) -> None:
+    """Decision 2: a caller supplying no opinion behaves exactly as every turn did before this field."""
+    queue_remote = bare_remote(tmp_path, "queue-remote")
+    workspace_remote = bare_remote(tmp_path, "workspace-remote")
+    set_origin(repo, queue_remote)
+    set_origin(workspace, workspace_remote)
+    seed_item(repo)
+    executor = FakeExecutor(proposal={"event": "done", "effects": ["a commit"], "verified_by": "tests"})
+
+    record = take_split(repo, workspace, executor, limits)
+
+    assert record.outcome is Outcome.ADVANCED
+    branch = git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    assert git(queue_remote, "rev-parse", branch) == git(repo, "rev-parse", branch)
+    branch = git(workspace, "rev-parse", "--abbrev-ref", "HEAD")
+    assert git(workspace_remote, "rev-parse", branch) == git(workspace, "rev-parse", branch)

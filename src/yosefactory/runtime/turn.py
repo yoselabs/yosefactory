@@ -87,6 +87,11 @@ class Places:
     picking and claiming against one backlog; `workspace_lock` serializes agent execution and commits
     against one working tree, keyed by the workspace's own identity rather than by which queue
     dispatched the turn — two different queues pointed at the same workspace still must not overlap.
+
+    `publish_queue`/`publish_workspace` — whether `publish()` may push that place at all, decided per
+    role because a queue you own and a workspace you are a guest in are different cases (D022 grants
+    push; this is whether a given turn may decline it, not a change to the grant). Default `True`:
+    an unstated choice publishes both, exactly as every turn did before these fields existed.
     """
 
     queue: Path
@@ -94,6 +99,8 @@ class Places:
     queue_lock: Path
     workspace: Path
     workspace_lock: Path
+    publish_queue: bool = True
+    publish_workspace: bool = True
 
     @classmethod
     def local(cls, repo: Path) -> Places:
@@ -390,7 +397,7 @@ class PublishResult:
     """What happened when one repository was asked to publish. Never raised — always returned."""
 
     repo: Path
-    status: str  # "pushed" | "skipped" | "rejected"
+    status: str  # "pushed" | "skipped" | "rejected" | "declined"
     detail: str = ""
 
 
@@ -436,8 +443,18 @@ def publish(places: Places, record: TurnRecord) -> tuple[PublishResult, PublishR
     """
     if record.outcome is not Outcome.ADVANCED:
         return None
-    workspace_result = push_repo(places.workspace)
-    queue_result = push_repo(places.queue)
+    # The flag is checked before push_repo runs at all, for either place — a declined place's own
+    # remote state is never consulted, so "declined" can never share a code path with "skipped".
+    workspace_result = (
+        push_repo(places.workspace)
+        if places.publish_workspace
+        else PublishResult(repo=places.workspace, status="declined", detail="publication declined for this place")
+    )
+    queue_result = (
+        push_repo(places.queue)
+        if places.publish_queue
+        else PublishResult(repo=places.queue, status="declined", detail="publication declined for this place")
+    )
     for result in (workspace_result, queue_result):
         if result.status == "rejected":
             warnings.warn(f"publish: {result.repo} push rejected: {result.detail}", PublicationFailed, stacklevel=2)
