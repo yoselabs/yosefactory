@@ -107,7 +107,7 @@ coordinating.
 
 ## Kinds
 
-Seven, closed:
+Eight, closed:
 
 | kind | blocking |
 |---|---|
@@ -116,11 +116,16 @@ Seven, closed:
 | `out-of-depth` | by failure |
 | `gate-failed` | by failure |
 | `cost-approval` | by failure |
+| `skip-the-skill` | by failure |
 | `elicitation` | **by design** |
 | `goal-falsified` | by failure |
 
 Blocking-by-design questions are schedulable in advance; the rest arise from something going
 wrong. The property is derived from `kind`, never set by hand.
+
+`skip-the-skill` is the one kind the **system** emits rather than a stage requesting it — the
+offer to abandon a skill when frustration is detected (S090). It needs no separate handling, which
+is the constraint below doing its job.
 
 **Kind routes a question. It never gates one.** Nothing may refuse, discard, or defer a question
 because its kind was unexpected for the stage that emitted it, and no stage declares in advance
