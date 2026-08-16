@@ -113,18 +113,30 @@ def govern(
     turns_taken: Callable[[], int] | None = None,
     verdict: Callable[[], Outcome | None] | None = None,
     poll_seconds: float = 0.05,
+    stdout: Path | None = None,
 ) -> TurnRecord:
     """Run one agent process under a wall clock and a turn ceiling, and leave a record either way.
 
-    `turns_taken` is the seam the executor wires in later; without a counter the ceiling can only be
-    refused-if-absent, not enforced, and that gap is the integration receipt this change still owes.
+    `turns_taken` and `verdict` are the seams the executor wires in. Feeding them requires the
+    child's stdout, since the verdict is a structured event the agent prints rather than a status it
+    returns — hence `stdout`, which names a file the caller may read while the run is still going.
+    Left unset the child inherits this process's stdout, so a caller that does not parse is unaffected.
+
+    Redirecting in a shell would be the other way to get the stream, and it is not available: the
+    signal would reach the shell rather than the agent, and the grace window exists precisely so the
+    agent can flush its own verdict before it dies.
     """
     if turn_ceiling is None:
         raise SupervisorError("a run with no configured turn ceiling does not start; there is no default in any executor")
 
     started = datetime.now(UTC)
     slug = open_run(runs_dir, run_id, started)
-    process = subprocess.Popen(argv, cwd=repo)  # noqa: S603
+    if stdout is None:
+        process = subprocess.Popen(argv, cwd=repo)  # noqa: S603
+    else:
+        stdout.parent.mkdir(parents=True, exist_ok=True)
+        with stdout.open("wb") as sink:
+            process = subprocess.Popen(argv, cwd=repo, stdout=sink)  # noqa: S603
     deadline = time.monotonic() + guard.wall_clock_seconds
     stop = Stop(reason="completed", by_harness=False)
 
