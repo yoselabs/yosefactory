@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
+from yosefactory.executor.invocation import Invocation
 from yosefactory.executor.outcome import RunOutcome, RunResult
 from yosefactory.protocol import backlog, question
 from yosefactory.protocol.eventlog import Declaration, FoldedLog, LogError
@@ -59,7 +60,12 @@ class TurnError(RuntimeError):
 
 
 class Executor(Protocol):
-    """The seam. `frame` carries D019's three fields plus `proposal_path` and `skill`."""
+    """The seam. Three things, three parameters: what the work is, how to run it, what bounds it.
+
+    The skill and the proposal path travel in `invocation` and never in `frame` — the frame is
+    D019's unit of falsification and lands in the item's permanent trail, where a file path is not a
+    claim that can be wrong, only one that can go stale.
+    """
 
     def __call__(
         self,
@@ -69,6 +75,7 @@ class Executor(Protocol):
         *,
         run_id: str,
         runs_dir: Path,
+        invocation: Invocation | None = None,
     ) -> RunResult: ...
 
 
@@ -295,9 +302,10 @@ def take_turn(
                 isolated=isolated,
             )
 
+        invocation = Invocation(skill=skill, proposal_path=proposal_path)
+
         if target is None:
-            frame = {**planning_frame, "proposal_path": str(proposal_path), "skill": str(skill)}
-            result = executor(frame, repo, limits, run_id=run_id, runs_dir=repo / RUNS)
+            result = executor(planning_frame, repo, limits, run_id=run_id, runs_dir=repo / RUNS, invocation=invocation)
             return _dispose(
                 repo,
                 started,
@@ -329,8 +337,8 @@ def take_turn(
         # rather than never-started, which is the state architecture.md §4 found v1 had deleted.
         commit(repo, [item_path], f"claim({target.id}): attempt {attempt} by {owner}")
 
-        frame = {**backlog.frame(backlog.load(item_path)), "proposal_path": str(proposal_path), "skill": str(skill)}
-        result = executor(frame, repo, limits, run_id=run_id, runs_dir=repo / RUNS)
+        frame = backlog.frame(backlog.load(item_path))
+        result = executor(frame, repo, limits, run_id=run_id, runs_dir=repo / RUNS, invocation=invocation)
         return _dispose(
             repo,
             started,

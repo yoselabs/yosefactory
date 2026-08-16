@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from yosefactory.executor.invocation import Invocation
 from yosefactory.executor.outcome import FailureKind, RunOutcome, RunResult, Usage
 from yosefactory.protocol import backlog
 from yosefactory.protocol.eventlog import LogError
@@ -65,6 +66,7 @@ class FakeExecutor:
         self.raw = raw
         self.outcome = outcome
         self.calls: list[Mapping[str, Any]] = []
+        self.invocations: list[Invocation | None] = []
         self.log_at_call: list[str] = []
 
     def __call__(
@@ -75,10 +77,13 @@ class FakeExecutor:
         *,
         run_id: str,
         runs_dir: Path,
+        invocation: Invocation | None = None,
     ) -> RunResult:
         self.calls.append(frame)
+        self.invocations.append(invocation)
         self.log_at_call.append(git(workspace, "log", "--oneline"))
-        path = Path(str(frame["proposal_path"]))
+        assert invocation is not None and invocation.proposal_path is not None
+        path = invocation.proposal_path
         if self.raw is not None:
             path.write_text(self.raw, encoding="utf-8")
         elif self.proposal is not None:
@@ -368,6 +373,20 @@ def test_a_blocked_proposal_records_blocked_and_keeps_its_awaiting(repo: Path, l
     folded = backlog.load(item)
     assert folded.state == "blocked"
     assert backlog.awaiting(folded) == awaiting
+
+
+def test_the_frame_carries_no_plumbing(repo: Path, limits: Guardrails) -> None:
+    """D019's frame is the unit of falsification. A file path is not a claim that can be wrong."""
+    item = seed_item(repo)
+    executor = FakeExecutor(proposal={"event": "cancelled", "reason": "enough"})
+
+    take(repo, executor, limits)
+
+    assert set(executor.calls[0]) == set(FRAME)
+    invocation = executor.invocations[0]
+    assert invocation is not None
+    assert invocation.skill == SKILL
+    assert invocation.proposal_path is not None and item.stem not in str(invocation.proposal_path)
 
 
 def test_the_record_names_the_item(repo: Path, limits: Guardrails) -> None:

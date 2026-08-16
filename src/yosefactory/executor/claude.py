@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from yosefactory.executor.invocation import Invocation
 from yosefactory.executor.outcome import FailureKind, RunOutcome, RunResult, Usage
 from yosefactory.executor.stream import StreamReader
 from yosefactory.protocol.turn import Outcome
@@ -134,12 +135,18 @@ def build_argv(prompt: str, policy: IsolationPolicy) -> list[str]:
     return argv
 
 
-def render(frame: Mapping[str, Any]) -> str:
-    """D019's three fields, in a stable order so two runs of one frame are comparable."""
+def render(frame: Mapping[str, Any], invocation: Invocation | None = None) -> str:
+    """D019's three fields, in a stable order so two runs of one frame are comparable.
+
+    Every other key in `frame` is dropped, and that is the point: the frame is what the work *is*,
+    and it is compared across runs. How to run it travels in `invocation` instead, so plumbing never
+    enters the item's trail (see `executor.invocation`).
+    """
     parts = [f"{key}: {frame[key]}" for key in ("goal", "method", "assumptions") if frame.get(key)]
     if not parts:
         raise ExecutorError("a frame must carry at least a goal")
-    return "\n".join(parts)
+    rendered = invocation.render() if invocation is not None else ""
+    return "\n".join([*parts, rendered]) if rendered else "\n".join(parts)
 
 
 def _usage(terminal: dict[str, Any] | None) -> Usage:
@@ -163,6 +170,7 @@ def run(
     *,
     run_id: str,
     runs_dir: Path,
+    invocation: Invocation | None = None,
     policy: IsolationPolicy | None = None,
     turn_ceiling: int | None = None,
 ) -> RunResult:
@@ -184,7 +192,7 @@ def run(
         return RunResult(outcome=outcome, usage=Usage(), transcript_path=transcript, exit_code=None, dirty=False).protocol_outcome
 
     record = govern(
-        build_argv(render(frame), policy),
+        build_argv(render(frame, invocation), policy),
         repo=workspace,
         runs_dir=runs_dir,
         run_id=run_id,
