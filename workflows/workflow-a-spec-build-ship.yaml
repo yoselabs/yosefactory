@@ -47,6 +47,14 @@ stages:
     suspend_when:
       - question: gate-failed
         trigger: make check is not green
+      - question: gate-failed
+        trigger: >
+          a repo invariant outside the change's declared Impact rejects
+          the work — a commit-message convention, a registry the change
+          didn't know to update — and the fix is not mechanical. Two
+          receipts (ledger 0001, 0005), both mechanical, both resolved
+          in-session without the operator; that stays the default.
+          Escalate only when the fix isn't mechanical.
       - question: cost-approval
         trigger: the smoke test would spend against a live external system
       - question: decision
