@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from yosefactory.protocol.turn import EnforcedBy, Outcome
+from yosefactory.protocol.turn import EnforcedBy, FailureKind, Outcome
 from yosefactory.runtime.config import Guardrails
 from yosefactory.runtime.runs import read_window
 from yosefactory.runtime.supervise import LockBusy, StreamRecorder, SupervisorError, govern, single_flight, tree_is_dirty
@@ -169,3 +169,38 @@ def test_the_harness_own_stream_does_not_count_as_a_dirty_tree(repo: Path) -> No
 
     assert tree_is_dirty(repo) is True
     assert tree_is_dirty(repo, ignore=runs) is False
+
+
+def test_the_turn_ceiling_kill_records_its_own_reason(repo: Path) -> None:
+    """The harness's own stops are the failures most likely to recur; they should be the most legible."""
+    counter = iter(range(100))
+
+    record = govern(
+        SLEEPER,
+        repo=repo,
+        runs_dir=repo / "runs",
+        run_id="r1",
+        guard=guard(wall_clock_seconds=30),
+        turn_ceiling=3,
+        turns_taken=lambda: next(counter),
+    )
+
+    assert record.failure_kind is FailureKind.TURN_LIMIT
+    assert record.enforced_by is EnforcedBy.HARNESS
+
+
+def test_a_wall_clock_kill_carries_no_reason_because_the_union_has_none(repo: Path) -> None:
+    """No tenth value is added for it; the note names the bound instead."""
+    record = govern(SLEEPER, repo=repo, runs_dir=repo / "runs", run_id="r1", guard=guard(wall_clock_seconds=1), turn_ceiling=5)
+
+    assert record.failure_kind is None
+    assert "wall clock exceeded" in record.note
+
+
+def test_an_agent_flushed_verdict_carries_no_harness_reason(repo: Path) -> None:
+    """A reason is what the harness knows about its own stop; it says nothing about the agent's."""
+    record = govern(
+        QUICK, repo=repo, runs_dir=repo / "runs", run_id="r1", guard=guard(), turn_ceiling=5, verdict=lambda: Outcome.ADVANCED
+    )
+
+    assert record.failure_kind is None

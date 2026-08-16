@@ -31,7 +31,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
-from yosefactory.protocol.turn import EnforcedBy, Outcome, TurnRecord
+from yosefactory.protocol.turn import EnforcedBy, FailureKind, Outcome, TurnRecord
 from yosefactory.runtime.config import Guardrails
 from yosefactory.runtime.runs import append, open_run
 
@@ -78,6 +78,9 @@ class Stop:
 
     reason: str
     by_harness: bool
+    # The union has no value for a wall-clock stop and this module does not invent one, so the note
+    # names the bound instead. Null keeps meaning *the writer had no reason to give*.
+    kind: FailureKind | None = None
 
 
 @contextmanager
@@ -187,7 +190,7 @@ def govern(
             _terminate(process, guard.grace_seconds)
             break
         if turns_taken is not None and turns_taken() > turn_ceiling:
-            stop = Stop(reason=f"turn ceiling exceeded ({turn_ceiling})", by_harness=True)
+            stop = Stop(reason=f"turn ceiling exceeded ({turn_ceiling})", by_harness=True, kind=FailureKind.TURN_LIMIT)
             _terminate(process, guard.grace_seconds)
             break
         time.sleep(poll_seconds)
@@ -199,13 +202,16 @@ def govern(
         # a run that was cut short, so honouring it would let a wall-clock kill be recorded as the
         # agent's own outcome, up to and including success. That is the one thing this field exists
         # to prevent, so who stopped the run decides who authored the ending.
-        outcome, enforced_by = Outcome.FAILED, EnforcedBy.HARNESS
+        # A harness stop is the one case where the writer certainly knows why, so it records the
+        # bound that fired. That names the reason; it never re-attributes the ending.
+        outcome, enforced_by, kind = Outcome.FAILED, EnforcedBy.HARNESS, stop.kind
     elif flushed is not None:
-        outcome, enforced_by = flushed, EnforcedBy.AGENT
+        outcome, enforced_by, kind = flushed, EnforcedBy.AGENT, None
     else:
         # No terminal verdict is failure, even on exit 0: executors print in-run failures as ordinary
-        # output. The exit code is evidence, never the verdict.
-        outcome, enforced_by = Outcome.FAILED, EnforcedBy.HARNESS
+        # output. The exit code is evidence, never the verdict. No bound fired, so this supervisor has
+        # no reason to give either — out of scope here, unlike the two stops above (design D-supervise).
+        outcome, enforced_by, kind = Outcome.FAILED, EnforcedBy.HARNESS, None
 
     record = TurnRecord(
         run_id=run_id,
@@ -216,6 +222,7 @@ def govern(
         dirty=tree_is_dirty(repo, ignore=runs_dir),
         isolated=isolated,
         note=f"{stop.reason}; exit={process.returncode}",
+        failure_kind=kind,
     )
     if recorder is not None:
         recorder.write(record)
