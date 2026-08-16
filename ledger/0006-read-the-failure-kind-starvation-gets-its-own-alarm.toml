@@ -1,0 +1,51 @@
+seq = 6
+date = "2026-08-16"
+event = "build"
+workflow = "n/a — dispatched change, not a workflow run"
+stage_run = "openspec read-the-failure-kind: explore -> propose -> apply"
+outcome = "the record can carry why a turn failed; the detector tells starved from broken"
+output_ref = "openspec/changes/read-the-failure-kind/, src/yosefactory/{protocol/turn.py,runtime/{turn,supervise,stall}.py}"
+note = """
+Dispatched as two debts against `TurnRecord.failure_kind`: the stall
+detector does not read it, and `RunResult.note()` was believed retirable.
+Both were true, and the first was smaller than the real problem underneath
+it — every `TurnRecord` construction site was inspected and neither writer
+passed `failure_kind`, so every record on disk carried null. Teaching the
+detector to branch would have passed its own tests and changed nothing
+about any real stream.
+
+Debt 2 verified and corrected rather than confirmed: `note()` had no
+production caller and never had one. The record path hand-rolled its own
+f-string one line before constructing a record with a typed field for the
+same value — that f-string, not `note()`, was the live workaround, and it
+is what got retired here. `note()` itself is deferred: its file moved to
+another worker's scope mid-run (`implement-claude-executor` archived,
+`write-the-reason-fields` now owns `executor/`), and was not taken.
+
+The director relayed a measurement mid-dispatch — a wall-clock kill
+mis-attributed to the agent inside the grace window — that Article XII
+required checking before acting on. It did not hold: `supervise.py`
+already resolved it in an earlier change, `2a08238`, and the report
+described pre-commit code. Recorded rather than silently corrected.
+
+Built: `starved()` beside `counts_as_progress`, tri-state like the
+existing `resumable()` rather than the boolean first specified — found
+by re-reading the file at release rather than trusting a dispatch-time
+copy (Article XII again, this time against my own notes). A total,
+tested mapping from the executor's result to a typed reason. The
+harness's own stops — turn-ceiling, specifically — now record why, which
+they never did. The detector's `Verdict` gained a third state rather
+than a `starved` boolean beside the existing one: two fields invite a
+reader to check one and not the other, which is the failure this whole
+record exists to repair. Both alarm states exit non-zero; distinct codes
+so a scheduler can act differently without parsing prose. A single
+non-starvation position anywhere in the window — a crash, a gap, an idle
+backlog, a null reason — makes the window broken rather than starved,
+on the argument that the least informative position must not produce
+the least alarming verdict.
+
+Fleet note: sequenced third of four workers sharing `protocol/turn.py`
+and `executor/` in one pass. Held twice on the director's word before
+release; used both holds to advance planning artifacts rather than idle,
+per the fleet's no-idling constraint. 235 tests green, tree-wide, at close.
+"""
