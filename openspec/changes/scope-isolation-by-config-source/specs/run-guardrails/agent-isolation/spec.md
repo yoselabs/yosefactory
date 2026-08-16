@@ -27,7 +27,7 @@ tool-server refusal already exists to prevent.
 - **WHEN** a policy is constructed as isolated and names an explicit `--settings` argument setting `env`
 - **THEN** construction fails with a stated reason
 
-#### Scenario: An opted-out policy may name either
+#### Scenario: An opted-out policy may name one
 - **WHEN** a policy opts out with a stated reason and names a tool-server configuration or an
   explicit `--settings` argument
 - **THEN** it is accepted and the configuration is supplied to the run
