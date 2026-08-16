@@ -37,6 +37,15 @@ to and including success, which is the one thing `enforced_by` exists to prevent
 Without the supervisor authoring on its behalf, the most dangerous runs are exactly the ones
 that leave no trace.
 
+**One clause of the previous version was neutralised rather than re-promoted, and it belongs to
+another change.** The previous text required the supervisor to *append* the record itself. The
+supervisor now authors the record and returns it, persisting it only when handed a writer, so
+re-promoting the original sentence would have written a mechanism claim into this spec that had
+already stopped being true. It is stated here as an existence claim instead; every normative
+element — `failed`, `enforced_by: harness`, and `dirty` determined by inspection — is unchanged.
+Which component persists the record is specified by the capability that owns the writer split,
+not here.
+
 #### Scenario: A killed run is not a silent run
 - **WHEN** the supervisor terminates a run for any reason
 - **THEN** a record exists for that run carrying `enforced_by: harness`
