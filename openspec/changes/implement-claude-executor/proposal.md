@@ -122,6 +122,31 @@ The shell-redirect alternative was rejected on analysis rather than taste: it wo
 `_terminate` signal the shell instead of the agent, destroying the grace window in which the
 agent flushes its own verdict. Detail in exploration.md §4.
 
+## Specified, not built — `govern` must stop writing the record
+
+`govern()` calls `open_run` and `append` itself. It should not, and the reason is the same shape as
+the outcome conflict above: **two questions in one slot.**
+
+```
+RunResult.outcome    did the process produce a verdict?   an executor fact
+TurnRecord.outcome   did the turn advance?                a protocol fact
+```
+
+The case that settles it is the one the supervisor cannot reach: **a `nothing-ready` turn starts no
+process at all**, so `govern` can never write a record for it — and `nothing-ready` is precisely the
+outcome that separates a healthy idle loop from a run of green turns that produced nothing. A writer
+that cannot represent the most important case is not the writer.
+
+**Specification:** `govern` takes an injected record-writer, or writes nothing and returns what it
+observed. `protocol/turn.py` becomes the sole writer of a `TurnRecord`.
+
+**Building it is out of this change's scope, and this change's own receipt is evidence for it.** The
+wall-clock receipt measured `govern` writing `enforced_by: agent` for a run the harness killed — it
+computes `stop.by_harness` and never consults it, because the agent flushes a terminal event inside
+the grace window. That is a second instance of the same defect: the supervisor authoring a record
+about a question it is not the right party to answer. Both fixes belong to whoever holds `runtime/`
+and `protocol/` next, together rather than separately.
+
 ## Capabilities
 
 ### New Capabilities
