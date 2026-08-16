@@ -50,6 +50,20 @@ decided while writing the consumer is a format shaped by one caller.
 ### Modified Capabilities
 <!-- None. No existing specs under openspec/specs/. -->
 
+## How the acceptance criterion is verified
+
+**By inspection and by borrowed execution — not by `make check`.** This change ships worked
+fixtures and a declaration; it ships no code of its own, so nothing in CI fails if a record is
+malformed. The four fixtures were run through the shared fold (`protocol/eventlog.py`) from a
+scratch script: the two-branch test passes, and the illegal-transition case fails loudly as it
+should. What is missing is a committed declaration and a test under `make check`, which the
+director sequences after the fold lands.
+
+The format is written as a **declaration** for that shared fold (`states`, `terminal_set`,
+`events: {name: (from_states, to_state, required_payload_keys)}`), so it runs on the generic
+parser unchanged rather than needing a second one. D020 makes a request, a question, and an item
+one object in different states; one fold is the consequence.
+
 ## Non-goals
 
 - **No `src/` code, no validator, no reader library.** The dispatch scopes this worker to

@@ -60,57 +60,83 @@ practice. A content hash hides the ordering that makes a directory listing usefu
 The id being the path means an answer's target is resolvable by string concatenation. No lookup,
 no index, nothing to fall out of date.
 
-### State is folded, never stored; first terminal record wins
+### State is folded, never stored — and the fold is loud
 
-Alternatives: a `status` field rewritten in place; a status file beside the log.
+Alternatives: a `status` field rewritten in place; a status file beside the log; a lenient fold
+that ignores events it cannot apply.
 
-Rewriting is the thing `architecture.md` §4 rules out. The tie-break rule — first terminal
-record by `ts` decides, later ones are retained and ignored — is what makes the fold total: a
-duplicate answer, an answer that races the sweeper's timeout, and a replayed board event all
-produce the same state from the same bytes. Deterministic replay is the same property
-`architecture.md` §7 requires of board event consumption, obtained here for free.
+Rewriting is what `architecture.md` §4 rules out. Leniency is what the shared fold rules out, and
+that changed this design: an earlier draft had "the first terminal record wins, later ones are
+retained and ignored", which reads as robustness and is actually a reader inventing a state
+nobody wrote. The fold instead fails the read on an illegal transition, names the line, and
+leaves the repair to a human.
 
-`ts` ties are broken by the order of lines in the file, which is the order they were appended.
+Duplicate delivery is handled where it belongs, on `event_id`: identical repeats collapse, and
+the same id carrying different content is a fault rather than a coin toss. Ordering is
+`(ts, event_id)` and never file position, because a merge can interleave appended lines.
+
+The cost of loudness is stated under Risks: two writers can produce two legitimate terminal events
+for one question, and that log then fails to read until someone repairs it.
 
 ### The record shapes
 
+Field names are the shared fold's (`event`, `event_id`, `ts`, `actor`), plus `qid` and `v`.
+
 ```json
-{"rec":"asked","v":1,"qid":"q-20260816T171204Z-3f9a2c1d","ts":"2026-08-16T17:12:04Z",
- "actor":"loop:yosefactory/turn","item":"i-20260816-0007","kind":"cost-approval",
- "to":"denis","text":"Spend ~$4 rerunning the extraction with a larger context?",
- "answer_type":"choice","options":["yes","no"],
- "context":{"est_usd":4.0,"prior_attempts":2},
+{"event":"asked","event_id":"ask-3f9a2c1d","v":1,"qid":"q-20260816T171204Z-3f9a2c1d",
+ "ts":"2026-08-16T17:12:04Z","actor":"loop:yosefactory/turn","item":"i-20260816-0007",
+ "kind":"cost-approval","to":"denis","text":"Rerunning the extraction costs about $4. Proceed?",
+ "answer_type":"choice","options":["yes","no"],"context":{"est_usd":4.0,"prior_attempts":2},
  "return_to":"act","resume_ref":{"session_id":"…","message_id":"…"},
- "nudge_at":["2026-08-19T09:00:00Z","2026-08-23T09:00:00Z"],
- "deadline":"2026-08-23T17:00:00Z","on_timeout":"default:no"}
+ "nudge_at":["2026-08-19T09:00:00Z"],"deadline":"2026-08-23T17:00:00Z","on_timeout":"default:no"}
 ```
 
 ```json
-{"rec":"answer","v":1,"qid":"q-20260816T171204Z-3f9a2c1d","ts":"2026-08-16T21:40:11Z",
- "actor":"denis","verdict":"accept","answer":"yes","event_id":"gh-issue-14-comment-3"}
+{"event":"answered","event_id":"board-comment-3","v":1,"qid":"q-20260816T171204Z-3f9a2c1d",
+ "ts":"2026-08-19T21:40:11Z","actor":"denis","verdict":"accept","answer":"yes"}
 ```
 
 ```json
-{"rec":"answer","v":1,"qid":"q-20260816T171331Z-b7e40a52","ts":"2026-08-17T08:02:00Z",
- "actor":"loop:shelf","verdict":"reject","cause":"promotion needs a third consumer",
- "next":"retry","answer":"open a promotion request after the third caller exists"}
+{"event":"answered","event_id":"shelf-reply-4","v":1,"qid":"q-20260817T080200Z-9ab35e04",
+ "ts":"2026-08-17T10:31:44Z","actor":"loop:shelf","verdict":"reject",
+ "cause":"one caller; the rule of three is not met","next":"retry",
+ "answer":"Re-open once a third caller exists."}
 ```
 
 ```json
-{"rec":"timeout","v":1,"qid":"q-20260816T171204Z-3f9a2c1d","ts":"2026-08-23T17:00:03Z",
- "actor":"loop:yosefactory/sweeper","policy":"default:no","answer":"no"}
+{"event":"timed_out","event_id":"sweep-5c1de9f7","v":1,"qid":"q-20260816T171402Z-5c1de9f7",
+ "ts":"2026-08-18T17:00:03Z","actor":"loop:yosefactory/sweeper","policy":"default:false",
+ "answer":false}
 ```
 
-`nudge`, `cancel`, and `note` carry the common four fields plus a `reason` or `body`.
+`nudged` and `noted` carry the common fields plus a `reason` or `body`.
 
 `answer_type ∈ text | choice | bool`, with `options` required for `choice`. This exists for one
 reason: `on_timeout: default:<answer>` must be checkable against the question at ask time, and
-"is this a legal answer" needs a stated answer space. It is deliberately the smallest typing
-that makes the pre-registration rule enforceable.
+"is this a legal answer" needs a stated answer space. It is deliberately the smallest typing that
+makes the pre-registration rule enforceable — and see Risks: the shared fold checks single fields
+against patterns, so *this particular* cross-field check is not expressible in a declaration.
 
 `verdict ∈ accept | reject`, and `reject` requires `cause` plus `next ∈ retry | escalate |
 terminal`. This is D020's "a rejection is a reply" made structural rather than hoped for —
 Denis's objection to pull requests was precisely that a *no* leaves the requester nowhere to go.
+
+### Verified against the real fold, not against a sketch
+
+The four fixtures were run through `protocol/eventlog.py` with the declaration above, borrowed
+from a scratch script rather than added to `src/`:
+
+```
+q-20260816T171204Z-3f9a2c1d  answered   terminal=True
+q-20260816T171331Z-b7e40a52  awaiting   terminal=False
+q-20260816T171402Z-5c1de9f7  timed_out  terminal=True
+q-20260817T080200Z-9ab35e04  answered   terminal=True
+```
+
+The first two rows are the dispatched acceptance test: answering one leaves the other suspended.
+So the criterion is verified by inspection *and* by borrowed execution; what is still missing is
+a committed declaration and a test that runs under `make check`, which lands with the director's
+sequencing.
 
 ### Kind is advisory, and the format says so out loud
 
@@ -131,9 +157,23 @@ grow its own schema without visibly editing this spec.
 
 ## Risks / Trade-offs
 
-- **Two writers appending to one question file collide** → the only merge in the design;
-  resolution is sort-by-`ts`, and the fold is order-insensitive apart from the first-terminal
-  rule, so a mis-ordered merge cannot change state.
+- **Two writers appending to one question file collide** → the only merge in the design, and the
+  fold is order-insensitive (`(ts, event_id)`), so a mis-ordered merge cannot change state.
+- **An answer racing the sweeper produces two terminal events, and the log then fails to read**
+  → confirmed against the real fold: appending `timed_out` to an `answered` question raises
+  `'timed_out' is illegal from terminal state 'answered'`. Mitigation is write-time discipline —
+  read the log before appending anything terminal — which narrows the window but cannot close it
+  without a lock this design does not have. The residual is a loud, hand-repairable fault on a
+  rare race, which is the trade the shared fold makes deliberately. **Escalated to the director
+  rather than settled here**, because the resolution belongs to whoever owns the fold.
+- **The pre-registered default cannot be validated by the declaration** → `on_timeout` is
+  pattern-checked, but "the default names an answer that is in `options`" is a cross-field rule
+  and the declaration checks one field at a time. Until a place exists for cross-field checks,
+  this rule is enforced by whoever writes the question, not by the reader.
+- **`deadline` and `on_timeout` appear on both the question and the item's `awaiting` block** →
+  two representations of one fact, which is the reason `terminal` was demoted to a predicate.
+  Flagged to the director; if the item's block is authoritative, this format should reference
+  rather than repeat it.
 - **A directory of thousands of files gets slow to fold** → not a concern at one operator's
   volume; if it becomes one, the answer is git notes or a derived index that is rebuilt from the
   directory, never authoritative.

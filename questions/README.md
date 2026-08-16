@@ -37,16 +37,18 @@ An answer whose `qid` matches no file is an orphan: it closes nothing.
 
 ## Records
 
-Every record carries `rec`, `qid`, `ts` (RFC3339, UTC), `actor`, and `v`.
+Every record carries `event`, `event_id`, `ts` (RFC3339, UTC), `actor`, `qid`, and `v`. The first
+four are what the shared fold requires of any log; `qid` is this format's addition and `v` is the
+schema version.
 
-| `rec` | Meaning | Terminal |
+| `event` | Meaning | Terminal |
 |---|---|---|
-| `asked` | the question. Exactly one, and it is the first line | no |
-| `nudge` | a reminder was sent | no |
-| `note` | context added while awaiting | no |
-| `answer` | answered | **yes** |
-| `timeout` | the deadline passed and the pre-registered policy fired | **yes** |
-| `cancel` | withdrawn — the question stopped being worth asking | **yes** |
+| `asked` | the question. Exactly one, and it opens the log | no |
+| `nudged` | a reminder was sent | no |
+| `noted` | context added while awaiting | no |
+| `answered` | answered | **yes** |
+| `timed_out` | the deadline passed and the pre-registered policy fired | **yes** |
+| `cancelled` | withdrawn — the question stopped being worth asking | **yes** |
 
 `asked` also carries: `item` (the backlog item it suspends), `kind`, `to`, `text`,
 `answer_type ∈ text | choice | bool` with `options` for `choice`, `context` (what an answerer
@@ -54,19 +56,37 @@ needs), `return_to` (the state the branch resumes into — decided now, not infe
 `resume_ref` (opaque harness token; readers must not interpret it), `nudge_at`, `deadline`,
 `on_timeout`.
 
-`answer` carries `verdict ∈ accept | reject`. A `reject` must carry `cause` and
+`answered` carries `verdict ∈ accept | reject`. A `reject` must carry `cause` and
 `next ∈ retry | escalate | terminal` — a rejection is a reply, and a no that leaves the asker
 nowhere to go violates S172.
 
+## It runs on the shared fold
+
+There is one fold in this repo (`protocol/eventlog.py`), and it knows nothing about questions.
+Each kind of log supplies a declaration — initial event, states, terminal set, transition table —
+and questions supply this one:
+
+- `initial`: `asked`
+- `states`: `awaiting`, `answered`, `timed_out`, `cancelled`
+- `terminal`: `answered`, `timed_out`, `cancelled` (a predicate, never a written state)
+- `rules`: `asked` → `awaiting`; `nudged` and `noted` leave the state alone; `answered`,
+  `timed_out`, `cancelled` each move `awaiting` to their own name
+
+That is D020 made structural: a request, a question, and a work item are one object in different
+states, so a second parser would be a modelling error rather than a convenience.
+
 ## State is a fold, never a field
 
-Fold the records in `ts` order (ties broken by line order):
+Fold the records in `(ts, event_id)` order — never by position in the file, since a merge may interleave appended lines:
 
-- `awaiting` until a terminal record exists
-- the **first** terminal record decides the state; later terminal records are kept and ignored
+- `awaiting` until the state reaches the terminal set
+- duplicate delivery collapses on `event_id`: the same event twice is one event; the same
+  `event_id` carrying *different* content fails the read rather than picking a winner
 
-That rule is what makes a duplicated answer, an answer racing the sweeper, and a replayed board
-event all produce the same state from the same bytes.
+The fold is loud. An unknown event, an illegal transition, or a malformed line fails the read
+instead of yielding a state that never existed — so a terminal event appended to an
+already-terminal question is a fault to repair by hand, not a state to infer. Whoever appends a
+terminal event reads the log first; a sweeper never times out a question that already closed.
 
 ## Closing, always
 
@@ -77,7 +97,7 @@ Every question carries a `deadline` and an `on_timeout`:
   this question then. It may not be chosen or edited afterwards.
 - `abandon:<reason>` — close as terminal without an answer
 
-Past the deadline with no terminal record, a sweeper appends `timeout` carrying the policy's
+Past the deadline with no terminal record, a sweeper appends `timed_out` carrying the policy's
 outcome, so the loop closes the question itself. An answer arriving early terminates it first and
 the sweeper is then a no-op — wake on timer *or* activity, whichever comes first, without the two
 coordinating.

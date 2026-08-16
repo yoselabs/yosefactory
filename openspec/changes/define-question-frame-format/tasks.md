@@ -38,8 +38,23 @@
 ## 4. Close out
 
 - [x] 4.1 `openspec validate define-question-frame-format --strict` passes
-- [ ] 4.2 Commit with explicit pathspecs only — `questions/` and this change directory, nothing
+- [x] 4.2 Commit with explicit pathspecs only — `questions/` and this change directory, nothing
       else — using `PREK_ALLOW_NO_CONFIG=1`, citing M600, D020, S099, S172 in the message
-- [ ] 4.3 Report to the director: the format, the two seams (no executable validator under this
+- [x] 4.3 Report to the director: the format, the two seams (no executable validator under this
       scope; `item` assumed from YF-1's concurrent change), and the M600 vocabulary write-back
       (`goal-falsified` added, seven kinds) for K
+
+## 5. Reconcile with the shared fold (boundary correction, same session)
+
+- [x] 5.1 Rename records to the fold's vocabulary: `rec` -> `event`, add `event_id`, and rename
+      the events to `asked` / `nudged` / `noted` / `answered` / `timed_out` / `cancelled`
+- [x] 5.2 Replace "first terminal record wins, later ones ignored" with the fold's actual
+      contract: dedup on `event_id`, `(ts, event_id)` ordering, and an illegal transition failing
+      the read loudly
+- [x] 5.3 State the question declaration (initial, states, terminal, rules) in the spec and the
+      README, so `questions/` is a declaration over the one fold rather than a second parser
+- [x] 5.4 Run the four fixtures through `protocol/eventlog.py` from a scratch script; record the
+      result in `design.md` — `answered / awaiting / timed_out / answered`, acceptance test passing
+- [x] 5.5 Report the three seams the fold exposes: the answer-versus-sweeper race failing the
+      read, cross-field validation of the pre-registered default being inexpressible in a
+      declaration, and `deadline`/`on_timeout` being duplicated on the item's `awaiting` block

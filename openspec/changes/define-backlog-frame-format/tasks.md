@@ -38,5 +38,5 @@
 ## 6. Close
 
 - [x] 6.1 `make check` green — lint, types, tests
-- [ ] 6.2 Commit with explicit pathspecs only, citing D019, D020, D002 and architecture.md §3/§4/§5; `PREK_ALLOW_NO_CONFIG=1`
+- [x] 6.2 Commit with explicit pathspecs only, citing D019, D020, D002 and architecture.md §3/§4/§5; `PREK_ALLOW_NO_CONFIG=1`
 - [ ] 6.3 Report to the director: what the build taught, and anything in the fold's shape that constrains what a question can declare

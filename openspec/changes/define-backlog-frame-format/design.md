@@ -51,6 +51,12 @@ Two appends to one item file are a conflict git can resolve correctly, given the
 
 Trade-off accepted: `merge=union` on a file where order mattered would be dangerous. Order does not matter here, by the decision above — the two decisions hold each other up, and neither is safe alone.
 
+**The consequence that binds whoever writes the claim protocol:**
+
+> On a rejected claim push, **discard the local claim commit. Do not rebase it.** Re-fetch and re-decide from scratch; the item may no longer be claimable.
+
+Rebase-and-retry is the instinct and it is wrong here. `merge=union` will happily union a rebased loser's claim line back into the winner's log, and the fold then picks between two claims that the compare-and-swap push had already decided. The CAS push is only authoritative if the loser's record of losing never re-enters the file. This is a property of the *format*, which is why it is written down here rather than left for the turn skill to discover.
+
 ### `terminal` is a predicate, not a state
 
 **This overturns the dispatch, and it is flagged rather than applied quietly** (orchestration.md Article VII). architecture.md §3's `terminal: done · cancelled · poison · duplicate · abandoned` line reads as a legend over the five states above it; the graph draws thirteen nodes.
