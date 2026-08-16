@@ -28,7 +28,7 @@ from yosefactory.executor.stream import StreamReader
 from yosefactory.protocol.turn import Outcome
 from yosefactory.runtime.config import Guardrails
 from yosefactory.runtime.isolation import IsolationPolicy
-from yosefactory.runtime.supervise import govern
+from yosefactory.runtime.supervise import Recorder, govern
 
 # Behaviour is a property of the binary, not of this adapter, and it moves on point releases. A
 # claim about what the executor can do is invalid unless it was checked against a pinned version.
@@ -171,6 +171,7 @@ def run(
     run_id: str,
     runs_dir: Path,
     invocation: Invocation | None = None,
+    recorder: Recorder | None = None,
     policy: IsolationPolicy | None = None,
     turn_ceiling: int | None = None,
 ) -> RunResult:
@@ -202,6 +203,7 @@ def run(
         turns_taken=reader.turns_taken,
         verdict=verdict,
         stdout=transcript,
+        recorder=recorder,
     )
 
     exit_match = _EXIT.search(record.note)

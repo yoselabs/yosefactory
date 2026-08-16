@@ -22,6 +22,7 @@ from yosefactory.protocol.turn import EnforcedBy, Outcome
 from yosefactory.runtime.config import Guardrails
 from yosefactory.runtime.isolation import IsolationPolicy
 from yosefactory.runtime.runs import read_window
+from yosefactory.runtime.supervise import StreamRecorder
 
 pytestmark = pytest.mark.skipif(
     shutil.which("claude") is None or (shutil.which("claude") is not None and resolve_version() != PINNED_VERSION),
@@ -52,6 +53,7 @@ def test_a_real_run_produces_a_structured_outcome(workspace: Path) -> None:
         Guardrails(window=10, wall_clock_seconds=300, turn_ceiling=5, grace_seconds=10),
         run_id="receipt1",
         runs_dir=runs,
+        recorder=StreamRecorder(runs),
         policy=IsolationPolicy(isolated=False, opt_out_reason="developer host; $HOME carries user configuration"),
     )
 
@@ -105,6 +107,7 @@ def test_a_run_that_exceeds_its_wall_clock_is_stopped_and_recorded(workspace: Pa
         Guardrails(window=10, wall_clock_seconds=5, turn_ceiling=40, grace_seconds=1),
         run_id="receipt2",
         runs_dir=runs,
+        recorder=StreamRecorder(runs),
     )
 
     assert result.outcome is not RunOutcome.SUCCESS

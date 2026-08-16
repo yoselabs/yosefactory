@@ -286,6 +286,12 @@ def take_turn(
     proposal_path = scratch / f"{run_id}.proposal.json"
 
     with single_flight(repo / LOCK):
+        # Declared before any work, and committed immediately: a turn that dies leaves a marker with
+        # no record, which reads back as a gap rather than as a turn nobody knows happened. Committed
+        # rather than left in the tree because the `done` gate requires a clean tree, and a turn's own
+        # bookkeeping must not read as the agent having left work half-finished.
+        slug = runs.open_run(repo / RUNS, run_id, started)
+        commit(repo, [repo / RUNS / f"{slug}.start"], f"turn({run_id}): declared")
         apply_answers(repo, actor=owner)
         present = items(repo)
         target = pick([item for item in present if eligible(item)])
@@ -295,6 +301,7 @@ def take_turn(
                 repo,
                 started,
                 run_id,
+                slug,
                 Outcome.NOTHING_READY,
                 EnforcedBy.HARNESS,
                 note="nothing eligible; no agent was started",
@@ -310,6 +317,7 @@ def take_turn(
                 repo,
                 started,
                 run_id,
+                slug,
                 result,
                 item_path=None,
                 proposal_path=proposal_path,
@@ -343,6 +351,7 @@ def take_turn(
             repo,
             started,
             run_id,
+            slug,
             result,
             item_path=item_path,
             proposal_path=proposal_path,
@@ -357,6 +366,7 @@ def _dispose(
     repo: Path,
     started: datetime,
     run_id: str,
+    slug: str,
     result: RunResult,
     *,
     item_path: Path | None,
@@ -375,6 +385,7 @@ def _dispose(
             repo,
             started,
             run_id,
+            slug,
             Outcome.FAILED,
             EnforcedBy.HARNESS,
             note=f"{subject}: {detail}",
@@ -404,6 +415,7 @@ def _dispose(
             repo,
             started,
             run_id,
+            slug,
             Outcome.ADVANCED,
             EnforcedBy.AGENT,
             note=f"planned {len(written)} item(s): {', '.join(path.stem for path in written)}",
@@ -428,6 +440,7 @@ def _dispose(
         repo,
         started,
         run_id,
+        slug,
         outcome_for(folded.state),
         EnforcedBy.AGENT,
         note=f"{subject}: {event['event']} -> {folded.state}",
@@ -440,6 +453,7 @@ def _finish(
     repo: Path,
     started: datetime,
     run_id: str,
+    slug: str,
     outcome: Outcome,
     enforced_by: EnforcedBy,
     *,
@@ -448,7 +462,6 @@ def _finish(
     isolated: bool,
 ) -> TurnRecord:
     runs_dir = repo / RUNS
-    slug = runs.open_run(runs_dir, run_id, started)
     record = TurnRecord(
         run_id=run_id,
         started_at=started.isoformat(),

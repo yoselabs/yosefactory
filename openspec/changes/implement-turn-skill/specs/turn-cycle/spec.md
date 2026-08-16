@@ -226,6 +226,12 @@ The record SHALL identify the item the turn acted on, where there was one.
 - **WHEN** any turn ends, by success, refusal, failure, or nothing being ready
 - **THEN** exactly one turn record exists for that turn
 
+#### Scenario: A turn that dies leaves a gap rather than a silence
+
+- **WHEN** a turn declares itself and then dies before recording an outcome
+- **THEN** the stream shows a position for that turn with no record
+- **AND** a reader treats that position as `failed` rather than as a turn that never happened
+
 #### Scenario: The record names the item
 
 - **WHEN** a turn acted on an item

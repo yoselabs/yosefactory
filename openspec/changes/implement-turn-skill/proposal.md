@@ -41,9 +41,9 @@ the measured-unreliable mechanism, so invariants may not live in a prompt).
   allowed to propose, what the script checks before writing, and what a turn commits.
 
 ### Modified Capabilities
-<!-- None. `backlog-item-format`, `question-frame` and `run-guardrails` are consumed exactly as
-     specified; this change adds no requirement to any of them. The one requirement that must change
-     — govern not writing the turn record — belongs to a concurrent change owned by another worker. -->
+- `run-guardrails/turn-record`: the supervisor authors a record but no longer persists it. Exactly
+  one component writes the row for a turn, and it is the turn — a supervisor that never started
+  cannot write the `nothing-ready` row a turn with no eligible work still owes.
 
 ## Non-goals
 
@@ -60,7 +60,9 @@ the measured-unreliable mechanism, so invariants may not live in a prompt).
   `architecture.md` §5 and is not built here.
 - **Zombie reclamation.** A lease TTL that returns a dead worker's claim to `ready` is a liveness
   concern, not a correctness one, and waits for evidence that a worker has actually died.
-- **Any change to `protocol/`, `runtime/supervise.py`, or the executor.** Consumed as they are.
+- **Any change to `protocol/`.** Consumed exactly as it is. `runtime/supervise.py` and the executor
+  lane were later granted to this change by the director for two scoped edits — the invocation seam
+  and the supervisor ceasing to persist the record — and nothing beyond those two was touched.
 - **Scheduling.** Nothing here fires on a clock. A turn is invoked; it does not invoke itself.
 
 ## Impact
@@ -69,8 +71,8 @@ the measured-unreliable mechanism, so invariants may not live in a prompt).
   `ledger/runs/` (created at first run), `backlog/items/*.jsonl` (written by the first planning turn).
 - **Consumed unchanged**: `protocol/eventlog.py`, `protocol/backlog.py`, `protocol/turn.py`,
   `runtime/runs.py`, `runtime/verify.py`, `runtime/supervise.py`, `runtime/config.py`.
-- **Depends on**: the executor seam `run(frame, workspace, limits) -> RunResult`, owned by another
-  worker and not yet on disk. This change ships against an injected executor — a fake in tests, the
-  real one when it lands. The live two-turn acceptance run is sequenced by the director, not here.
+- **Depends on**: the executor seam `run(frame, workspace, limits) -> RunResult`. The turn calls it
+  through an injected protocol — a fake in tests, the real lane in production — so the change is
+  verifiable without a credential. The live two-turn run is sequenced by the director, not here.
 - **Acceptance**: one turn reads an empty backlog, plans one item, records, commits, exits; a second
   turn picks up where the first stopped with nothing passed between them except the repository.

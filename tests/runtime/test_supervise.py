@@ -17,7 +17,7 @@ import pytest
 from yosefactory.protocol.turn import EnforcedBy, Outcome
 from yosefactory.runtime.config import Guardrails
 from yosefactory.runtime.runs import read_window
-from yosefactory.runtime.supervise import LockBusy, SupervisorError, govern, single_flight, tree_is_dirty
+from yosefactory.runtime.supervise import LockBusy, StreamRecorder, SupervisorError, govern, single_flight, tree_is_dirty
 
 SLEEPER = [sys.executable, "-c", "import time; time.sleep(30)"]
 QUICK = [sys.executable, "-c", "pass"]
@@ -115,12 +115,29 @@ def test_a_non_zero_exit_without_a_verdict_is_failed(repo: Path) -> None:
 
 
 def test_the_record_lands_in_the_stream_and_satisfies_its_marker(repo: Path) -> None:
-    govern(QUICK, repo=repo, runs_dir=repo / "runs", run_id="r1", guard=guard(), turn_ceiling=5, verdict=lambda: Outcome.ADVANCED)
+    govern(
+        QUICK,
+        repo=repo,
+        runs_dir=repo / "runs",
+        run_id="r1",
+        guard=guard(),
+        turn_ceiling=5,
+        verdict=lambda: Outcome.ADVANCED,
+        recorder=StreamRecorder(repo / "runs"),
+    )
 
     window = read_window(repo / "runs", 5)
 
     assert len(window) == 1
     assert not window[0].is_gap
+
+
+def test_without_a_recorder_the_supervisor_writes_nothing(repo: Path) -> None:
+    """One turn is one row. A supervisor governing one invocation inside a turn does not own it."""
+    record = govern(QUICK, repo=repo, runs_dir=repo / "runs", run_id="r1", guard=guard(), turn_ceiling=5, verdict=lambda: Outcome.ADVANCED)
+
+    assert record.outcome is Outcome.ADVANCED
+    assert not (repo / "runs").exists()
 
 
 def test_a_second_run_declines_to_start(tmp_path: Path) -> None:

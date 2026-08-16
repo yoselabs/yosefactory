@@ -4,9 +4,15 @@ Nine executor surfaces were assessed and not one enforces a cost cap or a wall c
 does not bound a run, nothing does.
 
 The load-bearing part is not the killing, it is the record. Termination is a kill, and a killed
-process writes nothing — so the supervisor writes on its behalf, marks `enforced_by: harness` so a
-harness stop is distinguishable from an honest failure, and computes `dirty` itself after the
-process is gone so a torn tree cannot read as a clean one on the next turn.
+process writes nothing — so the supervisor *authors* the verdict on its behalf, marks
+`enforced_by: harness` so a harness stop is distinguishable from an honest failure, and computes
+`dirty` itself after the process is gone so a torn tree cannot read as a clean one on the next turn.
+
+**Authoring is not persisting.** The supervisor returns the record and writes nothing unless a
+caller hands it a `Recorder`. One turn is one row, and only the caller knows whether this process is
+the turn or one invocation inside it: a turn that runs no agent at all still owes a `nothing-ready`
+row, which a supervisor that never started cannot write. Two writers would not duplicate a row so
+much as answer two different questions in one slot.
 
 Invoked, never resident. Nothing here stays up between runs.
 """
@@ -20,9 +26,10 @@ import subprocess
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Protocol
 
 from yosefactory.protocol.turn import EnforcedBy, Outcome, TurnRecord
 from yosefactory.runtime.config import Guardrails
@@ -31,6 +38,34 @@ from yosefactory.runtime.runs import append, open_run
 
 class SupervisorError(RuntimeError):
     """The run may not start, or could not be governed."""
+
+
+class Recorder(Protocol):
+    """Where a governed run's record goes, when the caller is not writing it itself.
+
+    `declare` runs before the process starts so a supervisor that dies leaves a marker with no
+    record — a gap, which reads as `failed`, rather than a run nobody knows happened.
+    """
+
+    def declare(self, run_id: str, started: datetime) -> None: ...
+
+    def write(self, record: TurnRecord) -> None: ...
+
+
+@dataclass
+class StreamRecorder:
+    """The turn-record stream. For a caller whose process *is* the whole turn."""
+
+    runs_dir: Path
+    slug: str = field(default="", init=False)
+
+    def declare(self, run_id: str, started: datetime) -> None:
+        self.slug = open_run(self.runs_dir, run_id, started)
+
+    def write(self, record: TurnRecord) -> None:
+        if not self.slug:
+            raise SupervisorError("a record was written for a run that was never declared")
+        append(self.runs_dir, self.slug, record)
 
 
 class LockBusy(RuntimeError):
@@ -114,8 +149,13 @@ def govern(
     verdict: Callable[[], Outcome | None] | None = None,
     poll_seconds: float = 0.05,
     stdout: Path | None = None,
+    recorder: Recorder | None = None,
 ) -> TurnRecord:
-    """Run one agent process under a wall clock and a turn ceiling, and leave a record either way.
+    """Run one agent process under a wall clock and a turn ceiling, and author a verdict either way.
+
+    The record is **returned**, and persisted only if `recorder` says where. A caller whose process
+    is one invocation inside a larger turn — the executor lane — takes the record and lets the turn
+    write the single row that turn owes.
 
     `turns_taken` and `verdict` are the seams the executor wires in. Feeding them requires the
     child's stdout, since the verdict is a structured event the agent prints rather than a status it
@@ -130,7 +170,8 @@ def govern(
         raise SupervisorError("a run with no configured turn ceiling does not start; there is no default in any executor")
 
     started = datetime.now(UTC)
-    slug = open_run(runs_dir, run_id, started)
+    if recorder is not None:
+        recorder.declare(run_id, started)
     if stdout is None:
         process = subprocess.Popen(argv, cwd=repo)  # noqa: S603
     else:
@@ -176,5 +217,6 @@ def govern(
         isolated=isolated,
         note=f"{stop.reason}; exit={process.returncode}",
     )
-    append(runs_dir, slug, record)
+    if recorder is not None:
+        recorder.write(record)
     return record
