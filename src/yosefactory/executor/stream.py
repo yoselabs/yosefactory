@@ -43,22 +43,38 @@ class InitFacts:
     memory_paths: tuple[str, ...] = ()
     mcp_servers: tuple[str, ...] = ()
     skills: tuple[str, ...] = ()
+    slash_commands: tuple[str, ...] = ()
     plugins: tuple[str, ...] = ()
     permission_mode: str = ""
 
     @property
     def leaks(self) -> tuple[str, ...]:
-        """Host configuration that reached an agent that was supposed to be isolated."""
+        """Host or repository configuration that entered the context of a run that was isolated.
+
+        These four are the surfaces that put instructions in front of the model. A registered plugin
+        does not, on its own, which is why it is residue below rather than a breach here.
+        """
         found: list[str] = []
         for name, values in (
             ("memory", self.memory_paths),
             ("mcp", self.mcp_servers),
             ("skills", self.skills),
-            ("plugins", self.plugins),
+            ("commands", self.slash_commands),
         ):
             if values:
                 found.append(f"{name}={len(values)}")
         return tuple(found)
+
+    @property
+    def residue(self) -> tuple[str, ...]:
+        """Host installations that register under isolation while contributing nothing to context.
+
+        Measured: safe mode still registers one host-installed plugin, and no flag unregisters it —
+        only a home the run cannot authenticate from. With commands disabled it supplies zero skills
+        and zero commands, so it is recorded rather than treated as a failure. Recorded, because a
+        residue nobody writes down is a residue nobody re-measures when the binary moves.
+        """
+        return (f"plugins={len(self.plugins)}",) if self.plugins else ()
 
 
 def _names(raw: Any) -> tuple[str, ...]:
@@ -117,6 +133,7 @@ class StreamReader:
                     memory_paths=_names(event.get("memory_paths")),
                     mcp_servers=_names(event.get("mcp_servers")),
                     skills=_names(event.get("skills")),
+                    slash_commands=_names(event.get("slash_commands")),
                     plugins=_names(event.get("plugins")),
                     permission_mode=str(event.get("permissionMode", "")),
                 )

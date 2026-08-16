@@ -113,6 +113,29 @@ def test_init_reports_the_leaks_isolation_is_asserted_from(tmp_path: Path) -> No
     assert leaky.init.leaks == ("memory=1", "mcp=1")
 
 
+def test_host_commands_are_a_leak_because_they_carry_instructions(tmp_path: Path) -> None:
+    reader = write(tmp_path / "commands.jsonl", {**INIT, "slash_commands": ["compact", "review"]})
+    reader.poll()
+
+    assert reader.init is not None
+    assert reader.init.leaks == ("commands=2",)
+
+
+def test_a_registered_plugin_is_residue_and_not_a_breach(tmp_path: Path) -> None:
+    """The measured floor: safe mode registers one host plugin that no flag unregisters.
+
+    With commands disabled it supplies no skills and no commands, so it puts nothing in front of the
+    model. Failing the run on it would fail every isolated run there is; dropping it silently would
+    lose the only record that the floor is not zero.
+    """
+    reader = write(tmp_path / "residue.jsonl", {**INIT, "plugins": [{"name": "skill-creator"}]})
+    reader.poll()
+
+    assert reader.init is not None
+    assert reader.init.leaks == ()
+    assert reader.init.residue == ("plugins=1",)
+
+
 def test_outcomes_narrow_to_the_four_the_record_holds(tmp_path: Path) -> None:
     from yosefactory.executor.outcome import RunResult, Usage
 

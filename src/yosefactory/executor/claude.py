@@ -40,7 +40,16 @@ PINNED_VERSION = "2.1.225"
 EMULATED: Mapping[str, str] = {
     "wall_clock": "harness: runtime.supervise.govern",
     "turn_ceiling": "harness: runtime.supervise.govern, counting post_turn_summary events",
-    "cost_ceiling": "none: usage credits are off, so exhaustion stops requests rather than billing",
+}
+
+# Native at the pinned version, measured by running it rather than by reading help text. `cost_ceiling`
+# was in EMULATED above, declared absent, against a binary that has had `--max-budget-usd` all along —
+# a capability claim checked against nothing, which is what §7b rule 4 forbids. It bounds the turn that
+# crossed the line rather than the next one, so it detects overspend and does not prevent it: measured
+# $0.048 against a $0.02 cap. Wiring it is a separate change; the claim is corrected here because a
+# false claim in the map is worse than an absent one.
+NATIVE: Mapping[str, str] = {
+    "cost_ceiling": "claude --max-budget-usd; post-turn, so overshoot is bounded by one turn's cost",
 }
 
 _VERSION = re.compile(r"(\d+\.\d+\.\d+)")
@@ -117,15 +126,28 @@ def preflight(*, expect_version: str = PINNED_VERSION) -> Preflight:
 def build_argv(prompt: str, policy: IsolationPolicy) -> list[str]:
     """Policy becomes invocation here, and nowhere else.
 
+    Three flags, each measured against the init event rather than taken from help text — which is the
+    whole lesson of how this set was arrived at. `--strict-mcp-config` and `--permission-mode` were
+    the previous isolated posture and they isolate nothing: an agent run under them reports the host's
+    memory, the host's skills and the repository's own skills and agents as loaded.
+
+    Safe mode is what isolates. It is also a floor rather than a base to build on: an explicit
+    `--mcp-config` passed alongside it is ignored, which is why the policy refuses that combination
+    instead of emitting arguments that would silently do nothing. Opting out is therefore a different
+    invocation, not this one with additions.
+
     Bare mode is never emitted in either posture: it skips repository configuration and also declines
     to read the subscription credential, so on a subscription it buys isolation by making the run
     unable to authenticate at all.
     """
     argv = [_binary(), "-p", prompt, "--output-format", "stream-json", "--verbose"]
     if policy.isolated:
-        # Repository configuration loads under -p with no trust dialog, so it is pinned rather than
-        # trusted. Approval must fail rather than wait: there is no human to answer it.
-        argv += ["--strict-mcp-config", "--permission-mode", "manual"]
+        # Approval must fail rather than wait: there is no human to answer it.
+        argv += ["--safe-mode", "--strict-mcp-config", "--disable-slash-commands", "--permission-mode", "manual"]
+    else:
+        # Repository configuration loads under -p with no trust dialog, so an opted-out run pins what
+        # it admits rather than inheriting it.
+        argv += ["--strict-mcp-config"]
         if policy.settings_path:
             argv += ["--settings", policy.settings_path]
         if policy.mcp_config_path:
