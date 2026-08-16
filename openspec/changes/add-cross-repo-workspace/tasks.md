@@ -63,12 +63,25 @@
       the operator's host configuration. Gated on a measurement (proposal.md, design.md Non-Goals).
 - [ ] 6.2 A push mechanism for workspace-side commits (proposal.md - What Changes; flagged, not
       solved).
-- [ ] 6.3 Whether the agent's own workspace commits should ever carry a platform trailer.
-      `commit-attribution`'s "written by the platform, never by the agent" rule, read literally,
-      means they never will under this design — `turn.py` never itself commits into `places.workspace`
-      (every `commit()` call in this change targets `places.queue`; see design.md), so there is no
-      code path where the trailer could reach a workspace commit without either asking the agent to
-      compose it (refused by that spec) or inventing a mechanism (a workspace-side platform commit)
-      that has nothing left to commit once the agent's own commit already landed. Flagged as a real
-      tension between "the workspace commit is what makes D014 machine-scoreable" and the existing
-      trailer spec's scope, rather than resolved by guessing which one gives way.
+- [ ] 6.3 Whether the agent's own workspace commits should ever carry a platform trailer. Not
+      resolved here — put to Denis, since D014 is his criterion and the question is what he can
+      check. The constraint underneath is tighter than it first looks: `verify.may_write_done` runs
+      `tree_clean` on the workspace, so **the agent must commit its own work or the gate can never
+      pass** — this is not incidental to who happens to write the commit, the gate forces it. Three
+      options, none built:
+
+      1. **The turn commits the workspace work; the agent leaves it dirty.** Gets the trailer, keeps
+         `commit-attribution`'s "never by the agent" intact. Cost: the commit message. A target
+         repository's own conventions (`feat(...)` paired with `chore(openspec): archive`, a bead id
+         in the subject) are semantic knowledge the agent has and the turn does not — this trades a
+         real capability for a marker.
+      2. **The turn installs a `prepare-commit-msg` hook in the workspace for the run's duration.**
+         Git applies the trailer, so the agent cannot forget it and it is not a self-report. Lives in
+         `.git/hooks`, never in the tracked tree, removed after the run. Mutates the workspace's git
+         config for the run's duration, which cuts against treating workspace state as undisturbed —
+         and `--no-verify` bypasses it.
+      3. **Do not mark the workspace commit at all; let the queue's record name the workspace SHA.**
+         The cross-reference this change's own `turn-places` capability already proposes for
+         atomicity — two commits that name each other — doing double duty. D014 becomes scoreable
+         from the ledger rather than from the workspace's own log, and the ledger row is written by
+         the turn after the gate ran, so it cannot be forged by the agent.
