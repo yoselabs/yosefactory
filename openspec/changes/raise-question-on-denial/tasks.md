@@ -24,7 +24,25 @@
       real denial producing a real question row on disk). Say so plainly; a green `make check`
       here does not mean more than that.
 
-## Also covered, beyond the original list
+## Open loop, no owner
 
-- A planning-turn denial (no claimed item) writes no question and falls through to the ledger-only
-  ending, matching `refused`'s behaviour — there is nothing to suspend a question against.
+**A planning-turn denial (no claimed item) writes no question and falls through to the ledger-only
+ending.** The handling is correct given what exists — there is no item to suspend a question
+against — but the result is an open loop under S172, not a closed edge case:
+
+```
+   denial during an item turn    → question raised → Denis sees it → loop closes
+   denial during a planning turn → ledger row only → nobody is asked → nothing is waiting
+                                  → the approval is needed and unrequested, forever
+```
+
+This is smaller than the defect this change fixes — no item is stranded, because no item exists —
+but it is the same shape one level up: `refused` reaching a ledger-only ending is correct *by
+design* (nothing arriving changes a refusal); a planning `needs_approval` reaching the same ending
+is unhandled *by omission*, the same distinction that motivated this whole change.
+
+**Not fixed here, and not a small patch.** A question raised during planning has no item to hang
+off, no obvious `return_to`, and no obvious resumption target — that is a real design question
+(what does it suspend, what resumes it) and belongs to its own dispatch, not appended to this one.
+Recorded here so it is not lost, and cross-referenced from wherever planning-turn design is tracked
+next.

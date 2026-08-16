@@ -77,6 +77,14 @@ there**, fully specified and validated by test, unreached by any caller. See `ex
   question simply stays `awaiting` past its deadline, which is a known and named gap, not a silent one.
 - **No `refused` handling.** `RESUMABLE` deliberately excludes it (D019); this proposal does not
   touch the `refused` branch of `blocked()`.
+- **A planning-turn `needs_approval` is an open loop with no owner, not a handled edge case.** No
+  item is claimed during planning, so a denial there has nothing to suspend a question against and
+  falls through to the ledger-only ending — the same code path as `refused`, but not the same
+  justification. `refused` reaching that ending is correct *by design* (D019: nothing arriving
+  changes a refusal). A planning denial reaching it is unhandled *by omission*: the factory needed a
+  permission, asked no one, and nothing is waiting — S172 violated one level above the case this
+  proposal fixes. Not fixed here: what a question with no item hangs off, and what it resumes, is a
+  real design question, not a small patch on this one. See `tasks.md`.
 
 ## Capabilities
 
