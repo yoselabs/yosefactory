@@ -1,0 +1,5 @@
+{"event_id": "01-created", "ts": "2026-08-14T09:02:00Z", "actor": "denis", "event": "created", "loop": "a2web", "frame": {"goal": "Cut a2web cold-start fetch latency below 400ms", "method": "Cache the parsed dom-schema per host and reuse it across fetches", "assumptions": ["Parsing dominates cold-start cost", "A per-host schema is stable enough to reuse within one session"]}}
+{"event_id": "02-claimed", "ts": "2026-08-14T09:05:11Z", "actor": "turn-8f21", "event": "claimed", "owner": "turn-8f21", "expires_at": "2026-08-14T09:35:11Z", "attempt": 1}
+{"event_id": "03-started", "ts": "2026-08-14T09:05:12Z", "actor": "turn-8f21", "event": "started"}
+{"event_id": "04-note", "ts": "2026-08-14T09:19:40Z", "actor": "turn-8f21", "event": "note", "body": "Measured before changing anything: parse is 38ms of a 1.9s cold start."}
+{"event_id": "05-falsified", "ts": "2026-08-14T09:24:03Z", "actor": "turn-8f21", "event": "falsified", "by": "Parsing is not the cost. Cold start is 1.9s, of which parse is 38ms (2%); 1.4s is TLS handshake plus first-byte wait on the origin. Caching the parsed schema cannot move the number this item exists to move.", "successor": "itm-0011"}
