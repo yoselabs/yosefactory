@@ -30,8 +30,15 @@ conflicts in the normal case.
 
 ### D1 — One file per turn record, not one appended file
 
-**Chosen:** `ledger/runs/<utc-timestamp>-<run-id>.toml`, one file per record, TOML, matching
-the idiom of the three existing `ledger/*.toml` rows.
+**Chosen:** `ledger/runs/<utc-timestamp>-<run-id>.json`, one file per record.
+
+> **Amended at apply time.** This decision originally said TOML, to match the three existing
+> `ledger/*.toml` rows. Writing TOML is not in the standard library — reading is (`tomllib`),
+> writing needs a third-party package — so the original form bought idiom-matching at the price
+> of a dependency added for one writer. JSON costs nothing in either direction and matches the
+> repository's other machine-written log, `protocol/eventlog`, which is JSONL. The human-authored
+> `ledger/*.toml` rows stay TOML, which makes the format difference carry the same message as the
+> directory split: these are two streams, one written by hand and one by machine.
 
 **Over:** a single append-only `runs.jsonl`.
 
@@ -123,6 +130,20 @@ rows incomparable.
 It returns a boolean plus an enumerated reason (`clean`, `user-config-present`,
 `home-unset`). Public repo: no absolute path, no home directory, no operator identity in
 any output or record.
+
+### D9 — `dirty` excludes the harness's own stream (found by a failing test, not by design)
+
+The first run of the supervisor tests reported `dirty: true` on a clean completion. Cause: the
+supervisor writes its start marker *into the tree it is about to judge*, so an unfiltered
+`git status --porcelain` sees an untracked file and every run reads dirty — the field stops
+distinguishing anything, silently, while appearing to work.
+
+**Chosen:** `tree_is_dirty(repo, ignore=runs_dir)` excludes the stream directory. `dirty` means
+*the agent* left work half-done, never that the harness left its own evidence behind.
+
+Worth recording rather than fixing quietly: this is the same shape as the failure the whole change
+targets. A field that is always `true` is exactly as uninformative as a run that is always green,
+and neither announces itself.
 
 ## Risks / Trade-offs
 

@@ -39,6 +39,15 @@ select = ["F", "S", "T10", "T20", "ASYNC", "E", "W", "I", "UP", "B", "C4", "RUF"
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106"]
 
+[tool.yosefactory.guardrails]
+# Tuning, not protocol: moving these does not make an existing turn record incomparable to an older
+# one. `window` and `wall_clock_seconds` are GUESSES — there is no traffic yet to choose them from,
+# and the posture is build the detector, learn the condition, decide the limit later (D021).
+window = 10                 # turn records the stall detector examines
+wall_clock_seconds = 2700   # well under CI's six-hour default, so the harness stop fires first
+turn_ceiling = 40           # loop-runaway guard, NOT a spend cap; no executor ships a default
+grace_seconds = 20          # after SIGTERM, before SIGKILL: the agent's chance to flush a verdict
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

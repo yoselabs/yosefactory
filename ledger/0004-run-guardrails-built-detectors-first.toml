@@ -1,0 +1,48 @@
+seq = 4
+date = "2026-08-16"
+event = "build"
+workflow = "n/a — dispatched change, not a workflow run"
+stage_run = "openspec add-run-guardrails: explore -> propose -> apply"
+outcome = "guardrails shipped; three of five have no caller yet and say so"
+output_ref = "openspec/changes/add-run-guardrails/, src/yosefactory/{protocol/turn.py,runtime/*}"
+note = """
+Dispatched by the P160 visionary session. Sources: D021, architecture.md
+§6 (I9) and §7b, design-e2e.md §5b, D002.
+
+Built: the outcome enum and turn record (protocol/), the run-record stream
+with start markers, the stall detector, the I9 verification gate, the run
+supervisor, the isolation policy. 84 tests, make check green.
+
+Two things worth reading the diff for, both discovered rather than
+designed:
+
+The stall detector cannot see a missing record unless something knew a
+record was expected. The supervisor writing on kill covers the ordinary
+case and not the one that matters most — the supervisor's own death,
+which is the most complete failure available and leaves the least
+evidence. So a run opens with a marker the terminal record supersedes,
+and an orphan marker is the detectable gap.
+
+`dirty` was true on every clean run in the first test pass. The
+supervisor writes its start marker into the tree it is about to judge, so
+an unfiltered porcelain read reports every run dirty and the field
+silently stops distinguishing anything. Same shape as the failure this
+whole change targets: a field always true is exactly as uninformative as
+a run always green, and neither announces itself.
+
+Not built, deliberately: no spend cap (D021 — usage credits off, so
+exhaustion stops requests rather than falling through to metered rates),
+and no executor invocation (D021 puts that in the per-vendor wrapper).
+The isolation policy stops at policy.
+
+Owed: wall clock, turn ceiling and isolation have no caller in this repo.
+They are tested against real short-lived subprocesses, which is not the
+same as proven to fire. The integration receipt is a debt named on the
+executor change, which also inherits turning the policy into CLI flags.
+
+Fleet note: three sessions shared this tree. Two commit hazards surfaced
+and became constitutional rules — the index is shared state, so staging
+and committing must be one action; and `git commit -- <paths>` rather
+than `git add` plus a bare commit, because the bare form commits the
+index and not the pathspec.
+"""
