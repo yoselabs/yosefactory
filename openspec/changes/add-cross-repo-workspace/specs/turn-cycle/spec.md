@@ -1,6 +1,6 @@
 ## MODIFIED Requirements
 
-### Requirement: A turn is a function of queue and workspace state
+### Requirement: A turn is a function of repository state
 
 A turn SHALL read all the state it acts on from its queue (backlog items and questions) and SHALL
 leave the state it produces in its queue and, for work carried out during the turn, in its
@@ -12,7 +12,7 @@ one location for both reads and writes exactly as a single-repository turn alway
 
 A turn SHALL perform, in order: acquire, classify, do exactly one item, record, commit, exit.
 
-#### Scenario: A second turn resumes from the queue alone
+#### Scenario: A second turn resumes from the repository alone
 
 - **WHEN** a turn completes and a second turn starts as a fresh process against the same queue
 - **THEN** the second turn reads the first turn's committed queue effects and continues from them

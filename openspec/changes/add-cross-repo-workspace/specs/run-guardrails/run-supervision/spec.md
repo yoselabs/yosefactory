@@ -1,6 +1,6 @@
 ## MODIFIED Requirements
 
-### Requirement: Runs do not overlap on the same workspace
+### Requirement: Runs do not overlap on the same working tree
 
 The supervisor SHALL prevent a second run starting while another holds the same workspace, using an
 exclusive lock or an equivalent single-flight mechanism keyed by the workspace's own identity. Two
@@ -15,7 +15,7 @@ produce a state neither of them authored. Keying the lock by workspace identity 
 caller is what makes this hold even when a workspace receives runs dispatched from more than one
 queue — a lock scoped to the dispatching queue alone cannot see that collision.
 
-#### Scenario: A second run on the same workspace declines to start
+#### Scenario: A second run declines to start
 
 - **WHEN** a run is invoked against a workspace while another run holds the lock for that same
   workspace
