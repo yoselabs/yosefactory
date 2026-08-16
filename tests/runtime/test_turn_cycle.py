@@ -17,7 +17,7 @@ import pytest
 
 from yosefactory.executor.invocation import Invocation
 from yosefactory.executor.outcome import FailureKind, RunOutcome, RunResult, Usage
-from yosefactory.protocol import backlog
+from yosefactory.protocol import backlog, question
 from yosefactory.protocol.eventlog import LogError
 from yosefactory.protocol.turn import BlockedKind, EnforcedBy, Outcome, resumable, starved
 from yosefactory.protocol.turn import FailureKind as ProtocolFailureKind
@@ -43,7 +43,7 @@ def git(repo: Path, *args: str) -> str:
 
 @pytest.fixture
 def limits() -> Guardrails:
-    return Guardrails(window=10, wall_clock_seconds=60, turn_ceiling=4, grace_seconds=1)
+    return Guardrails(window=10, wall_clock_seconds=60, turn_ceiling=4, grace_seconds=1, question_deadline_hours=24)
 
 
 @pytest.fixture
@@ -145,8 +145,6 @@ def seed_item(repo: Path, *, state: str = "ready") -> Path:
 
 def seed_question(repo: Path, item_id: str, *, answered: bool) -> Path:
     path = repo / turn.QUESTIONS / "q-20260816T171204Z-3f9a2c1d.jsonl"
-    from yosefactory.protocol import question
-
     turn.append(
         path,
         question.QUESTION,
@@ -639,6 +637,71 @@ def test_a_refusal_is_recorded_as_blocked_and_not_resumable(repo: Path, limits: 
     assert record.outcome is Outcome.BLOCKED
     assert record.blocked_kind is BlockedKind.REFUSED
     assert resumable(record.blocked_kind) is False
+
+
+def test_a_denied_approval_raises_a_question_the_item_can_be_found_from(repo: Path, limits: Guardrails) -> None:
+    """The live defect this closes: a denial used to leave the item `doing` — neither `ready` nor
+    truly `blocked` — and no later turn ever revisited it. It must now be `blocked` on a real question."""
+    item_path = seed_item(repo)
+    record = take(repo, FakeExecutor(outcome=RunOutcome.NEEDS_APPROVAL), limits)
+
+    assert record.blocked_kind is BlockedKind.NEEDS_APPROVAL
+    item = backlog.load(item_path)
+    assert item.state == "blocked"
+    awaiting = backlog.awaiting(item)
+    assert awaiting is not None
+    assert awaiting["kind"] == "question"
+
+    asked_path = repo / turn.QUESTIONS / f"{awaiting['ref']}.jsonl"
+    assert asked_path.exists()
+    folded = question.load(asked_path)
+    asked = question.asked(folded)
+    assert asked["item"] == item_path.stem
+    assert asked["return_to"] == "doing"
+    assert asked["on_timeout"] == "default:no"
+    assert asked["deadline"]
+
+
+def test_the_raised_question_commits_with_the_platform_trailer(repo: Path, limits: Guardrails) -> None:
+    seed_item(repo)
+    take(repo, FakeExecutor(outcome=RunOutcome.NEEDS_APPROVAL), limits)
+
+    body = git(repo, "log", "-1", "--format=%B")
+    assert "Yosefactory-Run:" in body
+
+
+def test_a_denied_approval_during_planning_writes_no_question(repo: Path, limits: Guardrails) -> None:
+    """No item is claimed during planning, so there is nothing to suspend a question against — the
+    same ledger-only ending `refused` always gets."""
+    record = take(repo, FakeExecutor(outcome=RunOutcome.NEEDS_APPROVAL), limits)
+
+    assert record.blocked_kind is BlockedKind.NEEDS_APPROVAL
+    assert list((repo / turn.QUESTIONS).glob("*.jsonl")) == []
+
+
+def test_a_refusal_still_writes_no_question(repo: Path, limits: Guardrails) -> None:
+    """`refused` is a dead end by design (D019); nothing should be raised for it."""
+    item_path = seed_item(repo)
+    take(repo, FakeExecutor(outcome=RunOutcome.REFUSED), limits)
+
+    assert backlog.load(item_path).state == "doing"
+    assert list((repo / turn.QUESTIONS).glob("*.jsonl")) == []
+
+
+def test_answering_the_raised_question_unblocks_the_item_next_turn(repo: Path, limits: Guardrails) -> None:
+    """`apply_answers` needed no change — it already resolves `outcome()` and reads `return_to`. This
+    is its first real feed for this path."""
+    item_path = seed_item(repo)
+    take(repo, FakeExecutor(outcome=RunOutcome.NEEDS_APPROVAL), limits)
+    awaiting = backlog.awaiting(backlog.load(item_path))
+    assert awaiting is not None
+    asked_path = repo / turn.QUESTIONS / f"{awaiting['ref']}.jsonl"
+
+    turn.append(asked_path, question.QUESTION, {"event": "answered", "verdict": "accept", "answer": "yes"}, actor="denis")
+    moved = turn.apply_answers(repo, actor="tester")
+
+    assert moved == [item_path.stem]
+    assert backlog.load(item_path).state == "doing"
 
 
 def test_the_note_no_longer_restates_the_reason(repo: Path, limits: Guardrails) -> None:

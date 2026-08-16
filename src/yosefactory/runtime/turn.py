@@ -37,6 +37,13 @@ from yosefactory.runtime import runs, verify
 from yosefactory.runtime.config import Guardrails
 from yosefactory.runtime.supervise import single_flight, tree_is_dirty
 
+# `asked`'s first production writer (protocol/question.py's KINDS and rule have existed, unreached,
+# since the format was defined). A permission denial is the harness refusing an action, not an
+# explicit spend ask the agent frames itself — `gate-failed` over `cost-approval`. Nothing in `src/`
+# branches on `kind` today (checked: `question.blocking_by_design` has no production caller), so this
+# is documentation, not behaviour, and is re-arguable the day a consumer reads it.
+_DENIAL_QUESTION_KIND = "gate-failed"
+
 ITEMS = Path("backlog/items")
 QUESTIONS = Path("questions")
 RUNS = Path("ledger") / runs.STREAM_DIRNAME
@@ -134,6 +141,11 @@ def new_item_id(moment: datetime | None = None) -> str:
 
 def new_run_id(moment: datetime | None = None) -> str:
     return f"turn-{(moment or datetime.now(UTC)).strftime(_STAMP)}-{secrets.token_hex(4)}"
+
+
+def new_question_id(moment: datetime | None = None) -> str:
+    """`q-<stamp>-<8 hex>`, matching `questions/README.md`'s correlation id shape."""
+    return f"q-{(moment or datetime.now(UTC)).strftime(_STAMP)}-{secrets.token_hex(4)}"
 
 
 def append(path: Path, declaration: Declaration, payload: Mapping[str, Any], *, actor: str) -> FoldedLog:
@@ -394,6 +406,7 @@ def take_turn(
                 loop=loop,
                 isolated=isolated,
                 test_command=test_command,
+                question_deadline_hours=limits.question_deadline_hours,
             )
 
         item_path = repo / ITEMS / f"{target.id}.jsonl"
@@ -428,6 +441,7 @@ def take_turn(
             loop=loop,
             isolated=isolated,
             test_command=test_command,
+            question_deadline_hours=limits.question_deadline_hours,
         )
 
 
@@ -444,6 +458,7 @@ def _dispose(
     loop: str,
     isolated: bool,
     test_command: tuple[str, ...],
+    question_deadline_hours: int,
 ) -> TurnRecord:
     planning = item_path is None
     subject = "planning" if planning else item_path.stem
@@ -464,6 +479,49 @@ def _dispose(
         )
 
     def blocked(detail: str, kind: BlockedKind | None) -> TurnRecord:
+        paths = touched
+        # `needs_approval` is resumable (`protocol/turn.py`'s `RESUMABLE`), unlike `refused`, so it
+        # is the one blocking ending that must leave something an answer can resolve. A planning turn
+        # holds no item to suspend — there is nothing to raise the question against — so it falls
+        # through to the ledger-only record below exactly as `refused` always does.
+        if kind is BlockedKind.NEEDS_APPROVAL and item_path is not None:
+            qid = new_question_id(started)
+            question_path = repo / QUESTIONS / f"{qid}.jsonl"
+            append(
+                question_path,
+                question.QUESTION,
+                {
+                    "event": "asked",
+                    "qid": qid,
+                    "item": item_path.stem,
+                    "kind": _DENIAL_QUESTION_KIND,
+                    "to": "denis",
+                    "text": detail,
+                    "answer_type": "choice",
+                    "options": ["yes", "no"],
+                    "return_to": "doing",
+                    "deadline": (started + timedelta(hours=question_deadline_hours)).isoformat(),
+                    "on_timeout": "default:no",
+                },
+                actor=owner,
+            )
+            append(
+                item_path,
+                backlog.ITEM,
+                {
+                    "event": "blocked",
+                    "awaiting": {
+                        "kind": "question",
+                        "ref": qid,
+                        "who": owner,
+                        "since": utc_now(started),
+                        "return_to": "doing",
+                        "nudge_at": [],
+                    },
+                },
+                actor=owner,
+            )
+            paths = [*touched, question_path]
         return _finish(
             repo,
             started,
@@ -472,7 +530,7 @@ def _dispose(
             Outcome.BLOCKED,
             EnforcedBy.HARNESS,
             note=f"{subject}: {detail}",
-            paths=touched,
+            paths=paths,
             isolated=isolated,
             blocked_kind=kind,
         )
