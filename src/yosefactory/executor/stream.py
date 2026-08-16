@@ -9,6 +9,9 @@ rather than taken from documentation:
   including zero. In-run failures, missing credentials among them, are printed as ordinary output.
 - **`rate_limit_event` is a first-class event.** Quota exhaustion is observed, never inferred from
   the text of an error, because a starved factory that reads as a broken model gets the wrong fix.
+- **Budget exhaustion is reported, not inferred.** The binary names it in `subtype` and again in
+  `terminal_reason`, which is present on every terminal event. It is the same starved-versus-broken
+  distinction as the one above, one flag along.
 
 The reader is polled while the run is still going, because the turn count has to bound the run
 before it ends: the terminal event carries `num_turns`, which arrives too late to enforce anything.
@@ -26,6 +29,11 @@ from yosefactory.executor.outcome import FailureKind, RunOutcome
 
 _AUTH_STATUSES = frozenset({401, 403})
 _RATE_LIMIT_STATUS = 429
+
+# The two names the binary gives one stop. Both are read: `subtype` is the vocabulary everything else
+# here classifies from, and `terminal_reason` is the one the binary populates on every terminal event.
+_BUDGET_SUBTYPE = "error_max_budget_usd"
+_BUDGET_REASON = "budget_exhausted"
 
 # SIGTERM. The supervisor's stop, seen from the child's side of the process boundary.
 SIGTERM_EXIT = 143
@@ -166,6 +174,12 @@ class StreamReader:
         subtype = str(event.get("subtype", ""))
         if subtype == "error_max_turns":
             return RunOutcome.TURN_LIMIT, None, subtype
+        if subtype == _BUDGET_SUBTYPE or str(event.get("terminal_reason", "")) == _BUDGET_REASON:
+            # A starved run is not a broken one, and `task_error` is worse here than no answer at
+            # all: a null invites the question, a wrong kind answers it and sends someone to debug a
+            # factory that only ran out of budget. Measured: the binary reports this stop twice over,
+            # in `subtype` and in `terminal_reason`, and both were being dropped.
+            return RunOutcome.BUDGET_EXHAUSTED, None, subtype or _BUDGET_REASON
         if str(event.get("stop_reason", "")) == "refusal":
             return RunOutcome.REFUSED, None, "refused"
         if not event.get("is_error") and subtype == "success":

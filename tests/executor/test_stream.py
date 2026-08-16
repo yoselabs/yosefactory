@@ -84,6 +84,36 @@ def test_permission_denial_and_turn_limit_are_not_failures(tmp_path: Path) -> No
     assert capped.classify(1)[0] is RunOutcome.TURN_LIMIT
 
 
+def test_budget_exhaustion_is_not_a_task_error(tmp_path: Path) -> None:
+    """The event shape is the one the real binary emitted against a $0.02 cap.
+
+    It was falling through to the last line of `classify` and being recorded as a task error — the
+    same misfiling `rate_limit` has its own outcome to prevent, one flag along.
+    """
+    exhausted = write(
+        tmp_path / "b.jsonl",
+        INIT,
+        {**SUCCESS, "is_error": True, "subtype": "error_max_budget_usd", "terminal_reason": "budget_exhausted"},
+    )
+    outcome, kind, detail = exhausted.classify(1)
+
+    assert outcome is RunOutcome.BUDGET_EXHAUSTED
+    assert kind is None
+    assert detail == "error_max_budget_usd"
+
+
+def test_budget_exhaustion_is_read_from_either_name_the_binary_gives_it(tmp_path: Path) -> None:
+    """`terminal_reason` is populated on every terminal event; `subtype` is what everything else reads."""
+    reader = write(tmp_path / "r.jsonl", INIT, {**SUCCESS, "is_error": True, "subtype": "error", "terminal_reason": "budget_exhausted"})
+    assert reader.classify(1)[0] is RunOutcome.BUDGET_EXHAUSTED
+
+
+def test_a_completed_run_is_untouched_by_the_budget_branch(tmp_path: Path) -> None:
+    """The fixture has carried `terminal_reason: completed` since it was captured, unread until now."""
+    reader = write(tmp_path / "c.jsonl", INIT, SUCCESS)
+    assert reader.classify(0)[0] is RunOutcome.SUCCESS
+
+
 def test_termination_reads_as_cancelled(tmp_path: Path) -> None:
     reader = write(tmp_path / "s.jsonl", INIT, TURN)
     assert reader.classify(SIGTERM_EXIT)[0] is RunOutcome.CANCELLED
