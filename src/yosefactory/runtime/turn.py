@@ -20,7 +20,8 @@ import json
 import os
 import secrets
 import subprocess
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -69,6 +70,56 @@ DEFAULT_PLANNING_FRAME: Mapping[str, Any] = {
 
 class TurnError(RuntimeError):
     """The turn refused to proceed. Never raised for an agent's bad proposal — that is an outcome."""
+
+
+@dataclass(frozen=True, slots=True)
+class Places:
+    """The four roles one `repo: Path` used to play at once, named separately.
+
+    `queue` — backlog items and questions. `ledger` — turn records, always nested under `queue`
+    (the ledger is platform bookkeeping, never the agent's own work, so `commit()` can always reach
+    it through `queue`). `workspace` — the agent's cwd, the subject of the verification gate and of
+    `dirty`, and the destination of the agent's own commits, which this module never makes and never
+    marks (`commit-attribution`'s writer rule is `turn.commit()` only).
+
+    Two locks, not one, because a single tree made them look like one job: `queue_lock` serializes
+    picking and claiming against one backlog; `workspace_lock` serializes agent execution and commits
+    against one working tree, keyed by the workspace's own identity rather than by which queue
+    dispatched the turn — two different queues pointed at the same workspace still must not overlap.
+    """
+
+    queue: Path
+    ledger: Path
+    queue_lock: Path
+    workspace: Path
+    workspace_lock: Path
+
+    @classmethod
+    def local(cls, repo: Path) -> Places:
+        """One repository plays all four roles, exactly as every turn has run until now."""
+        return cls(
+            queue=repo,
+            ledger=repo / RUNS,
+            queue_lock=repo / LOCK,
+            workspace=repo,
+            workspace_lock=repo / LOCK,
+        )
+
+
+@contextmanager
+def _workspace_lock(places: Places) -> Iterator[None]:
+    """Acquire the workspace lock, unless it is the queue lock already held around this call.
+
+    `fcntl.flock` locks an open file description, not a process — re-opening and re-locking the same
+    path from the same process blocks (or fails under `LOCK_NB`) rather than no-op'ing. `Places.local`
+    points both locks at one file on purpose, so path equality is the dodge: it removes the need to
+    know whether `flock` is reentrant rather than answering that question.
+    """
+    if places.workspace_lock == places.queue_lock:
+        yield
+    else:
+        with single_flight(places.workspace_lock):
+            yield
 
 
 class Executor(Protocol):
@@ -330,7 +381,7 @@ def _git(repo: Path, argv: list[str], env: dict[str, str], *, check: bool = True
 
 
 def take_turn(
-    repo: Path,
+    places: Places,
     executor: Executor,
     *,
     limits: Guardrails,
@@ -350,6 +401,9 @@ def take_turn(
 
     `phase` exists only to be refused. The phase is a consequence of the backlog's state, and a caller
     that names it has a different design in mind (S173).
+
+    A single repository playing all four `places` roles (`Places.local`) behaves exactly as every
+    turn has until now — one lock, one tree, one commit path.
     """
     if phase is not None:
         raise TurnError("the phase is derived from item state and cannot be supplied")
@@ -362,24 +416,24 @@ def take_turn(
     started = now or datetime.now(UTC)
     run_id = new_run_id(started)
     scratch = proposal_dir or Path(os.environ.get("TMPDIR", "/tmp"))  # noqa: S108
-    # Outside the repository, so a killed run cannot leave the tree dirty and fail another worker's
+    # Outside both repositories, so a killed run cannot leave a tree dirty and fail another worker's
     # commit — the tree-wide stash S184 records makes that everyone's problem, not just this turn's.
     proposal_path = scratch / f"{run_id}.proposal.json"
 
-    with single_flight(repo / LOCK):
+    with single_flight(places.queue_lock):
         # Declared before any work, and committed immediately: a turn that dies leaves a marker with
         # no record, which reads back as a gap rather than as a turn nobody knows happened. Committed
         # rather than left in the tree because the `done` gate requires a clean tree, and a turn's own
         # bookkeeping must not read as the agent having left work half-finished.
-        slug = runs.open_run(repo / RUNS, run_id, started)
-        commit(repo, [repo / RUNS / f"{slug}.start"], f"turn({run_id}): declared", run_id=run_id)
-        apply_answers(repo, actor=owner)
-        present = items(repo)
+        slug = runs.open_run(places.ledger, run_id, started)
+        commit(places.queue, [places.ledger / f"{slug}.start"], f"turn({run_id}): declared", run_id=run_id)
+        apply_answers(places.queue, actor=owner)
+        present = items(places.queue)
         target = pick([item for item in present if eligible(item)])
 
         if target is None and not should_plan(present):
             return _finish(
-                repo,
+                places,
                 started,
                 run_id,
                 slug,
@@ -393,23 +447,26 @@ def take_turn(
         invocation = Invocation(skill=skill, proposal_path=proposal_path)
 
         if target is None:
-            result = executor(planning_frame, repo, limits, run_id=run_id, runs_dir=repo / RUNS, invocation=invocation)
-            return _dispose(
-                repo,
-                started,
-                run_id,
-                slug,
-                result,
-                item_path=None,
-                proposal_path=proposal_path,
-                owner=owner,
-                loop=loop,
-                isolated=isolated,
-                test_command=test_command,
-                question_deadline_hours=limits.question_deadline_hours,
-            )
+            with _workspace_lock(places):
+                result = executor(
+                    planning_frame, places.workspace, limits, run_id=run_id, runs_dir=places.ledger, invocation=invocation
+                )
+                return _dispose(
+                    places,
+                    started,
+                    run_id,
+                    slug,
+                    result,
+                    item_path=None,
+                    proposal_path=proposal_path,
+                    owner=owner,
+                    loop=loop,
+                    isolated=isolated,
+                    test_command=test_command,
+                    question_deadline_hours=limits.question_deadline_hours,
+                )
 
-        item_path = repo / ITEMS / f"{target.id}.jsonl"
+        item_path = places.queue / ITEMS / f"{target.id}.jsonl"
         attempt = int((backlog.lease(target) or {}).get("attempt", 0)) + 1
         append(
             item_path,
@@ -425,28 +482,29 @@ def take_turn(
         append(item_path, backlog.ITEM, {"event": "started"}, actor=owner)
         # Committed before the agent runs: a crash from here on is legible as claimed-and-abandoned
         # rather than never-started, which is the state architecture.md §4 found v1 had deleted.
-        commit(repo, [item_path], f"claim({target.id}): attempt {attempt} by {owner}", run_id=run_id)
+        commit(places.queue, [item_path], f"claim({target.id}): attempt {attempt} by {owner}", run_id=run_id)
 
         frame = backlog.frame(backlog.load(item_path))
-        result = executor(frame, repo, limits, run_id=run_id, runs_dir=repo / RUNS, invocation=invocation)
-        return _dispose(
-            repo,
-            started,
-            run_id,
-            slug,
-            result,
-            item_path=item_path,
-            proposal_path=proposal_path,
-            owner=owner,
-            loop=loop,
-            isolated=isolated,
-            test_command=test_command,
-            question_deadline_hours=limits.question_deadline_hours,
-        )
+        with _workspace_lock(places):
+            result = executor(frame, places.workspace, limits, run_id=run_id, runs_dir=places.ledger, invocation=invocation)
+            return _dispose(
+                places,
+                started,
+                run_id,
+                slug,
+                result,
+                item_path=item_path,
+                proposal_path=proposal_path,
+                owner=owner,
+                loop=loop,
+                isolated=isolated,
+                test_command=test_command,
+                question_deadline_hours=limits.question_deadline_hours,
+            )
 
 
 def _dispose(
-    repo: Path,
+    places: Places,
     started: datetime,
     run_id: str,
     slug: str,
@@ -466,7 +524,7 @@ def _dispose(
 
     def failed(detail: str, kind: FailureKind | None = None) -> TurnRecord:
         return _finish(
-            repo,
+            places,
             started,
             run_id,
             slug,
@@ -486,7 +544,7 @@ def _dispose(
         # through to the ledger-only record below exactly as `refused` always does.
         if kind is BlockedKind.NEEDS_APPROVAL and item_path is not None:
             qid = new_question_id(started)
-            question_path = repo / QUESTIONS / f"{qid}.jsonl"
+            question_path = places.queue / QUESTIONS / f"{qid}.jsonl"
             append(
                 question_path,
                 question.QUESTION,
@@ -523,7 +581,7 @@ def _dispose(
             )
             paths = [*touched, question_path]
         return _finish(
-            repo,
+            places,
             started,
             run_id,
             slug,
@@ -553,7 +611,7 @@ def _dispose(
     if planning:
         written: list[Path] = []
         for event in proposed:
-            path = repo / ITEMS / f"{new_item_id()}.jsonl"
+            path = places.queue / ITEMS / f"{new_item_id()}.jsonl"
             try:
                 append(path, backlog.ITEM, {"loop": loop, **event}, actor=owner)
             except (LogError, TurnError) as exc:
@@ -562,7 +620,7 @@ def _dispose(
                 return failed(f"proposal refused: {exc}")
             written.append(path)
         return _finish(
-            repo,
+            places,
             started,
             run_id,
             slug,
@@ -577,7 +635,7 @@ def _dispose(
     event = proposed[0]
     if event["event"] == "done":
         claim = verify.Claim(run_id=run_id, terminal_verdict=result.outcome.value)
-        gate = verify.may_write_done(repo, claim, test_command=test_command)
+        gate = verify.may_write_done(places.workspace, claim, test_command=test_command)
         if not gate.passed:
             return failed(gate.report())
 
@@ -587,7 +645,7 @@ def _dispose(
         return failed(f"proposal refused: {exc}")
 
     return _finish(
-        repo,
+        places,
         started,
         run_id,
         slug,
@@ -600,7 +658,7 @@ def _dispose(
 
 
 def _finish(
-    repo: Path,
+    places: Places,
     started: datetime,
     run_id: str,
     slug: str,
@@ -613,19 +671,26 @@ def _finish(
     failure_kind: FailureKind | None = None,
     blocked_kind: BlockedKind | None = None,
 ) -> TurnRecord:
-    runs_dir = repo / RUNS
+    runs_dir = places.ledger
     record = TurnRecord(
         run_id=run_id,
         started_at=started.isoformat(),
         ended_at=utc_now(),
         outcome=outcome,
         enforced_by=enforced_by,
-        dirty=tree_is_dirty(repo, ignore=runs_dir),
+        # The agent's own tree, never the queue's — `dirty` means the agent left work half-done, and
+        # when queue and workspace differ the queue's own bookkeeping (still uncommitted at this
+        # point) would otherwise be misread as the agent's mess.
+        dirty=tree_is_dirty(places.workspace, ignore=runs_dir),
         isolated=isolated,
         note=note,
         failure_kind=failure_kind,
         blocked_kind=blocked_kind,
     )
     written = runs.append(runs_dir, slug, record)
-    commit(repo, [*paths, written, written.with_suffix(".start")], f"turn({run_id}): {outcome.value} — {note}", run_id=run_id)
+    # Always the queue: every path this turn commits — the item, a raised question, the ledger record
+    # itself — is platform bookkeeping. The agent's own workspace commits are its own, made and left
+    # unmarked outside this function (commit-attribution: the platform's trailers are never the
+    # agent's to carry).
+    commit(places.queue, [*paths, written, written.with_suffix(".start")], f"turn({run_id}): {outcome.value} — {note}", run_id=run_id)
     return record

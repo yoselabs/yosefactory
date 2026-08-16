@@ -60,6 +60,20 @@ def repo(tmp_path: Path) -> Path:
     return root
 
 
+@pytest.fixture
+def workspace(tmp_path: Path) -> Path:
+    """A second repository, with no queue directories of its own — the agent's foreign target."""
+    root = tmp_path / "workspace"
+    root.mkdir()
+    git(root, "init", "-q")
+    git(root, "config", "user.email", "t@example.invalid")
+    git(root, "config", "user.name", "T")
+    (root / "seed.txt").write_text("seed\n", encoding="utf-8")
+    git(root, "add", "seed.txt")
+    git(root, "commit", "-q", "-m", "seed")
+    return root
+
+
 class FakeExecutor:
     """Writes a scripted proposal where the turn asked for it, and remembers being called."""
 
@@ -78,6 +92,7 @@ class FakeExecutor:
         self.calls: list[Mapping[str, Any]] = []
         self.invocations: list[Invocation | None] = []
         self.log_at_call: list[str] = []
+        self.workspaces: list[Path] = []
 
     def __call__(
         self,
@@ -92,6 +107,7 @@ class FakeExecutor:
         self.calls.append(frame)
         self.invocations.append(invocation)
         self.log_at_call.append(git(workspace, "log", "--oneline"))
+        self.workspaces.append(workspace)
         assert invocation is not None and invocation.proposal_path is not None
         path = invocation.proposal_path
         if self.raw is not None:
@@ -111,7 +127,22 @@ class FakeExecutor:
 
 def take(repo: Path, executor: Any, limits: Guardrails, **kwargs: Any) -> Any:
     kwargs.setdefault("test_command", TRUE_COMMAND)
-    return turn.take_turn(repo, executor, limits=limits, owner="tester", skill=SKILL, proposal_dir=repo.parent, **kwargs)
+    return turn.take_turn(
+        turn.Places.local(repo), executor, limits=limits, owner="tester", skill=SKILL, proposal_dir=repo.parent, **kwargs
+    )
+
+
+def take_split(queue: Path, workspace: Path, executor: Any, limits: Guardrails, **kwargs: Any) -> Any:
+    """Queue and workspace as two distinct repositories, each with its own lock file."""
+    kwargs.setdefault("test_command", TRUE_COMMAND)
+    places = turn.Places(
+        queue=queue,
+        ledger=queue / turn.RUNS,
+        queue_lock=queue / turn.LOCK,
+        workspace=workspace,
+        workspace_lock=workspace / turn.LOCK,
+    )
+    return turn.take_turn(places, executor, limits=limits, owner="tester", skill=SKILL, proposal_dir=queue.parent, **kwargs)
 
 
 def seed_item(repo: Path, *, state: str = "ready") -> Path:
@@ -724,3 +755,79 @@ def test_a_starved_record_round_trips_through_the_stream(repo: Path, limits: Gua
     assert [position.record.failure_kind for position in window if position.record] == [
         ProtocolFailureKind.BUDGET_EXHAUSTED
     ]
+
+
+# 10. Places — queue and workspace as separate repositories
+
+
+def test_places_local_uses_one_lock_for_both_roles(repo: Path) -> None:
+    places = turn.Places.local(repo)
+
+    assert places.queue == repo
+    assert places.workspace == repo
+    assert places.queue_lock == places.workspace_lock
+
+
+def test_a_foreign_workspace_gets_no_queue_bookkeeping(repo: Path, workspace: Path, limits: Guardrails) -> None:
+    seed_item(repo)
+    executor = FakeExecutor(proposal={"event": "done", "effects": ["a commit"], "verified_by": "tests"})
+
+    record = take_split(repo, workspace, executor, limits)
+
+    assert record.outcome is Outcome.ADVANCED
+    assert executor.calls[0]["goal"] == FRAME["goal"]
+    # The turn's own bookkeeping — items, questions, ledger — lands only in the queue.
+    assert next(iter((repo / turn.ITEMS).glob("*.jsonl")), None) is not None
+    assert list((repo / turn.RUNS).glob("*.json"))
+    # None of it leaks into the workspace the agent was actually pointed at.
+    assert not (workspace / turn.ITEMS).exists()
+    assert not (workspace / turn.QUESTIONS).exists()
+    assert not (workspace / "ledger").exists()
+
+
+def test_the_agent_runs_with_the_workspace_as_its_cwd(repo: Path, workspace: Path, limits: Guardrails) -> None:
+    seed_item(repo)
+    executor = FakeExecutor(proposal={"event": "cancelled", "reason": "enough"})
+
+    take_split(repo, workspace, executor, limits)
+
+    assert executor.calls[0] is not None  # the call happened
+    assert executor.workspaces[0] == workspace
+
+
+def test_a_busy_workspace_lock_blocks_a_turn_before_the_agent_runs(repo: Path, workspace: Path, limits: Guardrails) -> None:
+    from yosefactory.runtime.supervise import LockBusy
+
+    seed_item(repo)
+    executor = FakeExecutor(proposal={"event": "cancelled", "reason": "enough"})
+
+    with single_flight(workspace / turn.LOCK), pytest.raises(LockBusy):
+        take_split(repo, workspace, executor, limits)
+
+    assert not executor.calls, "the queue lock let picking happen, but the workspace lock refused the run"
+
+
+def test_two_different_queues_targeting_one_workspace_still_serialize(
+    repo: Path, workspace: Path, tmp_path: Path, limits: Guardrails
+) -> None:
+    """The keying is by workspace identity, not by which queue dispatched the turn (S073's shape)."""
+    from yosefactory.runtime.supervise import LockBusy
+
+    other_queue = tmp_path / "other-queue"
+    (other_queue / turn.ITEMS).mkdir(parents=True)
+    (other_queue / turn.QUESTIONS).mkdir(parents=True)
+    git(other_queue, "init", "-q")
+    git(other_queue, "config", "user.email", "t@example.invalid")
+    git(other_queue, "config", "user.name", "T")
+    (other_queue / "seed.txt").write_text("seed\n", encoding="utf-8")
+    git(other_queue, "add", "seed.txt")
+    git(other_queue, "commit", "-q", "-m", "seed")
+    seed_item(other_queue)
+
+    seed_item(repo)
+    executor = FakeExecutor(proposal={"event": "cancelled", "reason": "enough"})
+
+    with single_flight(workspace / turn.LOCK), pytest.raises(LockBusy):
+        take_split(other_queue, workspace, executor, limits)
+
+    assert not executor.calls
