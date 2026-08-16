@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from yosefactory.protocol.turn import (
+    STARVATION,
     BlockedKind,
     CheckResult,
     EnforcedBy,
@@ -15,6 +16,7 @@ from yosefactory.protocol.turn import (
     counts_as_progress,
     from_dict,
     resumable,
+    starved,
 )
 
 
@@ -241,3 +243,42 @@ def test_every_executor_failure_kind_can_be_recorded() -> None:
     assert {kind.value for kind in ExecutorFailureKind} <= recordable
     narrowing_to_failed = {RunOutcome.BUDGET_EXHAUSTED, RunOutcome.TURN_LIMIT, RunOutcome.CANCELLED}
     assert {outcome.value for outcome in narrowing_to_failed} <= recordable
+
+
+def test_starvation_and_breakage_partition_every_failure_kind() -> None:
+    """A tenth kind fails this rather than defaulting into breakage.
+
+    Silent default is the safe direction for an alarm and the wrong one for evidence: it would
+    manufacture agreement between a value nobody classified and a classification nobody chose.
+    """
+    starving = {kind for kind in FailureKind if starved(kind)}
+    breaking = {kind for kind in FailureKind if starved(kind) is False}
+
+    assert starving == STARVATION
+    assert starving | breaking == set(FailureKind)
+    assert not starving & breaking
+
+
+def test_authentication_is_breakage_not_starvation() -> None:
+    """It stops requests exactly as an exhausted quota does, and only a human clears it.
+
+    Filed as starvation, the alarm would tell the operator to wait out the one failure they must
+    act on.
+    """
+    assert starved(FailureKind.AUTH) is False
+    assert starved(FailureKind.RATE_LIMIT) is True
+    assert starved(FailureKind.BUDGET_EXHAUSTED) is True
+
+
+def test_an_unrecorded_reason_is_not_a_claim_that_it_was_not_starvation() -> None:
+    """Absent is its own answer. A caller that must act anyway owns the direction it errs in."""
+    assert starved(None) is None
+    assert starved(a_record(outcome=Outcome.FAILED).failure_kind) is None
+
+
+def test_a_starved_record_is_still_a_failure() -> None:
+    """Starvation renames a failure; it never makes one into progress."""
+    record = a_record(outcome=Outcome.FAILED, failure_kind=FailureKind.BUDGET_EXHAUSTED)
+
+    assert starved(record.failure_kind) is True
+    assert not counts_as_progress(record.outcome)

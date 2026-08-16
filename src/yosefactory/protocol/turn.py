@@ -105,6 +105,12 @@ class EnforcedBy(StrEnum):
 # records and only one of them is allowed to claim this field is meaningful.
 SUPERVISOR_OWNED: Final = ("dirty",)
 
+# The kinds that mean the factory was prevented from trying rather than broken by trying. Everything
+# else is breakage, including `auth`: an expired credential stops requests exactly as an exhausted
+# quota does and is cleared only by a human, so classifying it as starvation would tell the operator
+# to wait out the one failure they must act on.
+STARVATION: Final = frozenset({FailureKind.RATE_LIMIT, FailureKind.BUDGET_EXHAUSTED})
+
 # The kinds something can arrive to clear. `refused` is absent by design: nothing arrives that
 # changes a refusal, and the answer to one is a human re-deciding the goal — D019's falsify-and-
 # succeed rather than a resumption. `needs_approval` is here and is nonetheless unbounded, because a
@@ -262,6 +268,25 @@ def from_dict(payload: Any) -> TurnRecord:
 def counts_as_progress(outcome: Outcome) -> bool:
     """The single place progress is defined. `nothing-ready` and `blocked` are not it."""
     return outcome is Outcome.ADVANCED
+
+
+def starved(kind: FailureKind | None) -> bool | None:
+    """Whether a failure means the factory was prevented from trying. `None` when the record does not
+    say.
+
+    The single place starvation is defined, for the same reason `counts_as_progress` and `resumable`
+    are: a starved factory waits and a broken one gets fixed, and two readers disagreeing about which
+    is which is the failure this distinction exists to prevent.
+
+    Tri-state on the same argument as `resumable`, and it costs a caller something here, which is
+    why it is worth stating. Folding an absent kind into `False` would read as *we know this is not
+    starvation* — a fact no writer supplied. An absent reason and an absent record say the same
+    thing, which is nothing, and a caller that must act anyway owns the direction it errs in rather
+    than inheriting one from this function.
+    """
+    if kind is None:
+        return None
+    return kind in STARVATION
 
 
 def resumable(kind: BlockedKind | None) -> bool | None:
