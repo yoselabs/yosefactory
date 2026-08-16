@@ -66,8 +66,8 @@ Sequenced third by the director. YF-4 held `executor/` (isolation, then item 1b)
 ## 6. Close
 
 - [x] 6.1 `make check` equivalent green: ruff, ty, pytest — 235 passed, tree-wide.
-- [ ] 6.2 `openspec validate read-the-failure-kind --strict` — pending final artifact sync.
-- [ ] 6.3 Ledger row.
+- [x] 6.2 `openspec validate read-the-failure-kind --strict` — validated clean.
+- [x] 6.3 Ledger row: `ledger/0006-read-the-failure-kind-starvation-gets-its-own-alarm.toml`.
 - [x] 6.4 Four commits, explicit literal pathspecs, one idea each: `f9d79b0` (predicate),
       `73738cf` (writer), `b2757b3` (supervisor reason), `8a02a46` (reader).
-- [ ] 6.5 Report to the director — next.
+- [x] 6.5 Reported to the director.
