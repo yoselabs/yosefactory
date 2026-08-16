@@ -47,6 +47,27 @@ def test_an_isolated_policy_may_not_ask_for_a_tool_server_it_would_not_get() -> 
     assert opted_out.mcp_config_path
 
 
+def test_isolated_and_workspace_scoped_do_not_compose() -> None:
+    """Safe mode overrides --setting-sources to zero regardless of its value; naming both is incoherent."""
+    with pytest.raises(IsolationError, match="do not compose"):
+        IsolationPolicy(isolated=True, workspace_scoped=True)
+
+
+def test_workspace_scoped_is_a_stated_opt_out_like_any_other() -> None:
+    policy = IsolationPolicy(isolated=False, workspace_scoped=True, opt_out_reason="needs the target repo's own conventions")
+    assert policy.workspace_scoped is True
+    assert policy.isolated is False
+
+
+def test_an_isolated_policy_may_not_name_an_explicit_settings_file() -> None:
+    """A --settings env entry survives safe mode; an otherwise-identical hooks entry does not."""
+    with pytest.raises(IsolationError, match="depend on the file's contents"):
+        IsolationPolicy(isolated=True, settings_path="/somewhere/settings.json")
+
+    opted_out = IsolationPolicy(isolated=False, opt_out_reason="stated", settings_path="/somewhere/settings.json")
+    assert opted_out.settings_path
+
+
 def test_a_home_the_credential_is_reachable_from_passes(tmp_path: Path) -> None:
     result = preflight(_reachable(tmp_path), interactive=False)
     assert result.ok

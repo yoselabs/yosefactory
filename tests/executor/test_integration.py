@@ -110,6 +110,33 @@ def test_an_isolated_run_loads_no_host_or_repository_configuration(workspace: Pa
     assert reader.init.slash_commands == ()
 
 
+def test_a_workspace_scoped_run_admits_repo_config_and_excludes_host_config(workspace: Path) -> None:
+    """Receipt for `scope-isolation-by-config-source`: the third posture, verified both directions.
+
+    The repository below carries its own `CLAUDE.md`; the host this test runs on carries its own too.
+    A workspace-scoped run must report the repository's without reporting a host plugin registration
+    — `plugins == ()` is the one surface this posture can assert absent from the init event alone; the
+    memory question needs a canary turn, not init, per `run-guardrails/agent-isolation`.
+    """
+    (workspace / "CLAUDE.md").write_text("REPO_CANARY: workspace-scoped must admit this.\n", encoding="utf-8")
+
+    runs = workspace / "runs"
+    result = run(
+        {"goal": "Reply with exactly: OK"},
+        workspace,
+        Guardrails(window=10, wall_clock_seconds=300, turn_ceiling=5, grace_seconds=10, question_deadline_hours=24),
+        run_id="receipt-workspace-scoped",
+        runs_dir=runs,
+        policy=IsolationPolicy(isolated=False, workspace_scoped=True, opt_out_reason="the workspace-scoped receipt"),
+    )
+
+    assert result.outcome is RunOutcome.SUCCESS, result.detail
+    reader = StreamReader(result.transcript_path)
+    reader.poll()
+    assert reader.init is not None
+    assert reader.init.workspace_scope_leaks == ()
+
+
 def test_an_opted_out_run_shows_what_isolation_was_holding_back(workspace: Path) -> None:
     """The control for the receipt above, and the reason the assertion is worth anything.
 

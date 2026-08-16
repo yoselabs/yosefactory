@@ -84,6 +84,26 @@ class InitFacts:
         """
         return (f"plugins={len(self.plugins)}",) if self.plugins else ()
 
+    @property
+    def workspace_scope_leaks(self) -> tuple[str, ...]:
+        """What `workspace_scoped` can assert absent, from the init event alone.
+
+        `workspace_scoped` admits the repository's own memory, skills and MCP servers by design, so
+        the isolated posture's `leaks` (built on the assumption that all four surfaces read empty)
+        does not apply. Measured: under `--setting-sources project,local`, host plugin registration
+        itself is excluded — unlike under `--safe-mode`, where one host plugin still registers as
+        residue. A non-empty `plugins` list under this posture means the run did not get the sources
+        it was told to.
+
+        This is the one surface this posture *can* check. Account-level MCP connectors (OAuth-
+        registered, distinct from `.mcp.json`/`settings.json` entries) register under every
+        `--setting-sources` value measured, including the empty string, and cannot be told apart from
+        the workspace's own declared servers without an allowlist this reader does not have — a named
+        residue with no control here, recorded in `run-guardrails/agent-isolation`, not something this
+        property can detect.
+        """
+        return (f"plugins={len(self.plugins)}",) if self.plugins else ()
+
 
 def _names(raw: Any) -> tuple[str, ...]:
     """The stream spells collections several ways; a count that silently reads zero is the hazard."""

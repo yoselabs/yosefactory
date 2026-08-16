@@ -14,6 +14,13 @@ def test_no_ceiling_sends_no_flag() -> None:
     assert "--max-budget-usd" not in opted_out
 
 
+def test_workspace_scoped_emits_project_and_local_sources_but_not_safe_mode() -> None:
+    argv = build_argv("hello", IsolationPolicy(isolated=False, workspace_scoped=True, opt_out_reason="control"))
+
+    assert "--safe-mode" not in argv
+    assert argv[argv.index("--setting-sources") + 1] == "project,local"
+
+
 def test_a_ceiling_is_sent_verbatim() -> None:
     argv = build_argv("hello", IsolationPolicy(isolated=True), cost_ceiling_usd=0.02)
 

@@ -140,6 +140,13 @@ def build_argv(prompt: str, policy: IsolationPolicy, *, cost_ceiling_usd: float 
     to read the subscription credential, so on a subscription it buys isolation by making the run
     unable to authenticate at all.
 
+    `workspace_scoped` is neither branch above: `--setting-sources project,local`, no `--safe-mode`.
+    Measured (`scope-isolation-by-config-source`) to admit the working repository's own `CLAUDE.md`,
+    settings, skills and `.mcp.json` while excluding the host's user-level `CLAUDE.md`, skills,
+    plugins and `settings.json`-declared MCP servers. It is a genuinely different mechanism from
+    `isolated`, not a lighter version of it — the policy already refuses the two together because
+    safe mode zeroes `--setting-sources` regardless of its value.
+
     `cost_ceiling_usd` is orthogonal to the posture and sent in both branches when set. Absent, no
     flag is emitted — a ceiling is never substituted on the caller's behalf.
     """
@@ -153,6 +160,8 @@ def build_argv(prompt: str, policy: IsolationPolicy, *, cost_ceiling_usd: float 
         # Repository configuration loads under -p with no trust dialog, so an opted-out run pins what
         # it admits rather than inheriting it.
         argv += ["--strict-mcp-config"]
+        if policy.workspace_scoped:
+            argv += ["--setting-sources", "project,local"]
         if policy.settings_path:
             argv += ["--settings", policy.settings_path]
         if policy.mcp_config_path:
@@ -242,6 +251,13 @@ def run(
         # not trustworthy as isolated, and reporting the run's own verdict here would hide that.
         outcome, kind = RunOutcome.FAILED, FailureKind.TASK_ERROR
         detail = "isolation breached: " + ", ".join(reader.init.leaks)
+    elif policy.workspace_scoped and reader.init is not None and reader.init.workspace_scope_leaks:
+        # workspace_scoped admits the repository's own skills, memory and mcp servers by design, so
+        # `leaks` (built for the isolated posture's leaks==() assertion) does not apply here. What is
+        # measured absent under --setting-sources project,local is host plugin registration: a
+        # non-empty `plugins` list means the run did not actually get the workspace-scoped sources.
+        outcome, kind = RunOutcome.FAILED, FailureKind.TASK_ERROR
+        detail = "workspace scope breached: " + ", ".join(reader.init.workspace_scope_leaks)
 
     return RunResult(
         outcome=outcome,

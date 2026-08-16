@@ -22,6 +22,18 @@ Three measurements are encoded rather than commented, all taken against claude 2
 The isolated posture is a floor rather than a baseline to add to: the executor's safe mode ignores
 explicit re-admission of tool servers, so a policy that is isolated *and* names one describes a run
 that would silently not have it. That combination is refused here rather than dropped quietly.
+
+A fourth measurement, taken for `workspace_scoped` (D021, `scope-isolation-by-config-source`): safe
+mode and `--setting-sources` do not compose. `--safe-mode --setting-sources project` reports no
+repository memory, no repository skill, and no repository MCP server — identical to safe mode alone.
+So `isolated` and `workspace_scoped` are refused together the same way `isolated` and an explicit
+tool-server config already are: naming both describes a run that would silently get only the isolated
+behaviour. And an explicit `--settings` argument is refused under `isolated` for a sharper reason than
+the tool-server case — it is not ignored outright. Measured: a `--settings` `env` entry survives safe
+mode, an otherwise-identical `--settings` `hooks` entry does not. Safe mode's suppression is
+category-based, not a blanket rejection of `--settings`, so a caller cannot predict from the flag
+alone which parts of a given settings file would apply. Refused rather than left to depend on what a
+settings file happens to contain.
 """
 
 from __future__ import annotations
@@ -53,9 +65,18 @@ class IsolationError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class IsolationPolicy:
-    """Default isolated. Opting out is explicit and is never reached by omission."""
+    """Default isolated. Opting out is explicit and is never reached by omission.
+
+    `workspace_scoped` is a third posture, not a variant of opting out: it admits the working
+    repository's own configuration (`CLAUDE.md`, `.claude/settings.json`,
+    `.claude/settings.local.json`, its skills, its `.mcp.json`) while still excluding the host's —
+    measured via `--setting-sources project,local`, a mechanism distinct from and not composable
+    with `--safe-mode`. It still requires the same stated `opt_out_reason` that any non-isolated
+    posture does; nothing here reaches it by omission.
+    """
 
     isolated: bool = True
+    workspace_scoped: bool = False
     settings_path: str | None = None
     mcp_config_path: str | None = None
     allowed_tools: tuple[str, ...] = ()
@@ -64,8 +85,15 @@ class IsolationPolicy:
     def __post_init__(self) -> None:
         if not self.isolated and not self.opt_out_reason:
             raise IsolationError("running without isolation requires an explicit stated reason; omission is not an opt-out")
+        if self.isolated and self.workspace_scoped:
+            raise IsolationError("safe mode overrides --setting-sources to zero; isolated and workspace_scoped do not compose")
         if self.isolated and self.mcp_config_path:
             raise IsolationError("the isolated posture ignores an explicit tool-server config; it silently would not be there")
+        if self.isolated and self.settings_path:
+            raise IsolationError(
+                "the isolated posture is inconsistent for an explicit --settings config: "
+                "safe mode drops its hooks but not its env, so it is refused rather than left to depend on the file's contents"
+            )
 
     @property
     def uses_bare_mode(self) -> bool:
