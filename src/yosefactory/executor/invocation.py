@@ -19,15 +19,19 @@ from pathlib import Path
 
 @dataclass(frozen=True, slots=True)
 class Invocation:
-    """The plumbing one run needs: which skill to follow, and where to write its answer."""
+    """The plumbing one run needs: which skill to follow, what vocabulary it may report in, and
+    where to write its answer."""
 
     skill: Path | None = None
+    vocabulary: Path | None = None
     proposal_path: Path | None = None
 
     def render(self) -> str:
         lines = []
         if self.skill is not None:
             lines.append(f"Follow the skill at {self.skill}.")
+        if self.vocabulary is not None:
+            lines.append(f"The event vocabulary is defined at {self.vocabulary}.")
         if self.proposal_path is not None:
             lines.append(f"Write your one event to {self.proposal_path}.")
         return "\n".join(lines)

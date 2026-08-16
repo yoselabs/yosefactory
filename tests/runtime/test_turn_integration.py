@@ -9,17 +9,21 @@ Skipped when `claude` is absent or the pinned version has moved, exactly like th
 
 **What this file does not prove, so a later reader does not credit it with more than it demonstrates:**
 
-- **Not the `done` path.** A real run (development of this file, not a fixture) showed the agent does
-  the actual work correctly -- a real commit lands in the workspace -- and then cannot legally report
-  it: `workflows/turn-skill.md` never teaches the event vocabulary (`done` needs `effects` and
-  `verified_by`; nothing reachable by an unattended agent names that), so the agent invents an event
-  name and `take_turn` correctly refuses it. This is not a defect in the reducer -- an unknown event
-  failing loudly is `backlog-item-format`'s own requirement -- it is a real gap one layer up, tracked
-  as a follow-up change (`add-take-turn-integration-receipt/proposal.md` - Finding). Every assertion
-  below therefore expects `Outcome.FAILED`, not `Outcome.ADVANCED`, and checks only what does not
-  depend on the agent knowing vocabulary nothing has taught it: `Places` separation, the workspace's
-  own real commit, the ledger row, and both commit trailers -- all written unconditionally by
-  `turn._finish` regardless of outcome.
+- **The `done` path was unreachable, and now is not (`teach-event-vocabulary`).** A real run during
+  development of this file showed the agent does the actual work correctly -- a real commit lands in
+  the workspace -- and then cannot legally report it: `workflows/turn-skill.md` never taught the event
+  vocabulary (`done` needs `effects` and `verified_by`; nothing reachable by an unattended agent named
+  that), so the agent invented an event name and `take_turn` correctly refused it. That gap is closed:
+  `Invocation.vocabulary` now points the agent at `backlog-item-format/spec.md`'s own table
+  (`teach-event-vocabulary/proposal.md`), and
+  `test_a_real_agent_reaches_done_once_the_vocabulary_is_reachable` below is the receipt, asserting
+  from the run's own transcript that the agent actually read the pointer rather than guessing right.
+  The two tests above it still expect `Outcome.FAILED` -- **for a different, still-real reason now**:
+  they call `take_turn` with no `test_command` override, so `verify.may_write_done` runs the default
+  `pytest -q` inside a throwaway workspace that has no test suite, and the gate correctly refuses a
+  `done` it cannot verify. That refusal is `take_turn` working correctly, and it is why those two
+  tests are kept rather than deleted: an agent that reaches a legal `done` proposal but fails
+  independent verification is still a real, reachable outcome worth a receipt.
 - The executor wrapper below runs under `IsolationPolicy(isolated=False, workspace_scoped=True, ...)`,
   never `isolated=True` -- a throwaway probe against this same binary showed `isolated=True` denies
   every tool call headlessly (`permission_denials` on the terminal event, the target file absent from
@@ -146,6 +150,27 @@ def trailers(repo: Path, *, rev: str = "HEAD") -> str:
     return git(repo, "log", "-1", "--format=%(trailers)", rev)
 
 
+def tool_calls(transcript_path: Path, name: str) -> list[dict[str, Any]]:
+    """Every `tool_use` block the agent actually issued for `name`, read from its own stream.
+
+    Used to tell "the agent read the vocabulary" from "the agent guessed right" -- a passing
+    `Outcome.ADVANCED` is consistent with either, and only the transcript can distinguish them
+    (teach-event-vocabulary/proposal.md - Decision 1's accepted risk).
+    """
+    calls: list[dict[str, Any]] = []
+    for line in transcript_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        event = json.loads(line)
+        if event.get("type") != "assistant":
+            continue
+        for block in event.get("message", {}).get("content", []):
+            if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") == name:
+                calls.append(block.get("input", {}))
+    return calls
+
+
 def test_take_turn_drives_a_real_agent_against_a_real_foreign_workspace(queue: Path, workspace: Path) -> None:
     """Receipts 1-4: queue != workspace, a real executor, the ledger row, both commit trailers.
 
@@ -187,6 +212,50 @@ def test_take_turn_drives_a_real_agent_against_a_real_foreign_workspace(queue: P
     body = trailers(queue)
     assert f"Co-Authored-By: {turn.PLATFORM_CO_AUTHOR}" in body
     assert f"{turn.RUN_TRAILER_KEY}: {record.run_id}" in body
+
+
+def test_a_real_agent_reaches_done_once_the_vocabulary_is_reachable(queue: Path, workspace: Path) -> None:
+    """Receipt 7, `teach-event-vocabulary`'s deferred scope: the `done` path itself, driven for real.
+
+    `test_command=("true",)` -- the throwaway workspace has no pytest suite, so the default gate
+    command (`pytest -q`) would fail `verify.may_write_done` for a reason unrelated to the vocabulary
+    fix (see the two tests above, and the module docstring). This does not weaken the gate: a
+    workspace with a real test suite still gets `verify.DEFAULT_TEST_COMMAND` unless its own caller
+    overrides it, exactly as before this change.
+    """
+    marker = f"receipt-{uuid.uuid4().hex[:8]}"
+    item_path = seed_item(queue, marker)
+
+    record = turn.take_turn(
+        places(queue, workspace),
+        real_executor,
+        limits=LIMITS,
+        owner="yf9-receipt",
+        skill=SKILL,
+        proposal_dir=queue.parent,
+        isolated=False,
+        test_command=("true",),
+    )
+
+    assert record.outcome is Outcome.ADVANCED, record.note
+
+    # The item's own trail carries the done event, with the fields the vocabulary requires.
+    lines = [json.loads(line) for line in item_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    last = lines[-1]
+    assert last["event"] == "done"
+    assert last.get("effects")
+    assert last.get("verified_by")
+
+    # The workspace really did receive the agent's own commit.
+    assert marker in (workspace / "notes.txt").read_text(encoding="utf-8")
+
+    # Not luck: the agent's own stream shows it read the vocabulary pointer this change wired in,
+    # before it ever wrote the proposal -- distinguishing "read the spec" from "guessed right".
+    transcript_path = places(queue, workspace).ledger / f"{record.run_id}.stream.jsonl"
+    assert transcript_path.exists()
+    reads = tool_calls(transcript_path, "Read")
+    read_paths = {call.get("file_path") for call in reads}
+    assert str(backlog.VOCABULARY_SPEC) in read_paths
 
 
 def test_two_turns_share_a_byte_identical_co_author_and_independent_run_ids(queue: Path, workspace: Path) -> None:

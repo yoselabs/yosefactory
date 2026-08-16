@@ -510,7 +510,7 @@ def take_turn(
             publish(places, record)
             return record
 
-        invocation = Invocation(skill=skill, proposal_path=proposal_path)
+        invocation = Invocation(skill=skill, vocabulary=backlog.VOCABULARY_SPEC, proposal_path=proposal_path)
 
         if target is None:
             with _workspace_lock(places):

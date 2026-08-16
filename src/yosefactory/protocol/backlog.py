@@ -47,6 +47,18 @@ _ON_TIMEOUT = r"escalate|default:.+|abandon:.+"
 # The pattern below still checks the value wherever it does appear, since patterns skip absent fields.
 _AWAITING_FIELDS = ("kind", "ref", "who", "since", "return_to", "nudge_at")
 
+# `openspec/specs/backlog-item-format/spec.md` carries this table in human-readable form, for a
+# reader (or an unattended agent) without a Python runtime to execute `ITEM.rules` against. This path
+# is how `Invocation.vocabulary` points an agent at that mirror — never a second definition of the
+# vocabulary, just the pointer.
+#
+# `__file__`-relative: assumes this package runs from its own checkout, which is this repo's only
+# deployment model today (`CLAUDE.md`: "Personal workflow platform... One user"). If yosefactory is
+# ever installed apart from its own `openspec/` tree, this path silently points at a file that does
+# not exist there, and the agent's `Read` of it fails rather than teaching it anything — named here
+# as a limitation, not fixed, because no second deployment model exists yet to fix it for.
+VOCABULARY_SPEC = Path(__file__).resolve().parents[3] / "openspec" / "specs" / "backlog-item-format" / "spec.md"
+
 ITEM = Declaration(
     initial="created",
     states=STATES,
