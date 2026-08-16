@@ -21,6 +21,13 @@ land. This proposal builds that grant.
   reported once and not retried automatically — a rejection means the remote moved or is unreachable,
   and retrying blind into a moved remote is how work gets lost.
 
+**Two things this proposal knowingly leaves open, in plain words:**
+- **A publication failure leaves no durable trace** — it is reported once, to whoever is watching the
+  process at that moment, and nowhere else. Not fixed here (design.md - Open, not built; no owner).
+- **Pre-push hooks are not bypassed**, so a platform-initiated push can trigger a side effect nobody
+  dispatched — this repository's own pre-push hook chains a `bd dolt push`, and the queue can be this
+  repository itself. Accepted on principle, untested in practice (design.md - Risks / Trade-offs).
+
 ## Capabilities
 
 ### New Capabilities

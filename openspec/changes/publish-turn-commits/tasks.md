@@ -35,3 +35,15 @@
       prove the platform can publish across an actual network boundary, with real auth and real
       latency. Consistent with [[S195]]: stated, not built, and not the first time this gap has been
       left for a receipt against the real thing.
+
+## 5. Open, no owner
+
+- [ ] 5.1 **A publication failure has no durable trace.** The turn record is committed before publish
+      runs, and D002 plus turn-cycle's one-record-per-turn rule together mean nothing can retroactively
+      amend it with what publication did. `warnings.warn` reaches whoever is watching the process in
+      the moment and nobody who reads later — a ledger reader, a receipt, Denis checking D014 a week
+      on. A publication failure nothing captures means D014 counts a commit nobody can see, which is
+      the exact failure this change exists to fix, arriving through its own error path. Where a
+      post-record event like this should live — the run stream, a separate publish log, something
+      else — is a design question this change deliberately does not answer. Same shape as the
+      planning-denial gap `raise-question-on-denial` left open. Not built here.

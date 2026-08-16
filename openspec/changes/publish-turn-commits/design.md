@@ -109,13 +109,31 @@ case) is trusted to run the same hook a human push would.
   published record pointing at it yet. Accepted per the ordering argument above — this is the
   smaller failure mode of the two orderings, not a solved one. The queue push can be retried later
   (by a human, or a future turn) without re-doing any work, since the workspace side is already done.
-- **`warnings.warn` is easy to miss** if nothing captures Python warnings. Accepted for now — it is
-  strictly more visible than the status quo (nothing at all), and the alternative (a new persisted
-  field) has the correctness problems above. Revisit if D014's operator finds this insufficient.
+- **A publication failure leaves no durable trace.** `warnings.warn` is visible to whoever is
+  watching the process at the moment it happens, and invisible to anyone who reads later — a ledger
+  reader, a receipt, Denis checking D014 a week from now. That is a real gap, not a hedge: **a
+  publication failure nothing captures means D014 counts a commit nobody can see, which is the exact
+  failure this change exists to fix, now arriving through this change's own error path.** No owner
+  assigned; see "Open, not built" below.
+- **Pre-push hooks are not bypassed, in plain terms: a platform-initiated push can trigger a side
+  effect nobody dispatched.** This repository chains `bd dolt push` onto its own pre-push hook
+  (`CLAUDE.md`), and `places.queue` can be `yosefactory` itself in the collapsed case — so a platform
+  push here can fire that hook with no human in the loop. Accepted on principle (D022 grants push,
+  not a hook exemption; exempting the platform from a check a human push faces makes its output
+  incomparable to a human's) but **untested**, because none of this change's fixtures install hooks.
 - **Both locks stay held during both pushes.** Publication runs inside the same `_workspace_lock` (and
   outer `queue_lock`) span that already covers execution and commits, rather than releasing either
   before pushing. A slow or hanging push blocks another turn from starting against the same queue or
-  workspace for its duration. Accepted — this program has no queueing or daemon, turns are expected to
-  be infrequent, and holding the lock is simpler and safer than the alternative of publishing outside
-  it, which would let a second turn start executing against a workspace whose most recent commit is
-  not yet published.
+  workspace for its duration. **This is a trade affordable now, not a decision** — this program has no
+  queueing or daemon and turns are infrequent, and holding the lock is simpler and safer than letting a
+  second turn start executing against a workspace whose most recent commit is not yet published. The
+  first thing to revisit if turn frequency rises.
+
+## Open, not built
+
+- **A publication failure has no durable trace.** The turn record is committed before publish ever
+  runs, and D002 plus turn-cycle's one-record-per-turn rule together mean nothing can retroactively
+  amend it with what publication did. `warnings.warn` reports it to whoever is watching in the moment
+  and nobody else. Where a post-record event like this should live — the run stream, a separate
+  publish log, something else — is a design question this change deliberately does not answer.
+  **No owner.** Same shape as the planning-denial gap `raise-question-on-denial` left open.
