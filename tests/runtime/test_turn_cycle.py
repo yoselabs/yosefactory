@@ -19,9 +19,11 @@ from yosefactory.executor.invocation import Invocation
 from yosefactory.executor.outcome import FailureKind, RunOutcome, RunResult, Usage
 from yosefactory.protocol import backlog
 from yosefactory.protocol.eventlog import LogError
-from yosefactory.protocol.turn import EnforcedBy, Outcome
+from yosefactory.protocol.turn import EnforcedBy, Outcome, starved
+from yosefactory.protocol.turn import FailureKind as ProtocolFailureKind
 from yosefactory.runtime import turn
 from yosefactory.runtime.config import Guardrails
+from yosefactory.runtime.runs import read_window
 from yosefactory.runtime.supervise import single_flight
 
 TRUE_COMMAND = ("true",)
@@ -61,10 +63,18 @@ def repo(tmp_path: Path) -> Path:
 class FakeExecutor:
     """Writes a scripted proposal where the turn asked for it, and remembers being called."""
 
-    def __init__(self, proposal: Any = None, *, outcome: RunOutcome = RunOutcome.SUCCESS, raw: str | None = None) -> None:
+    def __init__(
+        self,
+        proposal: Any = None,
+        *,
+        outcome: RunOutcome = RunOutcome.SUCCESS,
+        raw: str | None = None,
+        kind: FailureKind | None = None,
+    ) -> None:
         self.proposal = proposal
         self.raw = raw
         self.outcome = outcome
+        self.kind = kind if kind is not None else FailureKind.CRASH
         self.calls: list[Mapping[str, Any]] = []
         self.invocations: list[Invocation | None] = []
         self.log_at_call: list[str] = []
@@ -94,7 +104,7 @@ class FakeExecutor:
             transcript_path=runs_dir / f"{run_id}.stream.jsonl",
             exit_code=0,
             dirty=False,
-            failure_kind=None if self.outcome is RunOutcome.SUCCESS else FailureKind.CRASH,
+            failure_kind=self.kind if self.outcome is not RunOutcome.SUCCESS else None,
             detail="",
         )
 
@@ -464,3 +474,77 @@ def test_two_turns_share_nothing_but_the_repository(repo: Path, limits: Guardrai
     assert backlog.load(planned).state == "done"
     assert actor.calls[0]["goal"] == FRAME["goal"], "turn two read the frame turn one committed"
     assert len(list((repo / turn.RUNS).glob("*.json"))) == 2
+
+
+def test_the_mapping_is_total_over_the_executor_vocabulary() -> None:
+    """A new vendor stop must fail here rather than silently record a run with no reason."""
+    assert set(turn._RUN_LEVEL_KIND) == set(RunOutcome)
+
+
+def test_a_run_level_stop_is_recorded_as_its_own_reason() -> None:
+    """The distinction rule 3 protects: starvation reaches the record typed, not narrated."""
+    for stop, expected in (
+        # Only the protocol vocabulary has these. The executor's run-level stops carry no typed
+        # kind of their own, which is exactly why the recordable set is a union and not a mirror.
+        (RunOutcome.BUDGET_EXHAUSTED, ProtocolFailureKind.BUDGET_EXHAUSTED),
+        (RunOutcome.TURN_LIMIT, ProtocolFailureKind.TURN_LIMIT),
+        (RunOutcome.CANCELLED, ProtocolFailureKind.CANCELLED),
+    ):
+        result = RunResult(
+            outcome=stop, usage=Usage(), transcript_path=Path("t"), exit_code=0, dirty=False, failure_kind=None
+        )
+        assert turn.failure_kind_of(result) is expected
+
+
+def test_a_typed_executor_kind_survives_the_boundary() -> None:
+    result = RunResult(
+        outcome=RunOutcome.FAILED,
+        usage=Usage(),
+        transcript_path=Path("t"),
+        exit_code=1,
+        dirty=False,
+        failure_kind=FailureKind.RATE_LIMIT,
+    )
+
+    assert turn.failure_kind_of(result) is ProtocolFailureKind.RATE_LIMIT
+
+
+def test_a_run_that_did_not_fail_carries_no_reason() -> None:
+    """A record rejects a reason on any outcome but `failed`, so the mapping may not invent one."""
+    for outcome in (RunOutcome.SUCCESS, RunOutcome.NEEDS_APPROVAL, RunOutcome.REFUSED):
+        result = RunResult(
+            outcome=outcome, usage=Usage(), transcript_path=Path("t"), exit_code=0, dirty=False, failure_kind=None
+        )
+        assert turn.failure_kind_of(result) is None
+
+
+def test_a_starved_run_writes_a_record_that_says_so(repo: Path, limits: Guardrails) -> None:
+    """End to end: a budget stop lands in the stream as `budget_exhausted`, not as free text."""
+    seed_item(repo)
+    record = take(repo, FakeExecutor(outcome=RunOutcome.BUDGET_EXHAUSTED, kind=None), limits)
+
+    assert record.outcome is Outcome.FAILED
+    assert record.failure_kind is ProtocolFailureKind.BUDGET_EXHAUSTED
+    assert starved(record.failure_kind) is True
+
+
+def test_the_note_no_longer_restates_the_reason(repo: Path, limits: Guardrails) -> None:
+    """The workaround that carried the kind as text is retired; the typed field is its only home."""
+    seed_item(repo)
+    record = take(repo, FakeExecutor(outcome=RunOutcome.FAILED, kind=FailureKind.RATE_LIMIT), limits)
+
+    assert record.failure_kind is ProtocolFailureKind.RATE_LIMIT
+    assert "rate_limit" not in record.note
+    assert "no kind" not in record.note
+
+
+def test_a_starved_record_round_trips_through_the_stream(repo: Path, limits: Guardrails) -> None:
+    """The reason must survive being written and read back, or the detector never sees it."""
+    seed_item(repo)
+    take(repo, FakeExecutor(outcome=RunOutcome.BUDGET_EXHAUSTED, kind=None), limits)
+
+    window = read_window(repo / turn.RUNS, 5)
+
+    assert [position.record.failure_kind for position in window if position.record] == [
+        ProtocolFailureKind.BUDGET_EXHAUSTED
+    ]

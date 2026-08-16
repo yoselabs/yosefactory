@@ -32,7 +32,7 @@ from yosefactory.executor.outcome import RunOutcome, RunResult
 from yosefactory.protocol import backlog, question
 from yosefactory.protocol.eventlog import Declaration, FoldedLog, LogError
 from yosefactory.protocol.eventlog import load as load_log
-from yosefactory.protocol.turn import EnforcedBy, Outcome, TurnRecord
+from yosefactory.protocol.turn import EnforcedBy, FailureKind, Outcome, TurnRecord
 from yosefactory.runtime import runs, verify
 from yosefactory.runtime.config import Guardrails
 from yosefactory.runtime.supervise import single_flight, tree_is_dirty
@@ -77,6 +77,39 @@ class Executor(Protocol):
         runs_dir: Path,
         invocation: Invocation | None = None,
     ) -> RunResult: ...
+
+
+# The executor's two failing vocabularies join here. Its run-level stops carry no typed kind of their
+# own, which is why a set mirroring only its typed kinds would lose the starved-versus-broken
+# distinction entirely. Total over `RunOutcome` and asserted so by test: a new vendor stop must fail
+# a test rather than silently record no reason.
+_RUN_LEVEL_KIND: dict[RunOutcome, FailureKind | None] = {
+    RunOutcome.SUCCESS: None,
+    # Null under both readings of these two. They are recorded as `failed` today and belong under
+    # `blocked` with a `blocked_kind`; either way the reason they carry is not a failure kind, so
+    # this mapping does not have to be revisited when that lands.
+    RunOutcome.NEEDS_APPROVAL: None,
+    RunOutcome.REFUSED: None,
+    RunOutcome.BUDGET_EXHAUSTED: FailureKind.BUDGET_EXHAUSTED,
+    RunOutcome.TURN_LIMIT: FailureKind.TURN_LIMIT,
+    RunOutcome.CANCELLED: FailureKind.CANCELLED,
+    RunOutcome.FAILED: None,
+}
+
+
+def failure_kind_of(result: RunResult) -> FailureKind | None:
+    """The reason the executor reported, typed. Never inferred from an exit status or a message.
+
+    `RunOutcome.FAILED` maps to null here and defers to the typed kind beside it, which is where the
+    executor puts the reason when the run itself is what failed.
+    """
+    run_level = _RUN_LEVEL_KIND[result.outcome]
+    if run_level is not None or result.failure_kind is None:
+        return run_level
+    try:
+        return FailureKind(result.failure_kind.value)
+    except ValueError as exc:
+        raise TurnError(f"executor failure kind {result.failure_kind.value!r} has no recordable equivalent") from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -380,7 +413,7 @@ def _dispose(
     subject = "planning" if planning else item_path.stem
     touched = [] if item_path is None else [item_path]
 
-    def failed(detail: str) -> TurnRecord:
+    def failed(detail: str, kind: FailureKind | None = None) -> TurnRecord:
         return _finish(
             repo,
             started,
@@ -391,10 +424,13 @@ def _dispose(
             note=f"{subject}: {detail}",
             paths=touched,
             isolated=isolated,
+            failure_kind=kind,
         )
 
     if result.outcome is not RunOutcome.SUCCESS:
-        return failed(f"executor reported {result.outcome.value} ({result.failure_kind or 'no kind'}): {result.detail}")
+        # The reason travels in the typed field, so the note no longer restates it. A reason narrated
+        # into free text is a reason that was known and then discarded at the moment it became durable.
+        return failed(f"executor reported {result.outcome.value}: {result.detail}", failure_kind_of(result))
 
     proposed = read_proposal(proposal_path, planning=planning)
     if isinstance(proposed, Refusal):
@@ -460,6 +496,7 @@ def _finish(
     note: str,
     paths: Sequence[Path],
     isolated: bool,
+    failure_kind: FailureKind | None = None,
 ) -> TurnRecord:
     runs_dir = repo / RUNS
     record = TurnRecord(
@@ -471,6 +508,7 @@ def _finish(
         dirty=tree_is_dirty(repo, ignore=runs_dir),
         isolated=isolated,
         note=note,
+        failure_kind=failure_kind,
     )
     written = runs.append(runs_dir, slug, record)
     commit(repo, [*paths, written, written.with_suffix(".start")], f"turn({run_id}): {outcome.value} — {note}")
