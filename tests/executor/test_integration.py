@@ -118,13 +118,8 @@ def test_a_run_that_exceeds_its_wall_clock_is_stopped_and_recorded(workspace: Pa
     # A tree the agent left half-edited reads as dirty; the harness's own transcript never does.
     assert record.dirty is True
 
-    if record.enforced_by is not EnforcedBy.HARNESS:
-        # Measured, and it is a defect in the supervisor rather than in this test. The agent flushes
-        # a terminal event inside the grace window, so `verdict()` answers and the record is
-        # attributed to the agent — even though the harness is what stopped the run. `govern` knows
-        # better: it computes `stop.by_harness` and then does not consult it. The consequence is the
-        # one `enforced_by` exists to prevent: a harness kill that reads as an honest agent failure.
-        pytest.xfail("supervise.govern ignores stop.by_harness when the agent flushes a verdict")
+    # The agent does flush a terminal verdict inside the grace window, so this passes only because
+    # who stopped the run now outranks what the agent managed to say on the way down.
     assert record.enforced_by is EnforcedBy.HARNESS
 
 

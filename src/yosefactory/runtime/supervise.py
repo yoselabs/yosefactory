@@ -152,7 +152,14 @@ def govern(
         time.sleep(poll_seconds)
 
     flushed = verdict() if verdict is not None else None
-    if flushed is not None:
+    if stop.by_harness:
+        # A stopped run is the harness's ending regardless of what the agent managed to say. Agents
+        # do flush a terminal verdict inside the grace window — measured — and that verdict describes
+        # a run that was cut short, so honouring it would let a wall-clock kill be recorded as the
+        # agent's own outcome, up to and including success. That is the one thing this field exists
+        # to prevent, so who stopped the run decides who authored the ending.
+        outcome, enforced_by = Outcome.FAILED, EnforcedBy.HARNESS
+    elif flushed is not None:
         outcome, enforced_by = flushed, EnforcedBy.AGENT
     else:
         # No terminal verdict is failure, even on exit 0: executors print in-run failures as ordinary
