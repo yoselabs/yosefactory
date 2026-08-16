@@ -45,7 +45,7 @@ schema version.
 |---|---|---|
 | `asked` | the question. Exactly one, and it opens the log | no |
 | `nudged` | a reminder was sent | no |
-| `noted` | context added while awaiting | no |
+| `noted` | context added, legal at any time including after closing | no |
 | `answered` | answered | **yes** |
 | `timed_out` | the deadline passed and the pre-registered policy fired | **yes** |
 | `cancelled` | withdrawn — the question stopped being worth asking | **yes** |
@@ -69,8 +69,9 @@ and questions supply this one:
 - `initial`: `asked`
 - `states`: `awaiting`, `answered`, `timed_out`, `cancelled`
 - `terminal`: `answered`, `timed_out`, `cancelled` (a predicate, never a written state)
-- `rules`: `asked` → `awaiting`; `nudged` and `noted` leave the state alone; `answered`,
-  `timed_out`, `cancelled` each move `awaiting` to their own name
+- `rules`: `asked` → `awaiting`; `nudged` leaves the state alone while awaiting; `noted` leaves
+  it alone from any state, closed included; `answered`, `timed_out`, `cancelled` each move
+  `awaiting` to their own name
 
 That is D020 made structural: a request, a question, and a work item are one object in different
 states, so a second parser would be a modelling error rather than a convenience.
@@ -84,7 +85,9 @@ Fold the records in `(ts, event_id)` order — never by position in the file, si
   `event_id` carrying *different* content fails the read rather than picking a winner
 
 The fold is loud. An unknown event, an illegal transition, or a malformed line fails the read
-instead of yielding a state that never existed — so a terminal event appended to an
+instead of yielding a state that never existed. Tolerance is not needed for retries: a retried
+close carries the same `event_id` and collapses, so a second close under a *different* id is a
+genuine double-write rather than delivery noise — so a terminal event appended to an
 already-terminal question is a fault to repair by hand, not a state to infer. Whoever appends a
 terminal event reads the log first; a sweeper never times out a question that already closed.
 

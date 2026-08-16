@@ -58,3 +58,12 @@
 - [x] 5.5 Report the three seams the fold exposes: the answer-versus-sweeper race failing the
       read, cross-field validation of the pre-registered default being inexpressible in a
       declaration, and `deadline`/`on_timeout` being duplicated on the item's `awaiting` block
+
+## 6. Reconciliation with YF-1's built fold (director's ruling)
+
+- [x] 6.1 Confirm the divergence the director ruled on was already resolved in the previous
+      commit: loud fold adopted, `event_id` dedup, `(ts, event_id)` order, no first-terminal-wins
+- [x] 6.2 Align `noted` with the item declaration — legal from any state, changing none, so a
+      closed question can still be annotated
+- [x] 6.3 State the deciding argument in the spec: dedup on `event_id` makes a retried close
+      idempotent, so a second close under a different id is an illegal write, not delivery noise

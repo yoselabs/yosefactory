@@ -106,14 +106,21 @@ The declaration is:
   - `asked`: (nothing) → `awaiting`, requiring `item`, `kind`, `to`, `text`, `answer_type`,
     `return_to`, `deadline`, `on_timeout`; `kind` and `on_timeout` pattern-checked
   - `nudged`: `awaiting` → no state change, requiring `reason`
-  - `noted`: `awaiting` → no state change, requiring `body`
+  - `noted`: any state → no state change, requiring `body` — a note never changes a state and
+    stays legal after a question has closed, matching the item declaration
   - `answered`: `awaiting` → `answered`, requiring `verdict`, `answer`
   - `timed_out`: `awaiting` → `timed_out`, requiring `policy`, `answer`
   - `cancelled`: `awaiting` → `cancelled`, requiring `reason`
 
 Every terminal event SHALL be legal only from `awaiting`. A writer SHALL therefore read the log
 before appending a terminal event, and a sweeper SHALL NOT append `timed_out` to a question that
-already holds one.
+already holds one. `noted` is the single exception: it changes no state and SHALL remain legal
+after a question has closed, so that a closed question can still be annotated.
+
+De-duplication on `event_id` is what makes at-least-once delivery safe, so tolerance is not needed
+for it: a retried close carries the same `event_id` and is applied once. A second close carrying a
+*different* `event_id` is therefore not a retry but an illegal second write, and SHALL fail the
+read.
 
 #### Scenario: A second terminal event
 - **WHEN** a `timed_out` record is appended to an already-`answered` question
