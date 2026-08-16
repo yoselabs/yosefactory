@@ -42,6 +42,11 @@ QUESTIONS = Path("questions")
 RUNS = Path("ledger") / runs.STREAM_DIRNAME
 LOCK = Path(".git") / "yosefactory-turn.lock"
 
+# Frozen (commit-attribution spec). Every commit the platform ever writes is compared against every
+# other, so changing either splits one author into two in history that D002 forbids correcting.
+PLATFORM_CO_AUTHOR = "yosefactory <yosefactory@yoselabs.dev>"
+RUN_TRAILER_KEY = "Yosefactory-Run"
+
 # The event log's own fields. An agent that supplies one is refused rather than overridden: dedup and
 # replay order both key on them, and they may not come from the component S098 measured as unreliable.
 RESERVED = ("event_id", "ts", "actor")
@@ -251,13 +256,45 @@ def outcome_for(state: str) -> Outcome:
     return Outcome.ADVANCED
 
 
-def commit(repo: Path, paths: Sequence[Path], message: str) -> None:
+def _with_platform_trailers(repo: Path, message: str, run_id: str, env: dict[str, str]) -> str:
+    """Append the platform's trailers using git's own parser (commit-attribution spec).
+
+    Hand-assembly would reimplement rules git already encodes — whether a trailer block exists,
+    whether a blank line is needed, whether the body's last paragraph already parses as trailers —
+    and getting any of them wrong produces a message that reads right to a human and parses wrong to
+    a tool, which is the one failure this mechanism cannot afford. No fallback: an unmarked commit
+    enters the record as evidence of hand-driven work and D002 forbids correcting it afterwards.
+    """
+    argv = [
+        "git",
+        "interpret-trailers",
+        "--trailer",
+        f"Co-Authored-By: {PLATFORM_CO_AUTHOR}",
+        "--trailer",
+        f"{RUN_TRAILER_KEY}: {run_id}",
+    ]
+    completed = subprocess.run(  # noqa: S603
+        argv,
+        cwd=repo,
+        env=env,
+        input=message,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise TurnError(f"trailer composition refused: {(completed.stderr or completed.stdout).strip()}")
+    return completed.stdout
+
+
+def commit(repo: Path, paths: Sequence[Path], message: str, *, run_id: str) -> None:
     """Explicit pathspecs on every git call. The index is shared; `commit -- <paths>` ignores it."""
     present = [path for path in paths if path.exists()]
     if not present:
         return
     relative = [str(path.relative_to(repo)) for path in present]
     env = {**os.environ, "PREK_ALLOW_NO_CONFIG": "1"}
+    message = _with_platform_trailers(repo, message, run_id, env)
     _git(repo, ["add", "--", *relative], env)
     committed = _git(repo, ["commit", "-m", message, "--", *relative], env, check=False)
     if committed.returncode != 0:
@@ -323,7 +360,7 @@ def take_turn(
         # rather than left in the tree because the `done` gate requires a clean tree, and a turn's own
         # bookkeeping must not read as the agent having left work half-finished.
         slug = runs.open_run(repo / RUNS, run_id, started)
-        commit(repo, [repo / RUNS / f"{slug}.start"], f"turn({run_id}): declared")
+        commit(repo, [repo / RUNS / f"{slug}.start"], f"turn({run_id}): declared", run_id=run_id)
         apply_answers(repo, actor=owner)
         present = items(repo)
         target = pick([item for item in present if eligible(item)])
@@ -375,7 +412,7 @@ def take_turn(
         append(item_path, backlog.ITEM, {"event": "started"}, actor=owner)
         # Committed before the agent runs: a crash from here on is legible as claimed-and-abandoned
         # rather than never-started, which is the state architecture.md §4 found v1 had deleted.
-        commit(repo, [item_path], f"claim({target.id}): attempt {attempt} by {owner}")
+        commit(repo, [item_path], f"claim({target.id}): attempt {attempt} by {owner}", run_id=run_id)
 
         frame = backlog.frame(backlog.load(item_path))
         result = executor(frame, repo, limits, run_id=run_id, runs_dir=repo / RUNS, invocation=invocation)
@@ -532,5 +569,5 @@ def _finish(
         blocked_kind=blocked_kind,
     )
     written = runs.append(runs_dir, slug, record)
-    commit(repo, [*paths, written, written.with_suffix(".start")], f"turn({run_id}): {outcome.value} — {note}")
+    commit(repo, [*paths, written, written.with_suffix(".start")], f"turn({run_id}): {outcome.value} — {note}", run_id=run_id)
     return record

@@ -496,6 +496,97 @@ def test_a_run_level_stop_is_recorded_as_its_own_reason() -> None:
         assert turn.failure_kind_of(result) is expected
 
 
+# 10. Commit attribution
+
+
+def trailers(repo: Path, *, rev: str = "HEAD") -> str:
+    return git(repo, "log", "-1", "--format=%(trailers)", rev)
+
+
+def test_a_platform_commit_carries_both_trailers(repo: Path, limits: Guardrails) -> None:
+    executor = FakeExecutor(proposal=[CREATED])
+
+    record = take(repo, executor, limits)
+
+    body = trailers(repo)
+    assert f"Co-Authored-By: {turn.PLATFORM_CO_AUTHOR}" in body
+    assert f"{turn.RUN_TRAILER_KEY}: {record.run_id}" in body
+
+
+def test_the_run_trailer_names_the_committed_record(repo: Path, limits: Guardrails) -> None:
+    executor = FakeExecutor(proposal=[CREATED])
+
+    record = take(repo, executor, limits)
+
+    assert f"{turn.RUN_TRAILER_KEY}: {record.run_id}" in trailers(repo)
+    matches = list((repo / turn.RUNS).glob(f"*-{record.run_id}.json"))
+    assert len(matches) == 1
+    assert json.loads(matches[0].read_text(encoding="utf-8"))["run_id"] == record.run_id
+
+
+def test_an_existing_co_author_is_kept_alongside_the_platforms(repo: Path) -> None:
+    item_path = repo / "note.txt"
+    item_path.write_text("x\n", encoding="utf-8")
+    message = "hand-authored\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+
+    turn.commit(repo, [item_path], message, run_id=turn.new_run_id())
+
+    body = trailers(repo)
+    assert "Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>" in body
+    assert f"Co-Authored-By: {turn.PLATFORM_CO_AUTHOR}" in body
+    log = git(repo, "log", "-1", "--format=%s")
+    assert log == "hand-authored"
+
+
+def test_the_message_body_is_unchanged(repo: Path) -> None:
+    item_path = repo / "note.txt"
+    item_path.write_text("x\n", encoding="utf-8")
+    run_id = turn.new_run_id()
+
+    turn.commit(repo, [item_path], "subject line\n\na body paragraph.", run_id=run_id)
+
+    full = git(repo, "log", "-1", "--format=%B")
+    assert full.startswith("subject line\n\na body paragraph.")
+
+
+def test_the_platform_identity_is_byte_identical_across_runs(repo: Path) -> None:
+    first_file = repo / "a.txt"
+    first_file.write_text("a\n", encoding="utf-8")
+    turn.commit(repo, [first_file], "first", run_id=turn.new_run_id())
+
+    second_file = repo / "b.txt"
+    second_file.write_text("b\n", encoding="utf-8")
+    turn.commit(repo, [second_file], "second", run_id=turn.new_run_id())
+
+    first_trailer = [line for line in trailers(repo, rev="HEAD~1").splitlines() if line.startswith("Co-Authored-By: yosefactory")]
+    second_trailer = [line for line in trailers(repo, rev="HEAD").splitlines() if line.startswith("Co-Authored-By: yosefactory")]
+    assert first_trailer == second_trailer
+    assert len(first_trailer) == 1
+
+
+def test_a_refused_commit_leaves_nothing_staged(repo: Path) -> None:
+    """No change to commit is a real git refusal — the same path a hook rejection takes."""
+    unchanged = repo / "seed.txt"
+
+    with pytest.raises(turn.TurnError, match="commit refused"):
+        turn.commit(repo, [unchanged], "no-op", run_id=turn.new_run_id())
+
+    assert not turn._git(repo, ["diff", "--cached", "--name-only"], {}, check=False).stdout.strip()
+
+
+def test_trailers_extend_an_existing_block_without_duplicating_it(repo: Path) -> None:
+    item_path = repo / "note.txt"
+    item_path.write_text("x\n", encoding="utf-8")
+    run_id = turn.new_run_id()
+    message = "subject\n\nSigned-off-by: someone <s@example.invalid>"
+
+    turn.commit(repo, [item_path], message, run_id=run_id)
+
+    full = git(repo, "log", "-1", "--format=%B")
+    assert full.count("\n\n") == 1, "one trailer block, not a second one appended after it"
+    assert "Signed-off-by: someone" in full
+
+
 def test_a_typed_executor_kind_survives_the_boundary() -> None:
     result = RunResult(
         outcome=RunOutcome.FAILED,
