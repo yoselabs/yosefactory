@@ -2,7 +2,7 @@
 
 ## MODIFIED Requirements
 
-### Requirement: A preflight asserts the credential store is reachable
+### Requirement: A preflight asserts a clean home directory
 
 Before a run begins, a preflight check SHALL assert that the home directory the agent will run under
 is one the executor's credential store can be reached from.
@@ -18,7 +18,7 @@ performs no work. An emptied home also leaves repository-level configuration ent
 never covered more than one of three leak surfaces. The assertion was satisfied for as long as it
 was never executed.
 
-#### Scenario: A home the credential cannot be reached from is caught before the run
+#### Scenario: A polluted home directory is caught before the run
 - **WHEN** the preflight finds no credential store beneath the home directory
 - **THEN** it reports failure and the run does not begin
 
@@ -26,7 +26,7 @@ was never executed.
 - **WHEN** the preflight reports either result
 - **THEN** its output contains no absolute home-directory path
 
-### Requirement: The isolated posture is defined by what a run loads, not by what it was passed
+### Requirement: The isolated posture excludes host and repository configuration
 
 The isolated posture SHALL be defined by the configuration an agent run is measured not to load, and
 SHALL be verified from the agent's own startup report rather than from the arguments it was given.
@@ -46,6 +46,14 @@ what it actually has, and only one of the two can disagree with reality.
 #### Scenario: The verification has a control
 - **WHEN** the isolated posture is verified
 - **THEN** an equivalent run with the posture disabled is shown to load host configuration
+
+#### Scenario: The policy declares configuration explicitly
+- **WHEN** the isolated policy is resolved
+- **THEN** it does not defer to discovery of host or repository configuration — nothing it was not
+  handed explicitly reaches the run, and construction refuses an explicit tool-server or settings
+  config the isolated posture cannot actually honour
+
+## ADDED Requirements
 
 ### Requirement: The isolated posture is a floor and admits no additions
 
@@ -67,8 +75,6 @@ told to have, which is the failure this capability exists to prevent.
 #### Scenario: An opted-out policy may name one
 - **WHEN** a policy opts out with a stated reason and names a tool-server configuration
 - **THEN** it is accepted and the configuration is supplied to the run
-
-## ADDED Requirements
 
 ### Requirement: Residue is recorded rather than treated as a breach
 
