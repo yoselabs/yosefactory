@@ -24,4 +24,4 @@
 
 - [x] 4.1 `tests/runtime/test_turn_cycle.py` green (42/42) with no pre-existing assertion weakened; full suite green (255/255). Whole-repo `make check` not run as a gate on this change — a repo-wide result is not a statement about these two files (S184: another worker's dirty file elsewhere fails it regardless of this change). `ruff check` and `ty check` scoped to `src/yosefactory/runtime/turn.py` and `tests/runtime/test_turn_cycle.py`: clean.
 - [x] 4.2 Commit with explicit literal pathspecs only, `PREK_ALLOW_NO_CONFIG=1`, `git restore --staged -- <literal paths>` on failure.
-- [ ] 4.3 Report to the director: whether the first real `git interpret-trailers` call behaved as the design assumed, and anything the tests could not reach because `take_turn` has still never run against a live repository.
+- [x] 4.3 Report to the director: whether the first real `git interpret-trailers` call behaved as the design assumed, and anything the tests could not reach because `take_turn` has still never run against a live repository.
