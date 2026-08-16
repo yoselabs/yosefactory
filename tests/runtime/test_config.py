@@ -42,3 +42,19 @@ def test_thresholds_must_be_positive_integers(value: object) -> None:
 def test_the_repo_pyproject_is_readable_and_valid() -> None:
     guard = load(Path(__file__).resolve().parents[2] / "pyproject.toml")
     assert guard.window >= 1
+
+
+def test_no_cost_ceiling_is_the_default() -> None:
+    """None means no flag is sent, never a limit substituted on the caller's behalf."""
+    assert Guardrails(**DEFAULTS).cost_ceiling_usd is None
+
+
+def test_a_cost_ceiling_is_accepted_and_readable() -> None:
+    guard = from_mapping({"cost_ceiling_usd": 0.02})
+    assert guard.cost_ceiling_usd == 0.02
+
+
+@pytest.mark.parametrize("value", [0, -0.01, True, float("inf"), float("nan")])
+def test_a_cost_ceiling_must_be_a_positive_finite_number(value: object) -> None:
+    with pytest.raises(ConfigError, match="cost_ceiling_usd"):
+        from_mapping({"cost_ceiling_usd": value})

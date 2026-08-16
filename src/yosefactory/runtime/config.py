@@ -7,6 +7,7 @@ credential, or a path.
 
 from __future__ import annotations
 
+import math
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +26,10 @@ DEFAULTS: Final[dict[str, int]] = {
 
 _SECRET_ISH: Final = ("token", "key", "secret", "password", "credential", "path", "home")
 
+# Not in `DEFAULTS`: its default is `None`, meaning "send no flag," and folding it into `DEFAULTS`
+# would make every config load supply a value the caller never asked for.
+_OPTIONAL: Final = ("cost_ceiling_usd",)
+
 
 class ConfigError(ValueError):
     """The guardrail config may not be used as written."""
@@ -36,6 +41,10 @@ class Guardrails:
     wall_clock_seconds: int
     turn_ceiling: int
     grace_seconds: int
+    # None means no flag is sent, not "no limit substituted on the caller's behalf" — the executor
+    # must not pick a number nobody asked for. When set, it is a post-turn detector: the binary checks
+    # after a turn completes and stops the next one, so the turn that crosses the line still finishes.
+    cost_ceiling_usd: float | None = None
 
     def __post_init__(self) -> None:
         for name in ("window", "wall_clock_seconds", "turn_ceiling", "grace_seconds"):
@@ -44,10 +53,15 @@ class Guardrails:
                 raise ConfigError(f"{name} must be a positive integer, got {value!r}")
         if self.wall_clock_seconds >= 6 * 60 * 60:
             raise ConfigError("wall_clock_seconds must sit well under the six-hour CI ceiling, or CI stops the run first")
+        if self.cost_ceiling_usd is not None:
+            ceiling = self.cost_ceiling_usd
+            valid = isinstance(ceiling, (int, float)) and not isinstance(ceiling, bool) and math.isfinite(ceiling) and ceiling > 0
+            if not valid:
+                raise ConfigError(f"cost_ceiling_usd must be a positive finite number or None, got {ceiling!r}")
 
 
 def from_mapping(table: dict[str, Any]) -> Guardrails:
-    unknown = [key for key in table if key not in DEFAULTS]
+    unknown = [key for key in table if key not in DEFAULTS and key not in _OPTIONAL]
     if unknown:
         raise ConfigError(f"unknown guardrail setting(s): {', '.join(sorted(unknown))}")
     smells = [key for key in table if any(hint in key.lower() for hint in _SECRET_ISH)]

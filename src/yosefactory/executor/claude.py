@@ -44,10 +44,10 @@ EMULATED: Mapping[str, str] = {
 
 # Native at the pinned version, measured by running it rather than by reading help text. `cost_ceiling`
 # was in EMULATED above, declared absent, against a binary that has had `--max-budget-usd` all along —
-# a capability claim checked against nothing, which is what §7b rule 4 forbids. It bounds the turn that
-# crossed the line rather than the next one, so it detects overspend and does not prevent it: measured
-# $0.048 against a $0.02 cap. Wiring it is a separate change; the claim is corrected here because a
-# false claim in the map is worse than an absent one.
+# a capability claim checked against nothing, which is what §7b rule 4 forbids. `build_argv` now sends
+# it when `Guardrails.cost_ceiling_usd` is set. It bounds the turn that crossed the line rather than
+# the next one, so it detects overspend and does not prevent it: measured $0.048 against a $0.02 cap
+# — see `claude-executor/cost-ceiling`, which states the detector-not-ceiling distinction normatively.
 NATIVE: Mapping[str, str] = {
     "cost_ceiling": "claude --max-budget-usd; post-turn, so overshoot is bounded by one turn's cost",
 }
@@ -123,7 +123,7 @@ def preflight(*, expect_version: str = PINNED_VERSION) -> Preflight:
     return Preflight(ok=True, version=version)
 
 
-def build_argv(prompt: str, policy: IsolationPolicy) -> list[str]:
+def build_argv(prompt: str, policy: IsolationPolicy, *, cost_ceiling_usd: float | None = None) -> list[str]:
     """Policy becomes invocation here, and nowhere else.
 
     Three flags, each measured against the init event rather than taken from help text — which is the
@@ -139,8 +139,13 @@ def build_argv(prompt: str, policy: IsolationPolicy) -> list[str]:
     Bare mode is never emitted in either posture: it skips repository configuration and also declines
     to read the subscription credential, so on a subscription it buys isolation by making the run
     unable to authenticate at all.
+
+    `cost_ceiling_usd` is orthogonal to the posture and sent in both branches when set. Absent, no
+    flag is emitted — a ceiling is never substituted on the caller's behalf.
     """
     argv = [_binary(), "-p", prompt, "--output-format", "stream-json", "--verbose"]
+    if cost_ceiling_usd is not None:
+        argv += ["--max-budget-usd", str(cost_ceiling_usd)]
     if policy.isolated:
         # Approval must fail rather than wait: there is no human to answer it.
         argv += ["--safe-mode", "--strict-mcp-config", "--disable-slash-commands", "--permission-mode", "manual"]
@@ -215,7 +220,7 @@ def run(
         return RunResult(outcome=outcome, usage=Usage(), transcript_path=transcript, exit_code=None, dirty=False).protocol_outcome
 
     record = govern(
-        build_argv(render(frame, invocation), policy),
+        build_argv(render(frame, invocation), policy, cost_ceiling_usd=limits.cost_ceiling_usd),
         repo=workspace,
         runs_dir=runs_dir,
         run_id=run_id,
