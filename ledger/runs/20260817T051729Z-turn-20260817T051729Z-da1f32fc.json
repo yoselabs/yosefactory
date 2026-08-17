@@ -1,0 +1,12 @@
+{
+  "run_id": "turn-20260817T051729Z-da1f32fc",
+  "started_at": "2026-08-17T05:17:29.403122+00:00",
+  "ended_at": "2026-08-17T05:19:17.938179+00:00",
+  "outcome": "blocked",
+  "enforced_by": "harness",
+  "dirty": true,
+  "isolated": true,
+  "note": "itm-20260817T051620Z-8e9d657b: executor reported needs_approval: the agent was denied a tool it asked for",
+  "failure_kind": null,
+  "blocked_kind": "needs_approval"
+}

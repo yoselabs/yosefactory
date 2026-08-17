@@ -2,3 +2,4 @@
 {"actor": "denis", "event": "priority_set", "event_id": "a7d88157579e4bc1b0259f52925a62e3", "priority": 9, "ts": "2026-08-17T05:16:55.381569+00:00"}
 {"actor": "board-receipt", "attempt": 1, "event": "claimed", "event_id": "2d53235ddd124e98b21ed4100d5df479", "expires_at": "2026-08-17T06:02:29.403122+00:00", "owner": "board-receipt", "ts": "2026-08-17T05:17:30.517750+00:00"}
 {"actor": "board-receipt", "event": "started", "event_id": "2583aa51488b4f4b9e90ddd68ac61740", "ts": "2026-08-17T05:17:30.522339+00:00"}
+{"actor": "board-receipt", "awaiting": {"kind": "question", "nudge_at": [], "ref": "q-20260817T051729Z-32616441", "return_to": "doing", "since": "2026-08-17T05:17:29.403122+00:00", "who": "board-receipt"}, "event": "blocked", "event_id": "139d2b235c6949f38012aa7c89d1466e", "ts": "2026-08-17T05:19:17.930637+00:00"}
