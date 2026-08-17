@@ -98,17 +98,22 @@
 
 ## 6. Close
 
-- [ ] 6.1 `openspec validate run-the-factory-in-a-container --strict` passes
-- [ ] 6.2 Committed: change directory, `pyproject.toml`, `src/yosefactory/runtime/loop.py`,
+- [x] 6.1 `openspec validate run-the-factory-in-a-container --strict` passes
+- [x] 6.2 Committed `fcfeff1`: change directory, `pyproject.toml`, `src/yosefactory/runtime/loop.py`,
       `tests/runtime/test_loop.py`, `Dockerfile`, `docker-compose.yml`, `docker-entrypoint.sh`,
-      `.dockerignore`, `.env.example` — explicit literal pathspecs, `-F <message-file>`,
-      `PREK_ALLOW_NO_CONFIG=1`, `git diff --cached` confirmed empty after. `ops/launchd/`'s
-      deletion recorded in the commit message (Article XIV: deletions outside a MODIFIED block
+      `.dockerignore`, `.env.example`, `.gitignore`, `ledger/spend.jsonl` — explicit literal
+      pathspecs, `-F <message-file>`, `PREK_ALLOW_NO_CONFIG=1`, `git diff --cached` confirmed empty
+      after. `ops/launchd/`'s deletion recorded in the commit message (Article XIV: deletions
+      outside a MODIFIED block
       must be named — this deletion is of files this repo has never archived/promoted, so it is
       not a spec deletion, but naming it keeps the commit honest about what left the tree)
-- [ ] 6.3 Archived; `openspec validate --specs --strict` passes; `containerized-loop/
-      dev-and-production` promoted clean
-- [ ] 6.4 Reported to director: commits, `make check` $0 proof, the in-container receipt (what ran
-      it, the disk-read artefact, from the host), the billed receipt's outcome (or the stated gap
-      if still blocked), quota-legibility finding, token-handling confirmation, anything found
-      that contradicts this dispatch
+- [x] 6.3 Archived as `2026-08-17-run-the-factory-in-a-container`; `openspec validate --specs
+      --strict` passes (20/20); `containerized-loop/dev-and-production` promoted clean (+6, ~0,
+      -0, matching Article XIV)
+- [x] 6.4 Reported to director: commit `fcfeff1` (change) + this archive commit, `make check` $0
+      proof (4→4 lines across the check, 291 passed/11 deselected), both receipts (in-container $0
+      nothing-ready and the $0.163275 billed turn, both read from the host off `.dev-workspace`),
+      the S194 (`claude auth status` presence-not-validity) and S987 (idle planning-turn cost,
+      unmeasured, unremedied by design) findings, token-handling confirmation, and the corrections
+      raised along the way (empty backlog is not free; `add-scheduled-loop`'s launchd approach was
+      itself overturned by Denis's own later framing)
