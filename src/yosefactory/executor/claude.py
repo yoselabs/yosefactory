@@ -26,6 +26,7 @@ from yosefactory.executor.invocation import Invocation
 from yosefactory.executor.outcome import FailureKind, RunOutcome, RunResult, Usage
 from yosefactory.executor.stream import StreamReader
 from yosefactory.protocol.turn import Outcome
+from yosefactory.runtime import spend
 from yosefactory.runtime.config import Guardrails
 from yosefactory.runtime.isolation import IsolationPolicy
 from yosefactory.runtime.supervise import Recorder, govern
@@ -259,9 +260,13 @@ def run(
         outcome, kind = RunOutcome.FAILED, FailureKind.TASK_ERROR
         detail = "workspace scope breached: " + ", ".join(reader.init.workspace_scope_leaks)
 
+    usage = _usage(reader.terminal)
+    # Durable regardless of `runs_dir`'s own lifetime -- see `runtime.spend` module docstring.
+    spend.record(usage.total_cost_usd, run_id=run_id)
+
     return RunResult(
         outcome=outcome,
-        usage=_usage(reader.terminal),
+        usage=usage,
         transcript_path=transcript,
         exit_code=exit_code,
         dirty=record.dirty,

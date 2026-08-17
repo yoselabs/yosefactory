@@ -51,6 +51,15 @@ grace_seconds = 20          # after SIGTERM, before SIGKILL: the agent's chance 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# `live` drives the real pinned `claude` binary and spends real money. Excluded by default so a
+# bare `make check` never bills anything, even accidentally, even repeatedly across a dev loop --
+# recording the spend is not a substitute for this, because recording still lets every iteration of
+# a dev loop bill money. Run explicitly with `make test-live`. Do not fold this back into the
+# default selection to "simplify" the Makefile -- that is the exact regression this exists to close.
+markers = [
+    "live: drives the real pinned claude binary; costs real money; excluded from `make check`",
+]
+addopts = "-m 'not live'"
 
 [tool.codespell]
 # bench/corpus (source PDFs, binary) + bench/outputs (raw engine output, incl.

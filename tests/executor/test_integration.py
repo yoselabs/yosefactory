@@ -25,10 +25,13 @@ from yosefactory.runtime.isolation import IsolationPolicy
 from yosefactory.runtime.runs import read_window
 from yosefactory.runtime.supervise import StreamRecorder
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("claude") is None or (shutil.which("claude") is not None and resolve_version() != PINNED_VERSION),
-    reason=f"needs claude {PINNED_VERSION} on PATH",
-)
+pytestmark = [
+    pytest.mark.live,
+    pytest.mark.skipif(
+        shutil.which("claude") is None or (shutil.which("claude") is not None and resolve_version() != PINNED_VERSION),
+        reason=f"needs claude {PINNED_VERSION} on PATH",
+    ),
+]
 
 
 @pytest.fixture

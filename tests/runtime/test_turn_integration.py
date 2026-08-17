@@ -54,10 +54,13 @@ from yosefactory.runtime.config import Guardrails
 from yosefactory.runtime.isolation import IsolationPolicy
 from yosefactory.runtime.runs import read_window
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("claude") is None or resolve_version() != PINNED_VERSION,
-    reason=f"needs claude {PINNED_VERSION} on PATH",
-)
+pytestmark = [
+    pytest.mark.live,
+    pytest.mark.skipif(
+        shutil.which("claude") is None or resolve_version() != PINNED_VERSION,
+        reason=f"needs claude {PINNED_VERSION} on PATH",
+    ),
+]
 
 SKILL = Path("workflows/turn-skill.md").resolve()
 
