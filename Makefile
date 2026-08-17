@@ -1,4 +1,4 @@
-.PHONY: check lint fix ty test test-live bootstrap guard spell deps
+.PHONY: check lint fix ty test test-live bootstrap guard guard-host-paths spell deps
 
 check: lint ty test
 
@@ -36,6 +36,13 @@ guard:
 	 [ -f "$$g" ] || g="$$HOME/Workspaces/shelf/tools/hooks/forbid-local-shelf-source.py"; \
 	 if [ -f "$$g" ]; then python3 "$$g" --committed; \
 	 else echo "guard: shelf clone not found (set SHELF_HOME) -- CANNOT VERIFY, not a pass" >&2; exit 2; fi
+
+# This repository is public. Refuses the tip commit if it introduced a raw ledger transcript or an
+# absolute host path (tools/hooks/forbid-host-paths.py). Wired as a prek hook too (fast, staged,
+# every commit); this target is the same check run against what actually landed at HEAD, so a
+# `--no-verify` commit is still caught the next time this runs.
+guard-host-paths:
+	@python3 tools/hooks/forbid-host-paths.py --committed
 
 # typos in code, docstrings, and docs.
 spell:

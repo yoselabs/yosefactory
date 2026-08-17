@@ -25,3 +25,12 @@ coverage.xml
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+# Raw agent transcripts (executor/claude.py writes one per run, ledger/runs/<run_id>.stream.jsonl).
+# This repository is public; the raw stream is the executor's own stdout and carries whatever the
+# agent read or wrote that turn, unfiltered -- including absolute host paths, unlike the small
+# structured TurnRecord (ledger/runs/<slug>.json) next to it, which protocol/turn.py already
+# refuses to write with a home-rooted path. Stays on disk, local evidence for whoever ran the
+# turn, never published. See openspec/changes/archive/*/stop-publishing-host-paths/design.md
+# Decision 1 for the argument and what is lost.
+ledger/runs/*.stream.jsonl
