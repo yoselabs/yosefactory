@@ -57,8 +57,8 @@
 
 ## 5. Close
 
-- [ ] 5.1 `openspec validate add-turn-loop --strict`
-- [ ] 5.2 Committed: change directory, `src/yosefactory/runtime/loop.py`,
+- [x] 5.1 `openspec validate add-turn-loop --strict` passed
+- [x] 5.2 Committed `88eecd4`: change directory, `src/yosefactory/runtime/loop.py`,
       `tests/runtime/test_loop.py`, `ledger/spend.jsonl` (the two live rows from 4.2) — explicit
       literal pathspecs, `-F <message-file>`, `PREK_ALLOW_NO_CONFIG=1`, `git diff --cached`
       confirmed empty after
