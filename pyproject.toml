@@ -67,8 +67,9 @@ asyncio_mode = "auto"
 # default selection to "simplify" the Makefile -- that is the exact regression this exists to close.
 markers = [
     "live: drives the real pinned claude binary; costs real money; excluded from `make check`",
+    "boardlive: touches a real GitHub repo over the network via gh; $0 in model spend (no executor runs) but mutates external state and needs gh auth, so it is excluded from make check on the same principle as live, for a different resource",
 ]
-addopts = "-m 'not live'"
+addopts = "-m 'not live and not boardlive'"
 
 [tool.codespell]
 # bench/corpus (source PDFs, binary) + bench/outputs (raw engine output, incl.
