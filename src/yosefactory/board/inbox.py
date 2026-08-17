@@ -25,8 +25,9 @@ from yosefactory.board.adapter import BoardAdapter
 from yosefactory.board.event import Event
 from yosefactory.protocol import backlog, question
 from yosefactory.protocol.eventlog import LogError
-from yosefactory.runtime.turn import ITEMS, QUESTIONS, TurnError
+from yosefactory.runtime.turn import ITEMS, QUESTIONS, TurnError, new_run_id
 from yosefactory.runtime.turn import append as turn_append
+from yosefactory.runtime.turn import commit as turn_commit
 
 CONSUMED_LOG = Path("ledger") / "board" / "consumed.jsonl"
 
@@ -80,23 +81,23 @@ def _record_consumed(path: Path, event: Event, result: str, detail: str) -> None
         handle.write(json.dumps(record, sort_keys=True) + "\n")
 
 
-def _apply_set_priority(repo: Path, item_id: str, payload: dict[str, Any], *, actor: str) -> str:
+def _apply_set_priority(repo: Path, item_id: str, payload: dict[str, Any], *, actor: str) -> tuple[str, Path]:
     item_path = repo / ITEMS / f"{item_id}.jsonl"
     if not item_path.exists():
         raise LookupError(f"item {item_id!r} not found")
     turn_append(item_path, backlog.ITEM, {"event": "priority_set", "priority": payload["priority"]}, actor=actor)
-    return f"priority set to {payload['priority']!r}"
+    return f"priority set to {payload['priority']!r}", item_path
 
 
-def _apply_cancel(repo: Path, item_id: str, payload: dict[str, Any], *, actor: str) -> str:
+def _apply_cancel(repo: Path, item_id: str, payload: dict[str, Any], *, actor: str) -> tuple[str, Path]:
     item_path = repo / ITEMS / f"{item_id}.jsonl"
     if not item_path.exists():
         raise LookupError(f"item {item_id!r} not found")
     turn_append(item_path, backlog.ITEM, {"event": "cancelled", "reason": payload["reason"]}, actor=actor)
-    return "cancelled"
+    return "cancelled", item_path
 
 
-def _apply_answer(repo: Path, item_id: str, payload: dict[str, Any], *, actor: str) -> str:
+def _apply_answer(repo: Path, item_id: str, payload: dict[str, Any], *, actor: str) -> tuple[str, Path]:
     """A free-text `/answer <text>` defaults `verdict` to `accept` -- the question format
     (`protocol/question.py`) requires both fields, and "type something and send it" from a phone
     is not going to also specify a verdict enum. Documented here rather than silently chosen.
@@ -115,7 +116,7 @@ def _apply_answer(repo: Path, item_id: str, payload: dict[str, Any], *, actor: s
     if not question_path.exists():
         raise LookupError(f"question {qid!r} not found")
     turn_append(question_path, question.QUESTION, {"event": "answered", "verdict": "accept", "answer": payload["answer"]}, actor=actor)
-    return f"question {qid} answered; apply_answers() will unblock {item_id} on its next turn"
+    return f"question {qid} answered; apply_answers() will unblock {item_id} on its next turn", question_path
 
 
 _APPLIERS = {
@@ -126,10 +127,17 @@ _APPLIERS = {
 
 
 def ingest(repo: Path, adapter: BoardAdapter, *, actor: str) -> list[IngestResult]:
-    """Apply every unconsumed board command. Never raises on a single command's own rejection."""
+    """Apply every unconsumed board command. Never raises on a single command's own rejection.
+
+    Every event, applied or rejected, is committed before this returns (board-projection/inbox:
+    "a command's effect is committed to git, not left in the working tree") -- one `run_id` shared
+    across the whole call, so an `ingest()` pass reads as one platform action in `git log`, the
+    same way one `take_turn` call is one action regardless of how many paths it touches.
+    """
     path = _consumed_path(repo)
     consumed_ids, since = _load_consumed(path)
     results: list[IngestResult] = []
+    run_id = new_run_id()
     for event in adapter.list_events(since):
         if event.event_id in consumed_ids:
             continue  # already processed in a prior run over an overlapping window
@@ -139,14 +147,16 @@ def ingest(repo: Path, adapter: BoardAdapter, *, actor: str) -> list[IngestResul
         try:
             if item_id is None:
                 raise LookupError("command carries no item_id")
-            detail = applier(repo, item_id, dict(event.payload), actor=actor)
+            detail, touched = applier(repo, item_id, dict(event.payload), actor=actor)
         except (LookupError, LogError, TurnError) as exc:
             detail = str(exc)
             _record_consumed(path, event, "rejected", detail)
+            turn_commit(repo, [path], f"board({event.event_id}): {event.type} rejected — {detail}", run_id=run_id)
             results.append(IngestResult(event.event_id, item_id, "rejected", detail))
             if ref is not None:
                 adapter.comment(str(ref), f"rejected: {detail}")
             continue
         _record_consumed(path, event, "applied", detail)
+        turn_commit(repo, [touched, path], f"board({event.event_id}): {event.type} — {detail}", run_id=run_id)
         results.append(IngestResult(event.event_id, item_id, "applied", detail))
     return results

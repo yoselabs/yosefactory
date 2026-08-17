@@ -537,3 +537,222 @@ def test_a_supplied_ceiling_is_identical_via_either_entrypoint(monkeypatch: pyte
     via_scheduled = captured["bound"].spend_ceiling_usd
 
     assert via_main == via_scheduled == 2.0
+
+
+# ---------------------------------------------------------------------------
+# BoardConfig -- turn-loop/board-wiring: ingestion never invokes an executor,
+# board polling has its own cadence, and turn results reach the board.
+# ---------------------------------------------------------------------------
+
+
+def _board_priority_event(item_id: str, ref: str, priority: int = 9) -> Any:
+    from tests.board.fake_adapter import Event
+
+    return Event(
+        event_id="e1", ts="2026-01-01T00:00:00Z", actor="denis", type="set_priority", payload={"priority": priority, "item_id": item_id}
+    )
+
+
+def test_board_config_requires_a_positive_poll_interval() -> None:
+    from tests.board.fake_adapter import FakeAdapter
+
+    with pytest.raises(loop_mod.LoopError):
+        loop_mod.BoardConfig(adapter=FakeAdapter(), poll_seconds=0)
+
+
+def test_a_board_command_is_applied_but_never_invokes_the_executor_directly(
+    places: Places, limits: Guardrails, spend_log: Path
+) -> None:
+    """The S987 defense: `ingest()` is a pure git write. With no ready item and nothing to plan,
+    `take_turn` stays on the free `nothing-ready` path -- an executor call here would mean board
+    polling grew a direct path to spending money, which is exactly the defect the dispatch named."""
+    from yosefactory.protocol import backlog
+    from yosefactory.runtime.turn import append, new_item_id
+
+    item_path = places.queue / ITEMS / f"{new_item_id()}.jsonl"
+    frame = {"goal": "g", "method": "m", "assumptions": "a"}
+    append(item_path, backlog.ITEM, {"event": "created", "loop": "receipt", "frame": frame}, actor="fixture")
+    append(item_path, backlog.ITEM, {"event": "snoozed", "scheduled_for": "2099-01-01T00:00:00+00:00"}, actor="fixture")
+    git(places.queue, "add", "-A")
+    git(places.queue, "commit", "-q", "-m", "seed a second snoozed item, addressable by the board command")
+
+    from tests.board.fake_adapter import FakeAdapter
+
+    adapter = FakeAdapter()
+    adapter.queued_events = [_board_priority_event(item_path.stem, "1")]
+    board = loop_mod.BoardConfig(adapter=adapter, poll_seconds=1)
+    clock = FakeClock(now=datetime(2026, 1, 1, tzinfo=UTC))
+
+    report = run_loop(
+        places,
+        NeverCalled(),
+        limits=limits,
+        owner="loop-test",
+        skill=SKILL,
+        bound=LoopBound(max_iterations=1),
+        wake=WakeConfig(heartbeat_seconds=99_999, poll_seconds=1),
+        proposal_dir=places.queue.parent,
+        spend_log=spend_log,
+        board=board,
+        now_fn=clock.now_fn,
+        sleep_fn=clock.sleep_fn,
+    )
+
+    assert report.steps[0].record.outcome is Outcome.NOTHING_READY  # NeverCalled would have raised otherwise
+    from yosefactory.protocol.backlog import load, priority
+
+    assert priority(load(item_path)) == 9  # the command DID land -- ingestion is not a no-op
+    assert "board(e1)" in git(places.queue, "log", "--format=%s")  # committed, not left in the tree
+
+
+def test_a_board_command_surfaces_as_a_turn_only_through_external_event(
+    places: Places, limits: Guardrails, spend_log: Path
+) -> None:
+    """No fourth wake reason exists for the board (design.md). A command applied mid-wait moves
+    the queue's own HEAD, and the *existing* EXTERNAL_EVENT check is what wakes the loop for it --
+    the same mechanism a human's manual push already uses."""
+    from yosefactory.protocol import backlog
+    from yosefactory.runtime.turn import append, new_item_id
+
+    item_path = places.queue / ITEMS / f"{new_item_id()}.jsonl"
+    frame = {"goal": "g", "method": "m", "assumptions": "a"}
+    append(item_path, backlog.ITEM, {"event": "created", "loop": "receipt", "frame": frame}, actor="fixture")
+    append(item_path, backlog.ITEM, {"event": "snoozed", "scheduled_for": "2099-01-01T00:00:00+00:00"}, actor="fixture")
+    git(places.queue, "add", "-A")
+    git(places.queue, "commit", "-q", "-m", "seed a second snoozed item")
+
+    from tests.board.fake_adapter import FakeAdapter
+
+    adapter = FakeAdapter()
+    board = loop_mod.BoardConfig(adapter=adapter, poll_seconds=1)
+
+    def plant_board_command() -> None:
+        if clock.sleeps == 1:  # only once -- the first idle wait after the startup turn
+            adapter.queued_events = [_board_priority_event(item_path.stem, "1")]
+
+    clock = FakeClock(now=datetime(2026, 1, 1, tzinfo=UTC))
+    clock.on_sleep.append(plant_board_command)
+
+    report = run_loop(
+        places,
+        NeverCalled(),
+        limits=limits,
+        owner="loop-test",
+        skill=SKILL,
+        bound=LoopBound(max_iterations=2),
+        wake=WakeConfig(heartbeat_seconds=99_999, poll_seconds=1),
+        proposal_dir=places.queue.parent,
+        spend_log=spend_log,
+        board=board,
+        now_fn=clock.now_fn,
+        sleep_fn=clock.sleep_fn,
+    )
+
+    assert [step.wake for step in report.steps] == [WakeReason.STARTUP, WakeReason.EXTERNAL_EVENT]
+
+
+def test_board_polling_has_its_own_cadence_independent_of_wake_poll_seconds(
+    places: Places, limits: Guardrails, spend_log: Path
+) -> None:
+    """`wake.poll_seconds` ticks every second (cheap, local); the board's own interval is 100x
+    longer. The board must not be re-polled on every wake-loop tick -- that would collapse the
+    "two different frequencies" the dispatch required into one, network-bound frequency."""
+    from tests.board.fake_adapter import FakeAdapter
+
+    class CountingAdapter(FakeAdapter):
+        def __init__(self) -> None:
+            super().__init__()
+            self.list_events_calls = 0
+
+        def list_events(self, since: str | None) -> list[Any]:
+            self.list_events_calls += 1
+            return super().list_events(since)
+
+    adapter = CountingAdapter()
+    board = loop_mod.BoardConfig(adapter=adapter, poll_seconds=100)
+    clock = FakeClock(now=datetime(2026, 1, 1, tzinfo=UTC))
+
+    run_loop(
+        places,
+        NeverCalled(),
+        limits=limits,
+        owner="loop-test",
+        skill=SKILL,
+        bound=LoopBound(max_iterations=3),
+        wake=WakeConfig(heartbeat_seconds=30, poll_seconds=1),  # ticks every second
+        proposal_dir=places.queue.parent,
+        spend_log=spend_log,
+        board=board,
+        now_fn=clock.now_fn,
+        sleep_fn=clock.sleep_fn,
+    )
+
+    # Two heartbeats of 30s each pass in ~30 one-second ticks apiece -- far more than 100s/board
+    # poll would allow if the board were polled on every wake tick.
+    assert adapter.list_events_calls < clock.sleeps
+
+
+def test_a_completed_turns_outcome_is_projected_to_the_board(places: Places, limits: Guardrails, spend_log: Path) -> None:
+    from tests.board.fake_adapter import FakeAdapter
+
+    adapter = FakeAdapter()
+    board = loop_mod.BoardConfig(adapter=adapter, poll_seconds=60)
+    executor = BumpPriorityExecutor()
+    clock = FakeClock(now=datetime(2026, 1, 1, tzinfo=UTC))
+
+    from yosefactory.protocol import backlog
+    from yosefactory.runtime.turn import append, new_item_id
+
+    item_path = places.queue / ITEMS / f"{new_item_id()}.jsonl"
+    frame = {"goal": "g", "method": "m", "assumptions": "a"}
+    append(item_path, backlog.ITEM, {"event": "created", "loop": "receipt", "frame": frame}, actor="fixture")
+    git(places.queue, "add", "-A")
+    git(places.queue, "commit", "-q", "-m", "seed a ready item")
+
+    run_loop(
+        places,
+        executor,
+        limits=limits,
+        owner="loop-test",
+        skill=SKILL,
+        bound=LoopBound(max_iterations=1),
+        wake=WakeConfig(heartbeat_seconds=30),
+        proposal_dir=places.queue.parent,
+        spend_log=spend_log,
+        board=board,
+        now_fn=clock.now_fn,
+        sleep_fn=clock.sleep_fn,
+    )
+
+    assert item_path.stem in adapter._by_item
+    ref = adapter._by_item[item_path.stem]
+    assert adapter.threads[ref].state == "doing"  # the priority_set turn advanced ready -> doing
+
+
+def test_the_board_reflects_pre_existing_queue_state_before_the_first_turn(
+    places: Places, limits: Guardrails, spend_log: Path
+) -> None:
+    """`places`'s own fixture already seeds one snoozed item before the loop ever runs -- it must
+    show up on the board even though no turn touches it and the executor is never called."""
+    from tests.board.fake_adapter import FakeAdapter
+
+    adapter = FakeAdapter()
+    board = loop_mod.BoardConfig(adapter=adapter, poll_seconds=60)
+    clock = FakeClock(now=datetime(2026, 1, 1, tzinfo=UTC))
+
+    run_loop(
+        places,
+        NeverCalled(),
+        limits=limits,
+        owner="loop-test",
+        skill=SKILL,
+        bound=LoopBound(max_iterations=1),
+        wake=WakeConfig(heartbeat_seconds=30),
+        proposal_dir=places.queue.parent,
+        spend_log=spend_log,
+        board=board,
+        now_fn=clock.now_fn,
+        sleep_fn=clock.sleep_fn,
+    )
+
+    assert len(adapter.threads) == 1  # the fixture's own pre-seeded snoozed item, projected before any turn ran

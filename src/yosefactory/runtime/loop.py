@@ -55,6 +55,9 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from yosefactory.board.adapter import BoardAdapter
+from yosefactory.board.inbox import ingest
+from yosefactory.board.projection import project_all
 from yosefactory.protocol.turn import TurnRecord
 from yosefactory.runtime import spend
 from yosefactory.runtime.config import Guardrails
@@ -121,6 +124,34 @@ class WakeConfig:
             value = getattr(self, name)
             if not isinstance(value, int) or isinstance(value, bool) or value < 1:
                 raise LoopError(f"{name} must be a positive integer, got {value!r}")
+
+
+@dataclass(frozen=True, slots=True)
+class BoardConfig:
+    """Wires a `BoardAdapter` into the loop, at its own cadence -- decoupled from
+    `WakeConfig.poll_seconds` so a board read (a metered network call, `gh api`) never shares a
+    frequency with the queue's own cheap local poll (a `glob()` and a `git rev-parse`).
+
+    **Why ingesting a board command can never itself start an executor** (the dispatch's own
+    naming of this as the defect to design against, after [[S987]]): `ingest()` is a pure git
+    write -- it calls `runtime.turn.append()`/`commit()`, never `take_turn`, never an `Executor`.
+    A command's effect on *which turn runs next* is mediated only by the existing `EXTERNAL_EVENT`
+    wake condition observing the queue's own `HEAD` -- the same mechanism that already wakes the
+    loop for a human's manual push or another process's commit. There is no direct call site from
+    "the board poll found something" to "run a turn" for a future change to trip over.
+
+    `actor` is the git actor board-originated commits are recorded under, distinct from the
+    loop's own `owner` -- so a later reader of `git log` can tell "Denis typed this on his phone"
+    from "the loop decided this," even though both end up as ordinary commits in the same queue.
+    """
+
+    adapter: BoardAdapter
+    actor: str = "board"
+    poll_seconds: int = 60
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.poll_seconds, int) or isinstance(self.poll_seconds, bool) or self.poll_seconds < 1:
+            raise LoopError(f"poll_seconds must be a positive integer, got {self.poll_seconds!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,9 +230,19 @@ def _await_wake(
     last_heartbeat: datetime,
     now_fn: Callable[[], datetime],
     sleep_fn: Callable[[float], None],
+    on_tick: Callable[[], None] | None = None,
 ) -> WakeReason:
-    """Block until one condition holds, cheapest check first. Spends nothing — no executor runs here."""
+    """Block until one condition holds, cheapest check first. Spends nothing — no executor runs here.
+
+    `on_tick`, when given, runs once per pass through this loop, before the wake checks -- this is
+    where board polling attaches (`run_loop`'s `_poll_board_if_due`), so a command it applies can
+    move `HEAD` and be picked up by the very same pass's `EXTERNAL_EVENT` check. `on_tick` itself
+    never returns a wake reason and is never the thing that decides to wake; it only writes to git,
+    same as any other external actor this loop already tolerates.
+    """
     while True:
+        if on_tick is not None:
+            on_tick()
         present = items(places.queue)
         if any(eligible(item) for item in present):
             return WakeReason.READY_ITEM
@@ -247,6 +288,7 @@ def run_loop(
     test_command: tuple[str, ...] = DEFAULT_TEST_COMMAND,
     isolated: bool = True,
     spend_log: Path = spend.SPEND_LOG,
+    board: BoardConfig | None = None,
     now_fn: Callable[[], datetime] = lambda: datetime.now(UTC),
     sleep_fn: Callable[[float], None] = time.sleep,
 ) -> LoopReport:
@@ -259,6 +301,13 @@ def run_loop(
     Refuses before the first turn if `places.workspace` is dirty (`_refuse_if_dirty`) — see that
     function's docstring for why a bind-mounted dev container makes this the default risk rather
     than a rare accident.
+
+    When `board` is given, two things happen that are otherwise only reachable by calling
+    `board.inbox.ingest()` / `board.projection.project_all()` by hand (`turn-loop/board-wiring`):
+    unconsumed board commands are applied at `board.poll_seconds`, independent of `wake`'s own
+    cadence, and every turn's result — including the pre-existing queue state before the loop's
+    first turn — is projected back to the board. Neither ever starts an executor; see
+    `BoardConfig`'s own docstring for why that is structural, not a convention.
     """
     _refuse_if_dirty(places.workspace)
     start_moment = now_fn()
@@ -266,9 +315,26 @@ def run_loop(
     iteration = 0
     last_head = _queue_head(places.queue)
     last_heartbeat = start_moment
+    last_board_poll: datetime | None = None
 
     def spent_so_far() -> float:
         return spend.total_since(start_moment, spend_log)
+
+    def poll_board_if_due() -> None:
+        nonlocal last_board_poll
+        if board is None:
+            return
+        now = now_fn()
+        if last_board_poll is not None and (now - last_board_poll).total_seconds() < board.poll_seconds:
+            return
+        ingest(places.queue, board.adapter, actor=board.actor)
+        last_board_poll = now
+
+    def project_to_board() -> None:
+        if board is not None:
+            project_all(places.queue, board.adapter)
+
+    project_to_board()  # the pre-existing queue state, before this loop has run a single turn
 
     while True:
         # Checked before waking: a count already at its cap needs no wait to know that.
@@ -276,10 +342,17 @@ def run_loop(
             return LoopReport(steps=tuple(steps), stopped=StopReason.MAX_ITERATIONS, spend_usd=spent_so_far())
 
         if iteration == 0:
+            poll_board_if_due()  # a command that arrived before the loop started still applies
             wake_reason = WakeReason.STARTUP
         else:
             wake_reason = _await_wake(
-                places, wake, last_head=last_head, last_heartbeat=last_heartbeat, now_fn=now_fn, sleep_fn=sleep_fn
+                places,
+                wake,
+                last_head=last_head,
+                last_heartbeat=last_heartbeat,
+                now_fn=now_fn,
+                sleep_fn=sleep_fn,
+                on_tick=poll_board_if_due,
             )
 
         # Checked again after waking, before spending anything: the wait itself can be where the
@@ -303,6 +376,7 @@ def run_loop(
             isolated=isolated,
         )
         _record_wake(places, record, wake_reason)
+        project_to_board()  # every outcome, not only advanced -- a stall belongs on the board too
         steps.append(LoopStep(wake=wake_reason, record=record))
         iteration += 1
         last_head = _queue_head(places.queue)
@@ -345,12 +419,28 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
     )
     parser.add_argument("--heartbeat-seconds", type=int, default=300)
     parser.add_argument("--poll-seconds", type=int, default=5)
+    parser.add_argument(
+        "--board-repo",
+        default=None,
+        help="'owner/name' -- when given, wires a GitHubIssuesAdapter into the loop (turn-loop/"
+        "board-wiring). Omitted by default: the loop runs exactly as it did before this existed.",
+    )
+    parser.add_argument("--board-poll-seconds", type=int, default=60, help="Ignored unless --board-repo is given.")
+    parser.add_argument("--board-actor", default="board", help="Ignored unless --board-repo is given.")
     args = parser.parse_args(argv)
 
     repo = args.repo.resolve()
     places = Places.local(repo)
     limits = Guardrails(window=10, wall_clock_seconds=45 * 60, turn_ceiling=40, grace_seconds=20, question_deadline_hours=24)
     policy = IsolationPolicy(isolated=True)
+
+    board_config: BoardConfig | None = None
+    if args.board_repo is not None:
+        from yosefactory.board.github import GitHubIssuesAdapter
+
+        board_config = BoardConfig(
+            adapter=GitHubIssuesAdapter(args.board_repo), actor=args.board_actor, poll_seconds=args.board_poll_seconds
+        )
 
     def executor(
         frame: Mapping[str, Any],
@@ -371,6 +461,7 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
         skill=args.skill,
         bound=LoopBound(max_iterations=args.max_iterations, spend_ceiling_usd=args.spend_ceiling_usd),
         wake=WakeConfig(heartbeat_seconds=args.heartbeat_seconds, poll_seconds=args.poll_seconds),
+        board=board_config,
     )
     sys.stdout.write(
         f"stopped: {report.stopped.value}; iterations: {len(report.steps)}; spend: ${report.spend_usd:.4f}\n"
