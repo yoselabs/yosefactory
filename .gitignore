@@ -16,6 +16,10 @@ coverage.xml
 .vscode/
 .idea/
 
+# docker-compose.yml's dev-only loop workspace -- a throwaway git repo (queue+workspace), never
+# the same tree as the source itself. See openspec/changes/run-the-factory-in-a-container/design.md D1.
+.dev-workspace/
+
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db

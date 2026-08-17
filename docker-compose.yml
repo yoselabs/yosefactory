@@ -1,0 +1,45 @@
+# Development compose file. See openspec/changes/run-the-factory-in-a-container/design.md for the
+# reasoning behind every choice here, especially D1 (why the source mount and the loop's own
+# queue/workspace mount are two different paths, never one) and D2 (auth).
+#
+# Usage:
+#   cp .env.example .env && $EDITOR .env         # fill in CLAUDE_CODE_OAUTH_TOKEN yourself
+#   git init ./.dev-workspace && ...              # a small git repo, see README/tasks.md --
+#                                                  # this is the loop's queue+workspace, NOT /app
+#   docker compose run --rm factory                # one bounded invocation
+#   docker compose up factory                      # same, backgroundable
+#
+# This is dev-only. Production posture (not built here -- see proposal.md Non-goals) would drop
+# the source bind mount (run the built image as-is), use a named volume or a real cloned repo for
+# the queue/workspace instead of a bind-mounted throwaway directory, and choose its own restart
+# policy / interval deliberately rather than inheriting this file's "run on demand" default.
+
+services:
+  factory:
+    build:
+      context: .
+      args:
+        CLAUDE_VERSION: "2.1.225"
+    env_file:
+      - .env
+    volumes:
+      # Source, live-editable -- a change here takes effect on the NEXT command run inside the
+      # container, no rebuild. The image's own /opt/venv (outside /app) is untouched by this mount.
+      - ./:/app
+      # The loop's queue+workspace. Deliberately NOT /app (D1 -- the mount race): this is a
+      # separate small git repository the developer creates once, so the loop never points at the
+      # same tree a human has open in an editor.
+      - ./.dev-workspace:/data/workspace
+    working_dir: /app
+    # No restart policy: a developer runs this on demand and watches it -- the same "a human is
+    # present" premise D022 scopes its own cost-ceiling deferral to, even though the entrypoint
+    # below carries a mandatory ceiling regardless of who started it.
+    command:
+      - "yosefactory-loop-scheduled"
+      - "/data/workspace"
+      - "--owner"
+      - "scheduler"
+      - "--max-iterations"
+      - "5"
+      - "--spend-ceiling-usd"
+      - "2.00"

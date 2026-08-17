@@ -158,6 +158,39 @@ def _queue_head(repo: Path) -> str | None:
     return completed.stdout.strip() if completed.returncode == 0 else None
 
 
+def _refuse_if_dirty(workspace: Path) -> None:
+    """Refuse to start the loop if `workspace` has uncommitted changes, before any turn runs.
+
+    Found by `add-scheduled-loop`'s `launchd` receipt, not designed ahead of it: a development
+    bind mount that makes source edits live is, by construction, the same mechanism that lets a
+    running loop and a human editor race on the same files. `take_turn`'s commit path goes through
+    `prek`, which stashes the *entire* tree for the duration of any hook run (S184,
+    orchestration.md Article XI) -- against a dirty tree that collides with whatever a human has
+    open, unstashed, uncommitted. The first time this happened it surfaced three layers down as
+    `TurnError: commit refused: Restored working tree changes from .../prek/patches/....patch` --
+    correct in that nothing was lost or corrupted, but a confusing way to learn "someone was
+    editing this." This check moves the same refusal to the top, before any executor could run,
+    with a message that names the actual condition.
+
+    This is defense in depth, not the primary mitigation -- the primary one is architectural
+    (design.md D1): the container's default compose configuration never points the loop at the
+    same path it bind-mounts as live source. This guard exists for the case where it is pointed
+    there anyway, deliberately or by misconfiguration.
+    """
+    completed = subprocess.run(
+        ["git", "status", "--porcelain"],  # noqa: S607
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode == 0 and completed.stdout.strip():
+        raise LoopError(
+            f"refusing to start: {workspace} has uncommitted changes -- a running loop and a human "
+            "editing the same tree race on take_turn's own commit (see runtime.loop._refuse_if_dirty)"
+        )
+
+
 def _await_wake(
     places: Places,
     wake: WakeConfig,
@@ -222,7 +255,12 @@ def run_loop(
     The loop never holds an item, a lock, or a decision across iterations — each call to `take_turn`
     is a complete, independent transaction exactly as it is when a human runs one by hand. What this
     function adds is only the thing a human was: deciding *when* to call it again, and stopping.
+
+    Refuses before the first turn if `places.workspace` is dirty (`_refuse_if_dirty`) — see that
+    function's docstring for why a bind-mounted dev container makes this the default risk rather
+    than a rare accident.
     """
+    _refuse_if_dirty(places.workspace)
     start_moment = now_fn()
     steps: list[LoopStep] = []
     iteration = 0
@@ -271,12 +309,20 @@ def run_loop(
         last_heartbeat = now_fn()
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
     """Run the loop against one local repository, both queue and workspace (`Places.local`).
 
     Cross-repo, cross-machine and non-default executor configuration are left to a caller that
     imports `run_loop` directly — this is the shape one person on one machine actually reaches for,
     matching `stall.main`'s scope discipline rather than growing a general-purpose launcher.
+
+    `unattended` makes `--spend-ceiling-usd` a required argument instead of an optional one.
+    D022 §3 defers a program-wide cost ceiling on the premise a human is present to watch and
+    interrupt a run; that premise holds for a person typing this command and does not hold for a
+    scheduler invoking it with nobody there. Rather than re-litigate the deferral, this keeps
+    interactive use exactly as it was (`unattended=False`, the default `main()` still gets when
+    called directly) and adds the requirement only on the path a scheduler actually takes —
+    `scheduled_main()`, below.
     """
     import argparse
     import sys
@@ -289,7 +335,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--owner", default="loop")
     parser.add_argument("--skill", type=Path, default=Path("workflows/turn-skill.md"))
     parser.add_argument("--max-iterations", type=int, required=True)
-    parser.add_argument("--spend-ceiling-usd", type=float, default=None)
+    parser.add_argument(
+        "--spend-ceiling-usd",
+        type=float,
+        default=None,
+        required=unattended,
+        help="Required when invoked unattended (a scheduler, never a person) -- D022 defers a "
+        "program-wide ceiling on the premise a human is present; that premise fails here.",
+    )
     parser.add_argument("--heartbeat-seconds", type=int, default=300)
     parser.add_argument("--poll-seconds", type=int, default=5)
     args = parser.parse_args(argv)
@@ -325,6 +378,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     for step in report.steps:
         sys.stdout.write(f"  {step.wake.value:16} {step.record.outcome.value:14} {step.record.note}\n")
     return 0
+
+
+def scheduled_main(argv: Sequence[str] | None = None) -> int:
+    """Entry point for a scheduler (`launchd`, `cron`) — never a person.
+
+    Identical to `main()` except `--spend-ceiling-usd` is mandatory: see `main`'s own docstring for
+    why the requirement lives on this entrypoint and not on `main` itself. This is the function
+    `ops/launchd/dev.yosefactory.loop.plist.template` names, via the `yosefactory-loop-scheduled`
+    console script (`pyproject.toml`) — a scheduler invokes a stable installed script, never
+    `python -m` re-typed inside a plist.
+    """
+    return main(argv, unattended=True)
 
 
 if __name__ == "__main__":  # pragma: no cover

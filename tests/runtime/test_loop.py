@@ -174,6 +174,42 @@ def test_wake_config_requires_positive_intervals() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _refuse_if_dirty -- the mount-race guard found by add-scheduled-loop's launchd receipt
+# ---------------------------------------------------------------------------
+
+
+def test_refuse_if_dirty_raises_on_an_uncommitted_change(repo: Path) -> None:
+    (repo / "uncommitted.txt").write_text("not committed\n", encoding="utf-8")
+    with pytest.raises(loop_mod.LoopError, match=str(repo)):
+        loop_mod._refuse_if_dirty(repo)
+
+
+def test_refuse_if_dirty_is_silent_on_a_clean_tree(repo: Path) -> None:
+    loop_mod._refuse_if_dirty(repo)  # must not raise
+
+
+def test_run_loop_refuses_before_any_turn_when_the_workspace_is_dirty(places: Places, limits: Guardrails, spend_log: Path) -> None:
+    (places.workspace / "uncommitted.txt").write_text("not committed\n", encoding="utf-8")
+    before = list((places.ledger).glob("*")) if places.ledger.exists() else []
+
+    with pytest.raises(loop_mod.LoopError):
+        run_loop(
+            places,
+            NeverCalled(),
+            limits=limits,
+            owner="loop-test",
+            skill=SKILL,
+            bound=LoopBound(max_iterations=1),
+            wake=WakeConfig(heartbeat_seconds=30, poll_seconds=5),
+            proposal_dir=places.queue.parent,
+            spend_log=spend_log,
+        )
+
+    after = list((places.ledger).glob("*")) if places.ledger.exists() else []
+    assert after == before  # no ledger record was written -- refused before the first turn
+
+
+# ---------------------------------------------------------------------------
 # Self-chaining and the bound, at $0 — the `nothing-ready` path never starts an executor
 # ---------------------------------------------------------------------------
 
@@ -447,3 +483,57 @@ def test_the_spend_ceiling_is_ignored_when_unset(places: Places, limits: Guardra
     )
     assert report.stopped is loop_mod.StopReason.MAX_ITERATIONS
     assert len(report.steps) == 2
+
+
+# ---------------------------------------------------------------------------
+# scheduled_main -- the scheduler-only entrypoint requires a spend ceiling; main() does not
+# ---------------------------------------------------------------------------
+
+
+def test_scheduled_main_refuses_to_start_without_a_spend_ceiling(monkeypatch: pytest.MonkeyPatch) -> None:
+    """argparse SHALL reject the invocation before `run_loop` is ever reached -- the ceiling is
+    enforced by the parser, not by a convention an installer could forget."""
+    called = False
+
+    def fail_if_called(*args: Any, **kwargs: Any) -> Any:
+        nonlocal called
+        called = True
+        raise AssertionError("run_loop must not be called when --spend-ceiling-usd is missing")
+
+    monkeypatch.setattr(loop_mod, "run_loop", fail_if_called)
+    with pytest.raises(SystemExit):
+        loop_mod.scheduled_main(["--max-iterations", "1"])
+    assert called is False
+
+
+def test_main_still_does_not_require_a_spend_ceiling(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """`main()`'s own default (`unattended=False`) is unchanged by this entrypoint's addition --
+    D022's interactive deferral stands."""
+    captured: dict[str, Any] = {}
+
+    def fake_run_loop(places: Places, executor: Any, **kwargs: Any) -> Any:
+        captured["bound"] = kwargs["bound"]
+        return loop_mod.LoopReport(steps=(), stopped=loop_mod.StopReason.MAX_ITERATIONS, spend_usd=0.0)
+
+    monkeypatch.setattr(loop_mod, "run_loop", fake_run_loop)
+    exit_code = loop_mod.main(["--max-iterations", "1", str(tmp_path)])
+    assert exit_code == 0
+    assert captured["bound"].spend_ceiling_usd is None
+
+
+def test_a_supplied_ceiling_is_identical_via_either_entrypoint(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_run_loop(places: Places, executor: Any, **kwargs: Any) -> Any:
+        captured["bound"] = kwargs["bound"]
+        return loop_mod.LoopReport(steps=(), stopped=loop_mod.StopReason.MAX_ITERATIONS, spend_usd=0.0)
+
+    monkeypatch.setattr(loop_mod, "run_loop", fake_run_loop)
+
+    loop_mod.main(["--max-iterations", "1", "--spend-ceiling-usd", "2.0", str(tmp_path)])
+    via_main = captured["bound"].spend_ceiling_usd
+
+    loop_mod.scheduled_main(["--max-iterations", "1", "--spend-ceiling-usd", "2.0", str(tmp_path)])
+    via_scheduled = captured["bound"].spend_ceiling_usd
+
+    assert via_main == via_scheduled == 2.0
