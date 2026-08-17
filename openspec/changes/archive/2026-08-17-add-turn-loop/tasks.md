@@ -62,8 +62,8 @@
       `tests/runtime/test_loop.py`, `ledger/spend.jsonl` (the two live rows from 4.2) — explicit
       literal pathspecs, `-F <message-file>`, `PREK_ALLOW_NO_CONFIG=1`, `git diff --cached`
       confirmed empty after
-- [ ] 5.3 Archived; `turn-loop/wake-and-bound` promoted; `openspec validate --specs --strict`
-      passes afterward
-- [ ] 5.4 Reported to the director: commits, `make check` result, the live receipt's exact command
+- [x] 5.3 Archived `d8fab55` → `2026-08-17-add-turn-loop`; `turn-loop/wake-and-bound` promoted
+      clean (+5 requirements, 0 modified, 0 deleted); `openspec validate --specs --strict` passes
+- [x] 5.4 Reported to the director: commits, `make check` result, the live receipt's exact command
       and ledger/spend rows, the loop's bound in one sentence, anything found that contradicts the
       dispatch
