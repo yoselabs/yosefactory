@@ -11,13 +11,11 @@ caller-supplied directory.
 deliberate: spend belongs to the platform that paid for the call, not to the repository the call
 happened to be working on.
 
-**Second instance of a known limitation.** The `Path(__file__).resolve().parents[N]` walk is the same
-pattern `protocol/backlog.py`'s `VOCABULARY_SPEC` already uses, and for the same reason: it assumes
-this package runs from its own checkout, which is this repo's only deployment model today. It
-resolves correctly in a dev checkout and breaks silently (writes into a nonexistent or wrong tree) if
-yosefactory is ever installed apart from its own source tree. Not fixed here — there are now two call
-sites with this limitation, so whoever addresses it should fix both rather than finding the second one
-by surprise.
+**How that location is found.** `paths.repo_root` walks up from the package to the nearest
+`pyproject.toml` or `.git`, the same way `protocol/backlog.py`'s `VOCABULARY_SPEC` does. Spend rows
+are the one record that must not be lost, so the failure mode matters: installed apart from its own
+source tree there is no `ledger/` to write to, and that raises at import instead of appending real
+dollars into a directory nothing will ever read.
 
 Every real invocation records here — test and production alike — because "what did today cost" does
 not distinguish who paid for the call. Each row carries `run_id` so it joins to the matching record
@@ -30,9 +28,9 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-# Same depth-3 walk as `protocol/backlog.py::VOCABULARY_SPEC` — see the module docstring's
-# "second instance" note.
-SPEND_LOG = Path(__file__).resolve().parents[3] / "ledger" / "spend.jsonl"
+from yosefactory.paths import repo_root
+
+SPEND_LOG = repo_root() / "ledger" / "spend.jsonl"
 
 
 def record(total_cost_usd: float, *, run_id: str, log_path: Path = SPEND_LOG) -> None:

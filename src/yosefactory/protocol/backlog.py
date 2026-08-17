@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from yosefactory.paths import repo_root
 from yosefactory.protocol.eventlog import ANY, ANY_NON_TERMINAL, Declaration, FoldedLog, ReturnTo, Rule
 from yosefactory.protocol.eventlog import load as _load
 
@@ -52,12 +53,10 @@ _AWAITING_FIELDS = ("kind", "ref", "who", "since", "return_to", "nudge_at")
 # is how `Invocation.vocabulary` points an agent at that mirror — never a second definition of the
 # vocabulary, just the pointer.
 #
-# `__file__`-relative: assumes this package runs from its own checkout, which is this repo's only
-# deployment model today (`CLAUDE.md`: "Personal workflow platform... One user"). If yosefactory is
-# ever installed apart from its own `openspec/` tree, this path silently points at a file that does
-# not exist there, and the agent's `Read` of it fails rather than teaching it anything — named here
-# as a limitation, not fixed, because no second deployment model exists yet to fix it for.
-VOCABULARY_SPEC = Path(__file__).resolve().parents[3] / "openspec" / "specs" / "backlog-item-format" / "spec.md"
+# Resolved by marker walk, not by counting parents: this module's depth under the root is not a fact
+# the pointer should depend on. Installed apart from its own `openspec/` tree, `repo_root` raises at
+# import rather than handing an agent a path whose `Read` fails with nothing to say about why.
+VOCABULARY_SPEC = repo_root() / "openspec" / "specs" / "backlog-item-format" / "spec.md"
 
 ITEM = Declaration(
     initial="created",
