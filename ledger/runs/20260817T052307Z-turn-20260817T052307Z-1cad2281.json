@@ -1,0 +1,12 @@
+{
+  "run_id": "turn-20260817T052307Z-1cad2281",
+  "started_at": "2026-08-17T05:23:07.536364+00:00",
+  "ended_at": "2026-08-17T05:29:15.364152+00:00",
+  "outcome": "failed",
+  "enforced_by": "harness",
+  "dirty": true,
+  "isolated": true,
+  "note": "itm-20260817T052132Z-5395f841: VERIFICATION FAILED: tree: working tree has 6 uncommitted change(s)",
+  "failure_kind": null,
+  "blocked_kind": null
+}
