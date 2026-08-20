@@ -546,15 +546,15 @@ def test_unattended_entrypoint_does_not_default_to_a_posture_that_denies_tool_ca
     not inherit `main()`'s interactive `isolated` default -- that posture requires human approval
     for every tool call, and an unattended run has no human to give it."""
     from yosefactory.executor import claude as claude_mod
-    from yosefactory.runtime.isolation import IsolationPolicy
 
-    captured: dict[str, IsolationPolicy] = {}
+    captured: dict[str, Any] = {}
 
     def fake_claude_run(frame: Any, workspace: Any, limits: Any, **kwargs: Any) -> Any:
         captured["policy"] = kwargs["policy"]
         return RunResult(outcome=RunOutcome.SUCCESS, usage=Usage(), transcript_path=tmp_path / "t", exit_code=0, dirty=False)
 
     def fake_run_loop(places: Places, executor: Any, **kwargs: Any) -> Any:
+        captured["isolated_kwarg"] = kwargs["isolated"]
         executor({"goal": "x"}, tmp_path, kwargs["limits"], run_id="r", runs_dir=tmp_path)
         return loop_mod.LoopReport(steps=(), stopped=loop_mod.StopReason.MAX_ITERATIONS, spend_usd=0.0)
 
@@ -566,11 +566,15 @@ def test_unattended_entrypoint_does_not_default_to_a_posture_that_denies_tool_ca
     assert unattended_policy.isolated is False
     assert unattended_policy.workspace_scoped is True
     assert unattended_policy.opt_out_reason
+    # `run_loop`'s own `isolated` kwarg feeds the turn record, separately from `policy` above --
+    # it must agree, or the record says `isolated: true` for a run that was not.
+    assert captured["isolated_kwarg"] is False
 
     loop_mod.main(["--max-iterations", "1", str(tmp_path)])
     interactive_policy = captured["policy"]
     assert interactive_policy.isolated is True
     assert interactive_policy.workspace_scoped is False
+    assert captured["isolated_kwarg"] is True
 
 
 # ---------------------------------------------------------------------------

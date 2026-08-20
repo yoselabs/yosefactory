@@ -483,6 +483,15 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
         bound=LoopBound(max_iterations=args.max_iterations, spend_ceiling_usd=args.spend_ceiling_usd),
         wake=WakeConfig(heartbeat_seconds=args.heartbeat_seconds, poll_seconds=args.poll_seconds),
         board=board_config,
+        # `run_loop`'s own `isolated` parameter (default True) is a SEPARATE value from `policy`
+        # above -- it feeds `take_turn`'s turn-record field, not the executor invocation. Left
+        # unwired, every record says `isolated: true` regardless of what posture actually ran --
+        # found reading the first real container receipt's own ledger record (D1 built the
+        # `workspace_scoped` posture but never wired this half, so the record contradicted the
+        # invocation that produced it). `run-guardrails/agent-isolation`'s own requirement is that
+        # an opted-out run is identifiable afterwards from its record; this line is what makes
+        # that true for `unattended` runs.
+        isolated=policy.isolated,
     )
     sys.stdout.write(
         f"stopped: {report.stopped.value}; iterations: {len(report.steps)}; spend: ${report.spend_usd:.4f}\n"
