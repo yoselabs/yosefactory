@@ -1,0 +1,12 @@
+{
+  "run_id": "turn-20260820T031858Z-63bf1f2c",
+  "started_at": "2026-08-20T03:18:58.111659+00:00",
+  "ended_at": "2026-08-20T03:18:59.114567+00:00",
+  "outcome": "failed",
+  "enforced_by": "harness",
+  "dirty": true,
+  "isolated": true,
+  "note": "planning: executor reported failed: no terminal event",
+  "failure_kind": "bad_output",
+  "blocked_kind": null
+}
