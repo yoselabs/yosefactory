@@ -539,6 +539,40 @@ def test_a_supplied_ceiling_is_identical_via_either_entrypoint(monkeypatch: pyte
     assert via_main == via_scheduled == 2.0
 
 
+def test_unattended_entrypoint_does_not_default_to_a_posture_that_denies_tool_calls(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`run-the-loop-inside-the-container`: `scheduled_main` (the container's own entrypoint) must
+    not inherit `main()`'s interactive `isolated` default -- that posture requires human approval
+    for every tool call, and an unattended run has no human to give it."""
+    from yosefactory.executor import claude as claude_mod
+    from yosefactory.runtime.isolation import IsolationPolicy
+
+    captured: dict[str, IsolationPolicy] = {}
+
+    def fake_claude_run(frame: Any, workspace: Any, limits: Any, **kwargs: Any) -> Any:
+        captured["policy"] = kwargs["policy"]
+        return RunResult(outcome=RunOutcome.SUCCESS, usage=Usage(), transcript_path=tmp_path / "t", exit_code=0, dirty=False)
+
+    def fake_run_loop(places: Places, executor: Any, **kwargs: Any) -> Any:
+        executor({"goal": "x"}, tmp_path, kwargs["limits"], run_id="r", runs_dir=tmp_path)
+        return loop_mod.LoopReport(steps=(), stopped=loop_mod.StopReason.MAX_ITERATIONS, spend_usd=0.0)
+
+    monkeypatch.setattr(claude_mod, "run", fake_claude_run)
+    monkeypatch.setattr(loop_mod, "run_loop", fake_run_loop)
+
+    loop_mod.scheduled_main(["--max-iterations", "1", "--spend-ceiling-usd", "2.0", str(tmp_path)])
+    unattended_policy = captured["policy"]
+    assert unattended_policy.isolated is False
+    assert unattended_policy.workspace_scoped is True
+    assert unattended_policy.opt_out_reason
+
+    loop_mod.main(["--max-iterations", "1", str(tmp_path)])
+    interactive_policy = captured["policy"]
+    assert interactive_policy.isolated is True
+    assert interactive_policy.workspace_scoped is False
+
+
 # ---------------------------------------------------------------------------
 # BoardConfig -- turn-loop/board-wiring: ingestion never invokes an executor,
 # board polling has its own cadence, and turn results reach the board.

@@ -432,7 +432,28 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
     repo = args.repo.resolve()
     places = Places.local(repo)
     limits = Guardrails(window=10, wall_clock_seconds=45 * 60, turn_ceiling=40, grace_seconds=20, question_deadline_hours=24)
-    policy = IsolationPolicy(isolated=True)
+    # `unattended` is the same signal `--spend-ceiling-usd`'s requiredness already keys off (D022:
+    # a human is or is not present). The posture correct for a person on their own laptop is not
+    # the posture correct for a process nobody is watching: `isolated` (safe-mode,
+    # `--permission-mode manual`) denies every tool call pending an approval nobody unattended can
+    # give. `scheduled_main` -- the container's own entrypoint -- goes through here with
+    # `unattended=True`. See `run-the-loop-inside-the-container` design.md D1/D3 for the boundary
+    # this relies on instead: container mount topology, not this policy, is what keeps an
+    # unattended run from reaching anything outside its workspace.
+    policy = (
+        IsolationPolicy(
+            isolated=False,
+            workspace_scoped=True,
+            opt_out_reason=(
+                "unattended (scheduler/container) invocation: mount topology, not this policy, "
+                "bounds what the run can reach outside its workspace; workspace_scoped + a "
+                "non-denying permission mode is required for real work with no human present to "
+                "approve a prompt"
+            ),
+        )
+        if unattended
+        else IsolationPolicy(isolated=True)
+    )
 
     board_config: BoardConfig | None = None
     if args.board_repo is not None:

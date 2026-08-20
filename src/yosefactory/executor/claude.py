@@ -146,7 +146,11 @@ def build_argv(prompt: str, policy: IsolationPolicy, *, cost_ceiling_usd: float 
     settings, skills and `.mcp.json` while excluding the host's user-level `CLAUDE.md`, skills,
     plugins and `settings.json`-declared MCP servers. It is a genuinely different mechanism from
     `isolated`, not a lighter version of it — the policy already refuses the two together because
-    safe mode zeroes `--setting-sources` regardless of its value.
+    safe mode zeroes `--setting-sources` regardless of its value. It also carries
+    `--permission-mode bypassPermissions` (`run-the-loop-inside-the-container`): this posture is
+    the one an unattended run uses, and a posture that admits repository configuration but still
+    gates every tool call on a human who is not there fails exactly the way the old unconditional
+    `isolated` default failed.
 
     `cost_ceiling_usd` is orthogonal to the posture and sent in both branches when set. Absent, no
     flag is emitted — a ceiling is never substituted on the caller's behalf.
@@ -162,7 +166,12 @@ def build_argv(prompt: str, policy: IsolationPolicy, *, cost_ceiling_usd: float 
         # it admits rather than inheriting it.
         argv += ["--strict-mcp-config"]
         if policy.workspace_scoped:
-            argv += ["--setting-sources", "project,local"]
+            # Carte blanche inside the workspace, per Denis's ruling (run-the-loop-inside-the-
+            # container): workspace_scoped exists for unattended runs, and an invocation that
+            # still gates every tool call on human approval fails the same way the old
+            # unconditional `isolated` default did. bypassPermissions is the policy half of the
+            # boundary; the container's mount topology (not this flag) is the other half.
+            argv += ["--setting-sources", "project,local", "--permission-mode", "bypassPermissions"]
         if policy.settings_path:
             argv += ["--settings", policy.settings_path]
         if policy.mcp_config_path:
