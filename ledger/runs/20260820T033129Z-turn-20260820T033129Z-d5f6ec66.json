@@ -1,0 +1,12 @@
+{
+  "run_id": "turn-20260820T033129Z-d5f6ec66",
+  "started_at": "2026-08-20T03:31:29.772733+00:00",
+  "ended_at": "2026-08-20T03:41:45.886096+00:00",
+  "outcome": "advanced",
+  "enforced_by": "agent",
+  "dirty": true,
+  "isolated": true,
+  "note": "itm-20260820T033129Z-894e4b16: note -> doing",
+  "failure_kind": null,
+  "blocked_kind": null
+}
