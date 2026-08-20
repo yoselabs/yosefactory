@@ -166,6 +166,23 @@ def test_a_registered_plugin_is_residue_and_not_a_breach(tmp_path: Path) -> None
     assert reader.init.residue == ("plugins=1",)
 
 
+def test_init_reports_the_model_it_actually_ran(tmp_path: Path) -> None:
+    """Measured against the pinned binary: `model` is on `init`; `effort` is not, on any event."""
+    reader = write(tmp_path / "model.jsonl", {**INIT, "model": "claude-sonnet-5"})
+    reader.poll()
+
+    assert reader.init is not None
+    assert reader.init.model == "claude-sonnet-5"
+
+
+def test_init_with_no_model_key_reads_as_not_recorded(tmp_path: Path) -> None:
+    reader = write(tmp_path / "no-model.jsonl", INIT)
+    reader.poll()
+
+    assert reader.init is not None
+    assert reader.init.model == ""
+
+
 def test_outcomes_narrow_to_the_four_the_record_holds(tmp_path: Path) -> None:
     from yosefactory.executor.outcome import RunResult, Usage
 

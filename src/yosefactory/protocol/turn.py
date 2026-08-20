@@ -120,7 +120,7 @@ RESUMABLE: Final = frozenset({BlockedKind.AWAITING, BlockedKind.NEEDS_APPROVAL})
 
 # This repository is public and the stream is committed. Home-rooted absolute paths identify the
 # machine, so they never reach a record — caught at write time rather than at review time.
-_HOME_ROOTED: Final = re.compile(r"(?:^|[\s\"'=(,:])(/Users/|/home/|/root(?:/|\b))")
+_HOME_ROOTED: Final = re.compile(r"(?:^|[\s\"'=(,:])(/Users/|/home/|/root(?:/|\b))")  # hostpath-allow: the pattern itself
 
 _REQUIRED: Final = ("run_id", "started_at", "ended_at", "outcome", "enforced_by", "dirty", "isolated")
 
@@ -195,6 +195,15 @@ class TurnRecord:
     failure_kind: FailureKind | None = None
     # Null here means the writer gave no reason, never that the block is resumable or that it is not.
     blocked_kind: BlockedKind | None = None
+    # What produced this run's cost (pin-the-executor-and-close-the-push-grant). "" means
+    # not-recorded -- true for every record written before these fields existed ([[D002]]: they must
+    # still load) -- never a value a real run writes. `model` is read back from the agent's own
+    # startup report when the executor captured one; `effort` is always the value requested, because
+    # the binary does not report it back at the pinned version. Not in `_REQUIRED`: every write from
+    # here on populates both (the executor never omits the flags), but that is a property of the
+    # write path, not a retroactive claim about records that predate it.
+    model: str = ""
+    effort: str = ""
 
     def __post_init__(self) -> None:
         if not self.run_id:
@@ -225,6 +234,8 @@ class TurnRecord:
             "note": self.note,
             "failure_kind": self.failure_kind.value if self.failure_kind is not None else None,
             "blocked_kind": self.blocked_kind.value if self.blocked_kind is not None else None,
+            "model": self.model,
+            "effort": self.effort,
         }
 
     def with_note(self, note: str) -> TurnRecord:
@@ -262,6 +273,8 @@ def from_dict(payload: Any) -> TurnRecord:
         note=str(payload.get("note", "")),
         failure_kind=failure_kind,
         blocked_kind=blocked_kind,
+        model=str(payload.get("model", "") or ""),
+        effort=str(payload.get("effort", "") or ""),
     )
 
 

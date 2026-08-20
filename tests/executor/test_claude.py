@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from yosefactory.executor.claude import build_argv
+from yosefactory.executor.claude import PINNED_EFFORT, PINNED_MODEL, build_argv
 from yosefactory.runtime.isolation import IsolationPolicy
 
 
@@ -45,3 +45,24 @@ def test_the_ceiling_reaches_the_opted_out_invocation_too() -> None:
     argv = build_argv("hello", IsolationPolicy(isolated=False, opt_out_reason="control"), cost_ceiling_usd=1.5)
 
     assert argv[argv.index("--max-budget-usd") + 1] == "1.5"
+
+
+def test_no_opinion_sends_the_pinned_model_and_effort() -> None:
+    argv = build_argv("hello", IsolationPolicy(isolated=True))
+
+    assert argv[argv.index("--model") + 1] == PINNED_MODEL
+    assert argv[argv.index("--effort") + 1] == PINNED_EFFORT
+
+
+def test_an_override_is_sent_verbatim() -> None:
+    argv = build_argv("hello", IsolationPolicy(isolated=True), model="claude-opus-5", effort="high")
+
+    assert argv[argv.index("--model") + 1] == "claude-opus-5"
+    assert argv[argv.index("--effort") + 1] == "high"
+
+
+def test_model_and_effort_reach_the_opted_out_invocation_too() -> None:
+    argv = build_argv("hello", IsolationPolicy(isolated=False, opt_out_reason="control"))
+
+    assert argv[argv.index("--model") + 1] == PINNED_MODEL
+    assert argv[argv.index("--effort") + 1] == PINNED_EFFORT

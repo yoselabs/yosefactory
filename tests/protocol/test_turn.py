@@ -70,7 +70,7 @@ def test_flags_must_be_booleans_not_truthy_strings() -> None:
         from_dict(payload)
 
 
-@pytest.mark.parametrize("leak", ["/Users/someone/Workspaces/x", "wrote /home/op/.claude", "/root/.codex"])
+@pytest.mark.parametrize("leak", ["/Users/someone/Workspaces/x", "wrote /home/op/.claude", "/root/.codex"])  # hostpath-allow
 def test_home_rooted_paths_never_reach_a_record(leak: str) -> None:
     with pytest.raises(RecordError, match="public"):
         a_record(note=leak)
@@ -90,6 +90,23 @@ def test_nothing_ready_is_not_progress() -> None:
 def test_round_trip_preserves_every_field() -> None:
     record = a_record(outcome=Outcome.NOTHING_READY, enforced_by=EnforcedBy.HARNESS, dirty=True, isolated=False, note="n")
     assert from_dict(record.to_dict()) == record
+
+
+def test_model_and_effort_round_trip() -> None:
+    record = a_record(model="claude-sonnet-5", effort="medium")
+    assert from_dict(record.to_dict()) == record
+    assert record.to_dict()["model"] == "claude-sonnet-5"
+    assert record.to_dict()["effort"] == "medium"
+
+
+def test_a_record_written_before_model_and_effort_existed_still_reads_as_not_recorded() -> None:
+    payload = a_record().to_dict()
+    del payload["model"]
+    del payload["effort"]
+
+    loaded = from_dict(payload)
+    assert loaded.model == ""
+    assert loaded.effort == ""
 
 
 def test_a_failed_check_must_say_what_it_saw() -> None:

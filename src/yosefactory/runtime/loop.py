@@ -49,7 +49,7 @@ import json
 import subprocess
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -397,6 +397,11 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
     interactive use exactly as it was (`unattended=False`, the default `main()` still gets when
     called directly) and adds the requirement only on the path a scheduler actually takes —
     `scheduled_main()`, below.
+
+    The same `unattended` signal now also gates publication (`pin-the-executor-and-close-the-push-
+    grant`): D022 §2 granted push for a turn a human is watching, and an unattended run committing
+    with nobody watching is not that case — the `--publish` flag reopens it explicitly for a given
+    invocation, and does nothing on the interactive path, which was never gated on it.
     """
     import argparse
     import sys
@@ -427,10 +432,24 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
     )
     parser.add_argument("--board-poll-seconds", type=int, default=60, help="Ignored unless --board-repo is given.")
     parser.add_argument("--board-actor", default="board", help="Ignored unless --board-repo is given.")
+    parser.add_argument(
+        "--publish",
+        action="store_true",
+        help="Reopen the push grant for an unattended invocation (scheduled_main). Ignored on the "
+        "interactive path, which always publishes and was never gated on it. Absent, an unattended "
+        "run commits locally and does not push -- see runtime.loop.main's own docstring and "
+        "containerized-loop/unattended-publication-posture.",
+    )
     args = parser.parse_args(argv)
 
     repo = args.repo.resolve()
     places = Places.local(repo)
+    if unattended:
+        # D022 §2 granted push for a turn a human is watching. `scheduled_main` (below) is the one
+        # caller with `unattended=True`, so this branch is the entire reach of the new default --
+        # the interactive path above is untouched and keeps publishing both places unconditionally,
+        # exactly as `Places.local` always has.
+        places = replace(places, publish_workspace=args.publish, publish_queue=args.publish)
     limits = Guardrails(window=10, wall_clock_seconds=45 * 60, turn_ceiling=40, grace_seconds=20, question_deadline_hours=24)
     # `unattended` is the same signal `--spend-ceiling-usd`'s requiredness already keys off (D022:
     # a human is or is not present). The posture correct for a person on their own laptop is not
@@ -504,8 +523,9 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
 def scheduled_main(argv: Sequence[str] | None = None) -> int:
     """Entry point for a scheduler (`launchd`, `cron`) — never a person.
 
-    Identical to `main()` except `--spend-ceiling-usd` is mandatory: see `main`'s own docstring for
-    why the requirement lives on this entrypoint and not on `main` itself. This is the function
+    Identical to `main()` except `--spend-ceiling-usd` is mandatory, and publication defaults to
+    declined unless `--publish` is given: see `main`'s own docstring for why both live on this
+    entrypoint and not on `main` itself. This is the function
     `ops/launchd/dev.yosefactory.loop.plist.template` names, via the `yosefactory-loop-scheduled`
     console script (`pyproject.toml`) — a scheduler invokes a stable installed script, never
     `python -m` re-typed inside a plist.

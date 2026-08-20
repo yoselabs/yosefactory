@@ -577,6 +577,49 @@ def test_unattended_entrypoint_does_not_default_to_a_posture_that_denies_tool_ca
     assert captured["isolated_kwarg"] is True
 
 
+def test_unattended_entrypoint_declines_publication_unless_told_otherwise(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """pin-the-executor-and-close-the-push-grant: D022 §2 granted push for a human-watched turn.
+    An unattended run must commit locally and not push unless `--publish` reopens the grant."""
+    captured: dict[str, Any] = {}
+
+    def fake_run_loop(places: Places, executor: Any, **kwargs: Any) -> Any:
+        captured["places"] = places
+        return loop_mod.LoopReport(steps=(), stopped=loop_mod.StopReason.MAX_ITERATIONS, spend_usd=0.0)
+
+    monkeypatch.setattr(loop_mod, "run_loop", fake_run_loop)
+
+    loop_mod.scheduled_main(["--max-iterations", "1", "--spend-ceiling-usd", "2.0", str(tmp_path)])
+    declined = captured["places"]
+    assert declined.publish_workspace is False
+    assert declined.publish_queue is False
+
+    loop_mod.scheduled_main(["--max-iterations", "1", "--spend-ceiling-usd", "2.0", "--publish", str(tmp_path)])
+    reopened = captured["places"]
+    assert reopened.publish_workspace is True
+    assert reopened.publish_queue is True
+
+
+def test_interactive_entrypoint_still_publishes_by_default_regardless_of_the_flag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`main()` (a human at a keyboard) was never gated on `--publish` and keeps its D022 §2
+    default; `--publish` is meaningless on this path and must not be required to keep publishing."""
+    captured: dict[str, Any] = {}
+
+    def fake_run_loop(places: Places, executor: Any, **kwargs: Any) -> Any:
+        captured["places"] = places
+        return loop_mod.LoopReport(steps=(), stopped=loop_mod.StopReason.MAX_ITERATIONS, spend_usd=0.0)
+
+    monkeypatch.setattr(loop_mod, "run_loop", fake_run_loop)
+
+    loop_mod.main(["--max-iterations", "1", str(tmp_path)])
+    places = captured["places"]
+    assert places.publish_workspace is True
+    assert places.publish_queue is True
+
+
 # ---------------------------------------------------------------------------
 # BoardConfig -- turn-loop/board-wiring: ingestion never invokes an executor,
 # board polling has its own cadence, and turn results reach the board.

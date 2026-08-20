@@ -621,6 +621,8 @@ def _dispose(
             paths=touched,
             isolated=isolated,
             failure_kind=kind,
+            model=result.model,
+            effort=result.effort,
         )
 
     def blocked(detail: str, kind: BlockedKind | None) -> TurnRecord:
@@ -678,6 +680,8 @@ def _dispose(
             paths=paths,
             isolated=isolated,
             blocked_kind=kind,
+            model=result.model,
+            effort=result.effort,
         )
 
     if result.outcome is not RunOutcome.SUCCESS:
@@ -716,6 +720,8 @@ def _dispose(
             note=f"planned {len(written)} item(s): {', '.join(path.stem for path in written)}",
             paths=written,
             isolated=isolated,
+            model=result.model,
+            effort=result.effort,
         )
 
     assert item_path is not None  # noqa: S101 — narrowed by `planning`, which ty cannot see through
@@ -741,6 +747,8 @@ def _dispose(
         note=f"{subject}: {event['event']} -> {folded.state}",
         paths=[item_path],
         isolated=isolated,
+        model=result.model,
+        effort=result.effort,
     )
 
 
@@ -757,6 +765,8 @@ def _finish(
     isolated: bool,
     failure_kind: FailureKind | None = None,
     blocked_kind: BlockedKind | None = None,
+    model: str = "",
+    effort: str = "",
 ) -> TurnRecord:
     runs_dir = places.ledger
     record = TurnRecord(
@@ -773,6 +783,11 @@ def _finish(
         note=note,
         failure_kind=failure_kind,
         blocked_kind=blocked_kind,
+        # "" on a turn no executor ran for (nothing-ready) -- there is no run to attribute a model
+        # or effort to. Every turn that did start an executor threads `result.model`/`result.effort`
+        # here instead of leaving the default.
+        model=model,
+        effort=effort,
     )
     written = runs.append(runs_dir, slug, record)
     # Always the queue: every path this turn commits — the item, a raised question, the ledger record

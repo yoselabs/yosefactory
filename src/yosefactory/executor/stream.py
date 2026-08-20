@@ -54,6 +54,11 @@ class InitFacts:
     slash_commands: tuple[str, ...] = ()
     plugins: tuple[str, ...] = ()
     permission_mode: str = ""
+    # What the agent reports it is actually running as, read here rather than from the argument we
+    # passed -- the same "verify from what was reported" instrument `leaks` already relies on.
+    # Measured (pin-the-executor-and-close-the-push-grant): present on `init` at the pinned version;
+    # `effort` is not -- absent from `init`, from every `assistant` message, and from `result`.
+    model: str = ""
 
     @property
     def leaks(self) -> tuple[str, ...]:
@@ -164,6 +169,7 @@ class StreamReader:
                     slash_commands=_names(event.get("slash_commands")),
                     plugins=_names(event.get("plugins")),
                     permission_mode=str(event.get("permissionMode", "")),
+                    model=str(event.get("model", "")),
                 )
 
     def turns_taken(self) -> int:

@@ -95,6 +95,12 @@ class RunResult:
     dirty: bool
     failure_kind: FailureKind | None = None
     detail: str = ""
+    # What ran, so a ledger row can say what produced its cost (pin-the-executor-and-close-the-
+    # push-grant). `model` is the executor's best evidence -- the run's own init event when one was
+    # captured, else the value requested. `effort` is always the value requested: the binary does
+    # not report it back at the pinned version, so there is no stronger source to prefer.
+    model: str = ""
+    effort: str = ""
 
     @property
     def protocol_outcome(self) -> Outcome:

@@ -35,6 +35,15 @@ from yosefactory.runtime.supervise import Recorder, govern
 # claim about what the executor can do is invalid unless it was checked against a pinned version.
 PINNED_VERSION = "2.1.225"
 
+# Denis's ruling, applied directly (pin-the-executor-and-close-the-push-grant): every invocation
+# names an explicit model and effort rather than falling through to the binary's own default, which
+# is what every run before this constant existed did — leaving no TurnRecord or ledger row able to
+# say what produced its cost. Both flags exist at the pinned version, checked by running
+# `claude --help` against the pinned binary itself rather than recalled from memory: `--model
+# <model>` and `--effort <level>` (low, medium, high, xhigh, max).
+PINNED_MODEL = "claude-sonnet-5"
+PINNED_EFFORT = "medium"
+
 # Capabilities this binary does not have, each naming what supplies it instead. An entry that names
 # no emulation is a registration failure rather than a footnote, which is what stops a limit from
 # being deferred indefinitely.
@@ -124,8 +133,20 @@ def preflight(*, expect_version: str = PINNED_VERSION) -> Preflight:
     return Preflight(ok=True, version=version)
 
 
-def build_argv(prompt: str, policy: IsolationPolicy, *, cost_ceiling_usd: float | None = None) -> list[str]:
+def build_argv(
+    prompt: str,
+    policy: IsolationPolicy,
+    *,
+    cost_ceiling_usd: float | None = None,
+    model: str = PINNED_MODEL,
+    effort: str = PINNED_EFFORT,
+) -> list[str]:
     """Policy becomes invocation here, and nowhere else.
+
+    `model`/`effort` are sent on every call, never omitted -- unlike `cost_ceiling_usd`, whose
+    absence is a real, distinct state ("no ceiling requested"). A run has no "unrequested" model:
+    a caller that states no opinion still gets the pinned default (`PINNED_MODEL`/`PINNED_EFFORT`),
+    not a binary default nothing here would ever see.
 
     Three flags, each measured against the init event rather than taken from help text — which is the
     whole lesson of how this set was arrived at. `--strict-mcp-config` and `--permission-mode` were
@@ -155,7 +176,7 @@ def build_argv(prompt: str, policy: IsolationPolicy, *, cost_ceiling_usd: float 
     `cost_ceiling_usd` is orthogonal to the posture and sent in both branches when set. Absent, no
     flag is emitted — a ceiling is never substituted on the caller's behalf.
     """
-    argv = [_binary(), "-p", prompt, "--output-format", "stream-json", "--verbose"]
+    argv = [_binary(), "-p", prompt, "--output-format", "stream-json", "--verbose", "--model", model, "--effort", effort]
     if cost_ceiling_usd is not None:
         argv += ["--max-budget-usd", str(cost_ceiling_usd)]
     if policy.isolated:
@@ -220,12 +241,23 @@ def run(
     recorder: Recorder | None = None,
     policy: IsolationPolicy | None = None,
     turn_ceiling: int | None = None,
+    model: str = PINNED_MODEL,
+    effort: str = PINNED_EFFORT,
 ) -> RunResult:
     """One bounded invocation, and a result derived from the agent's own terminal event.
 
     The transcript is written inside the run stream rather than into the workspace. That is what
     makes `dirty` mean what it claims: the supervisor excludes its own stream by construction, so
     the harness's evidence of a run can never be mistaken for the agent having left work half-done.
+
+    `model`/`effort` default to the pinned values and are always sent (`build_argv`). The
+    `RunResult` returned reports `model` from the run's own `system|init` event when one was
+    captured -- the stronger receipt, the agent stating what it actually ran -- and falls back to
+    the requested value only when no init event exists at all (a run that failed before startup).
+    `effort` is not reported by any event this binary's stream carries at the pinned version
+    (measured: absent from `init`, from every `assistant` message, and from the terminal `result`),
+    so it is always recorded from what was requested -- a weaker receipt, stated as such rather than
+    conflated with `model`'s.
     """
     policy = policy or IsolationPolicy()
     transcript = runs_dir / f"{run_id}.stream.jsonl"
@@ -239,7 +271,7 @@ def run(
         return RunResult(outcome=outcome, usage=Usage(), transcript_path=transcript, exit_code=None, dirty=False).protocol_outcome
 
     record = govern(
-        build_argv(render(frame, invocation), policy, cost_ceiling_usd=limits.cost_ceiling_usd),
+        build_argv(render(frame, invocation), policy, cost_ceiling_usd=limits.cost_ceiling_usd, model=model, effort=effort),
         repo=workspace,
         runs_dir=runs_dir,
         run_id=run_id,
@@ -273,6 +305,11 @@ def run(
     # Durable regardless of `runs_dir`'s own lifetime -- see `runtime.spend` module docstring.
     spend.record(usage.total_cost_usd, run_id=run_id)
 
+    # Prefer what the agent reported loading over what we asked for -- the init event is evidence,
+    # the argument is only intent (same instrument `leaks`/`workspace_scope_leaks` already trust).
+    # Falls back to the requested value only when no init event was ever captured.
+    reported_model = reader.init.model if reader.init is not None and reader.init.model else model
+
     return RunResult(
         outcome=outcome,
         usage=usage,
@@ -281,4 +318,6 @@ def run(
         dirty=record.dirty,
         failure_kind=kind,
         detail=detail,
+        model=reported_model,
+        effort=effort,
     )
