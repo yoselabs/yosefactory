@@ -25,14 +25,23 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ARG CLAUDE_VERSION=2.1.225
 ENV CLAUDE_INSTALL_ALLOW_SUDO=1
 RUN curl -fsSL https://claude.ai/install.sh | bash -s -- "${CLAUDE_VERSION}" \
-    && ln -s /root/.local/bin/claude /usr/local/bin/claude
-ENV PATH="/root/.local/bin:${PATH}"
+    && ln -s /root/.local/bin/claude /usr/local/bin/claude  # hostpath-allow
 
 # A bind-mounted repo owned by a different UID than the container process trips git's ownership
 # check (`fatal: detected dubious ownership`) the first time any git command runs against it.
 # Configured here rather than discovered later, once, for every path this image might be asked to
 # operate on.
 RUN git config --global --add safe.directory '*'
+
+# runtime/turn.py::commit() shells out to `git commit` with no explicit author -- git falls back to
+# guessing one from the OS user and hostname, and the container's own guess is not a valid email
+# (`fatal: unable to auto-detect email address`), so every turn's own commit refuses before it
+# starts. Found running the first real in-container turn (run-the-loop-inside-the-container).
+# The same identity `Co-Authored-By: yosefactory <yosefactory@yoselabs.dev>` already names
+# (turn.py::PLATFORM_CO_AUTHOR) is used as the actual author here too, so a container-authored
+# commit is identifiable as the platform's own rather than guessed from the container runtime.
+RUN git config --global user.name "yosefactory" \
+    && git config --global user.email "yosefactory@yoselabs.dev"
 
 # The venv lives OUTSIDE /app on purpose (design.md D3): the dev compose file bind-mounts the
 # source tree onto /app, which would otherwise shadow whatever `uv sync` builds here at image-build
@@ -45,11 +54,11 @@ WORKDIR /app
 # Dependency layers first, so an edit to source (which the dev compose mount handles live anyway)
 # never invalidates the dependency-install layer.
 COPY pyproject.toml uv.lock ./
-RUN --mount=type=cache,target=/root/.cache/uv \
+RUN --mount=type=cache,target=/tmp/uv-cache \
     uv sync --all-extras --no-install-project
 
 COPY . .
-RUN --mount=type=cache,target=/root/.cache/uv \
+RUN --mount=type=cache,target=/tmp/uv-cache \
     uv sync --all-extras
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
