@@ -70,7 +70,11 @@
 - [x] 6.1 `ledger/spend.jsonl`: 12 rows before this change, 14 after (+2, matching the two turns
       above: $0.7187 + $0.6042 = $1.3229). `make check` itself added zero rows.
 - [x] 6.2 `git diff --cached` confirmed empty after every commit in this change.
-- [ ] 6.3 `openspec validate run-a-turn-against-a2web --strict` — run before archiving.
-- [ ] 6.4 `make check` in yosefactory — confirm still green, $0.
-- [ ] 6.5 Commit this change's own files with explicit literal pathspecs.
-- [ ] 6.6 Archive.
+- [x] 6.3 `openspec validate run-a-turn-against-a2web --strict` — "Change 'run-a-turn-against-a2web'
+      is valid."
+- [x] 6.4 `make check` in yosefactory — green: 353 passed, 13 deselected; `ledger/spend.jsonl` still
+      14 rows before and after (unchanged — $0).
+- [x] 6.5 Committed: `8cdd433` (Dockerfile), `7f2b8ae` (spend receipt), `d2ad9f7` (scripts),
+      `eae796d` (this change's own artifacts) — each with an explicit literal pathspec, `git diff
+      --cached` confirmed empty after every one.
+- [x] 6.6 Archive.
