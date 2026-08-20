@@ -1,0 +1,12 @@
+{
+  "run_id": "turn-20260820T031227Z-8cfa1743",
+  "started_at": "2026-08-20T03:12:27.639153+00:00",
+  "ended_at": "2026-08-20T03:12:27.722619+00:00",
+  "outcome": "nothing-ready",
+  "enforced_by": "harness",
+  "dirty": false,
+  "isolated": true,
+  "note": "nothing eligible; no agent was started",
+  "failure_kind": null,
+  "blocked_kind": null
+}
