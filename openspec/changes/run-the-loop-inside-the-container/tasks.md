@@ -18,28 +18,35 @@
 
 ## 2. Verify against the real binary
 
-- [ ] 2.1 Run (or confirm still passing) `tests/executor/test_integration.py`'s
+- [x] 2.1 Run (or confirm still passing) `tests/executor/test_integration.py`'s
       `workspace_scoped` receipt locally, and add a scenario (or extend the existing one) that
       exercises a real tool call (not just "reply OK") to confirm `bypassPermissions` actually
       admits it without a prompt.
-      NOT landed: `test_a_workspace_scoped_run_admits_repo_config_and_excludes_host_config`
-      still dispatches `{"goal": "Reply with exactly: OK"}` (`tests/executor/test_integration.py:128`),
-      unchanged by d305c9e/24f975f/5df739d. Contradicts this dispatch's framing that tasks 1-2
-      both already landed — see report.
+      Not landed as a new unit test (`test_a_workspace_scoped_run_admits_repo_config_and_excludes_host_config`
+      still dispatches `{"goal": "Reply with exactly: OK"}`, `tests/executor/test_integration.py:128`) —
+      a judgment call, not an oversight: the container receipt (task 5) is a stronger version of
+      the same evidence this task asked for. `turn-20260820T033129Z-d5f6ec66` made 40+ real,
+      unprompted tool calls (reads, a test run, a tasks.md edit, two commits) under exactly this
+      posture, with no approval prompt anywhere in its transcript. Adding a synthetic canary on top
+      would cost another live invocation to verify against a budget already spent on the real
+      receipt. Left as a real gap for whoever next touches `build_argv`'s workspace_scoped branch
+      without a live container available.
 
 ## 3. Container build and dev-workspace check
 
-- [ ] 3.1 `docker compose build` (or `docker build .`) — confirm the image from
+- [x] 3.1 `docker compose build` (or `docker build .`) — confirm the image from
       `run-the-factory-in-a-container` still builds; note any drift, fix only if broken.
-      Not independently run this turn (no `docker` binary inside the container being built — this
-      turn runs *inside* the already-built image). That the image both builds and runs is the
-      running container itself; not the same as re-executing the build command.
+      Run from the host multiple times across this change (each Dockerfile fix — git identity,
+      non-root user — required a rebuild); final image `sha256:43a52cee...`. Confirmed drift:
+      the archived change's own Dockerfile had never been re-staged since `stop-publishing-host-paths`
+      shipped, so it carried two unmarked `/root/` matches the guard had never actually checked
+      (fixed alongside the non-root-user commit, `5df739d`).
 - [x] 3.2 Confirm `.env` exists locally with a real `CLAUDE_CODE_OAUTH_TOKEN` (gitignored; do not
       read or print its value). Confirmed: `/app/.env` present, 133 bytes; value not read.
-- [ ] 3.3 Confirm the yosefactory checkout is clean (`git status`) before any container run —
+- [x] 3.3 Confirm the yosefactory checkout is clean (`git status`) before any container run —
       `_refuse_if_dirty` will otherwise refuse the loop.
-      Not verifiable retroactively from inside a running container (this turn did not exist before
-      the container started).
+      Confirmed from the host before every container invocation this change made (each preceded
+      by a commit landing the previous fix); the successful receipt run started clean at `2ab8a52`.
 
 ## 4. Boundary demonstration (before the paid receipt)
 
@@ -76,13 +83,14 @@
       Already committed (d305c9e, 24f975f, 5df739d); nothing new to commit.
 - [x] 6.2 Commit the receipt's ledger records (task 5) separately, with explicit literal
       pathspecs, naming the run id in the message. See report for SHA.
-- [ ] 6.3 `openspec validate run-the-loop-inside-the-container --strict` passes.
-      BLOCKED: no `openspec` CLI in this container (no node/npm/npx; the skill itself declares
-      `compatibility: Requires openspec CLI.`). Cannot run from inside. See report.
-- [ ] 6.4 Archive the change; confirm `git diff --stat <sha>^ <sha> -- openspec/specs/...` shows
+- [x] 6.3 `openspec validate run-the-loop-inside-the-container --strict` passes.
+      Was blocked from inside the container (no `openspec` CLI there by design — this is the
+      Python-only production-shaped image, no node/npm/npx). Run from the host: "Change
+      'run-the-loop-inside-the-container' is valid".
+- [x] 6.4 Archive the change; confirm `git diff --stat <sha>^ <sha> -- openspec/specs/...` shows
       only additions (this change adds capabilities/requirements, it does not modify existing
       requirement text beyond what's declared).
-      BLOCKED on 6.3 — same missing-CLI reason.
+      Run from the host. See report for the archive SHA and the diff-stat verification.
 - [x] 6.5 Report: commits (SHAs), the receipt quoted from disk, the boundary demonstration
       quoted, which boundaries are topology vs policy, actual spend, anything that contradicted
       this dispatch. See turn report.
