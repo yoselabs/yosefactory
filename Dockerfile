@@ -29,9 +29,10 @@ RUN curl -fsSL https://claude.ai/install.sh | bash -s -- "${CLAUDE_VERSION}" \
 
 # A bind-mounted repo owned by a different UID than the container process trips git's ownership
 # check (`fatal: detected dubious ownership`) the first time any git command runs against it.
-# Configured here rather than discovered later, once, for every path this image might be asked to
-# operate on.
-RUN git config --global --add safe.directory '*'
+# `--system` (not `--global`) so this and the two settings below apply regardless of which user
+# ends up running the container (see the non-root user below) -- one file, /etc/gitconfig, not one
+# per HOME.
+RUN git config --system --add safe.directory '*'
 
 # runtime/turn.py::commit() shells out to `git commit` with no explicit author -- git falls back to
 # guessing one from the OS user and hostname, and the container's own guess is not a valid email
@@ -40,8 +41,17 @@ RUN git config --global --add safe.directory '*'
 # The same identity `Co-Authored-By: yosefactory <yosefactory@yoselabs.dev>` already names
 # (turn.py::PLATFORM_CO_AUTHOR) is used as the actual author here too, so a container-authored
 # commit is identifiable as the platform's own rather than guessed from the container runtime.
-RUN git config --global user.name "yosefactory" \
-    && git config --global user.email "yosefactory@yoselabs.dev"
+RUN git config --system user.name "yosefactory" \
+    && git config --system user.email "yosefactory@yoselabs.dev"
+
+# The executor's own permission-bypass mode (build_argv's workspace_scoped branch,
+# run-the-loop-inside-the-container D2) refuses outright when the process runs as root/sudo --
+# a real, measured constraint, not a defect in this repo's own code. Found running the first real
+# in-container turn. A fixed, non-root, non-host-matching uid is enough to satisfy it: this is not
+# the UID/GID-matches-the-host-mount concern the prior change's Non-goals deferred to production,
+# it is only "not root" -- the container never claims to reconcile with any host uid.
+RUN useradd --create-home --uid 1000 --shell /bin/bash factory \
+    && chmod -R o+rX /root  # hostpath-allow
 
 # The venv lives OUTSIDE /app on purpose (design.md D3): the dev compose file bind-mounts the
 # source tree onto /app, which would otherwise shadow whatever `uv sync` builds here at image-build
@@ -63,6 +73,14 @@ RUN --mount=type=cache,target=/tmp/uv-cache \
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# The venv is built as root above (uv sync's own dependency-cache layering wants that); hand it to
+# the non-root user the container actually runs as before the switch below.
+RUN chown -R factory:factory /opt/venv
+USER factory
+# HOME is not this Dockerfile's literal to own -- docker-entrypoint.sh derives it at runtime from
+# whichever user is actually running (`getent passwd`), robust to a uid change here without a
+# second place to edit.
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["yosefactory-loop-scheduled", "--help"]

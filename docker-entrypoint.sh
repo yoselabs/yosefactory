@@ -10,6 +10,11 @@
 # that would fail three layers down, inside the executor, on a missing token if this did not check.
 set -euo pipefail
 
+# HOME is not set by `USER factory` alone (Dockerfile, run-the-loop-inside-the-container) -- derive
+# it from whatever user is actually running this process rather than hardcoding the image's build-
+# time uid, so a future uid change has one place to edit (the Dockerfile's `useradd`), not two.
+export HOME="$(getent passwd "$(id -u)" | cut -d: -f6)"
+
 case "${1:-}" in
     yosefactory-loop | yosefactory-loop-scheduled)
         if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
