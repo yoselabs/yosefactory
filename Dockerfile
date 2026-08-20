@@ -9,9 +9,14 @@ FROM python:3.12-slim
 
 # git: yosefactory's own runtime shells out to it (runtime/loop.py, runtime/turn.py -- every
 # ledger commit and every wake-condition check is a real `git` subprocess call, not a library).
-# curl/ca-certificates: needed once, to fetch the uv and claude installers below.
+# curl/ca-certificates: needed once, to fetch the uv and claude installers below. make: a foreign
+# workspace's own `test_command` (runtime/verify.py) is whatever that repository defines as
+# passing -- a2web's is `make check`, and nothing before this line ever needed `make` because
+# every prior receipt used yosefactory's own `pytest -q` default. Found running the first real
+# cross-repo turn (run-a-turn-against-a2web): `verify._run` raised `'make' is not on PATH`
+# before the gate could even attempt a2web's own checks.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git curl ca-certificates \
+    && apt-get install -y --no-install-recommends git curl ca-certificates make \
     && rm -rf /var/lib/apt/lists/*
 
 # uv, via its own installer -- the same mechanism this repo's uv.lock already assumes exists on a
