@@ -108,4 +108,38 @@ budget) is what the run itself measures, not something to guess at here.
 
 ## Trail
 
-(filled in as the run happens — see tasks.md)
+- 2026-08-21 — **turn 1 found the `isolated`-field defect and stopped on its own budget.**
+  `take_turn`'s `isolated` kwarg (default `True`) is decorative on this direct-call path — the
+  real posture comes from the `IsolationPolicy` handed to the executor closure — and this driver
+  never passed it, so the record contradicted the run (`cb2d2fa` fixed the equivalent gap in
+  `run_loop`'s own call site; this one was missed). Fixed (D2's sibling, not D2 itself — one line,
+  in scope). Separately, turn 1 hit its own $2.50 cost ceiling before committing
+  (`failure_kind: budget_exhausted`), leaving real, on-target root-cause work uncommitted in
+  a2web (`terminal.py`, `tier_walk.py` — tracing the general escalation classifier, not just the
+  two literal `reddit.py` sites the frame named). Kept, not reset, for turn 2 — discarding correct
+  work to hand the next turn an artificially clean slate would have been closer to shaping the
+  measurement than observing it.
+- 2026-08-21 — **turn 2: a2web's gate passed for real; the platform's own vocabulary refused the
+  `done` write.** The agent built on turn 1's uncommitted diff, added a capability test, and
+  committed `9e183e4` on a new branch (`fix-reddit-archive-rescue-escalation`) — real code,
+  matching `a2web-luh`'s acceptance criterion, `make check` presumably green (the code path in
+  `runtime/turn.py` only reaches the vocabulary-validating `append()` call *after*
+  `verify.may_write_done`'s gate has already passed). The turn still ended `failed`: the `done`
+  proposal omitted the required `effects` field (`backlog.VOCABULARY_SPEC`'s `done` rule requires
+  `effects` and `verified_by`), and `append()`'s own fold validation refused it. **This is the
+  vocabulary gap `add-take-turn-integration-receipt` first found and `run-a-turn-against-a2web`'s
+  design.md named as a live, unresolved risk — it recurred, exactly as flagged, on the first run
+  where an environment defect was no longer in the way to mask it.** Not patched: fixing it means
+  changing `workflows/turn-skill.md`'s standing proposal instructions, which is platform-wide
+  infrastructure outside this change's declared scope, and D014's own mandate forbids patching a
+  gap discovered on the scored path. Reported as the honest stopping point instead of attempted a
+  third time — the $5 allowance was budgeted for exactly two live turns ($4.9287 spent across
+  both) and a third is not attempted without reporting first.
+- 2026-08-21 — **the boundary-proof grep found a real caveat, not a leak.** `grep -c` for the
+  host's user-home path prefix on turn 2's transcript read `1`, not `0` — traced to a stale,
+  host-compiled `.pyc` cache under a2web's own bind-mounted tree whose bytecode retains its
+  original compile-time `co_filename`, surfaced inside a captured pytest failure traceback. The
+  separate `id`/`ls /Users`/`ls /data` boundary demonstration is unaffected by this and is the one
+  that actually shows what the container itself can reach. Recorded because the check exists to
+  catch exactly this class of thing, and a caveat found and explained is worth more than a check
+  that happened to read clean.
