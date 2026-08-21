@@ -173,6 +173,14 @@ plumbing: it cannot be falsified, only go stale, and it SHALL NOT appear in the 
   same channel as the skill and the proposal path
 - **AND** the frame itself carries no event name, no required-field list, and no vocabulary reference
 
+#### Scenario: The write instruction reminds the agent to check required fields
+
+- **WHEN** a turn invokes the agent on an item
+- **THEN** the instruction telling the agent to write its proposal is accompanied by a directive to
+  check the vocabulary for the event's required fields before writing
+- **AND** neither the frame, the skill, nor the invocation prompt restates any event's required
+  field names — the vocabulary file remains the sole definition
+
 ### Requirement: Invariants are checked by the fold, not by the prompt
 
 The turn SHALL validate a proposed event by folding the item's log with the event applied. An
