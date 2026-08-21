@@ -43,4 +43,4 @@
 - [x] 5.3 `openspec validate ship-a2web-toolchain-as-a-stopgap --strict`.
 - [x] 5.4 `make check` in yosefactory stays green.
 - [x] 5.5 Commit(s), each with an explicit literal pathspec.
-- [ ] 5.6 Archive.
+- [x] 5.6 Archive.
