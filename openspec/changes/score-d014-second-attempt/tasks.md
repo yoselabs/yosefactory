@@ -25,28 +25,49 @@
 
 ## 3. The run — exactly two mounts
 
-- [ ] 3.1 Confirmed image current, matching the environment stopgap's own receipt.
-- [ ] 3.2 Ran `docker run --user 1000 -v ~/Workspaces/yosefactory:/app -v ~/Workspaces/a2web:/data/
-      a2web …` directly — not `docker compose` — and showed what compose would have added, to
-      re-demonstrate the two-mount boundary explicitly.
-- [ ] 3.3 Grep-counted the host's macOS user-home path prefix on the transcript. If non-zero,
-      investigated — confirmed or refuted the prior run's stale-`.pyc` explanation, not assumed.
-- [ ] 3.4 Boundary re-demonstrated: `id`, `ls /Users`, `ls` on the Knowledge repo path, `ls /`,
-      `ls /data`.
+- [x] 3.1 Confirmed image current (`6540a1fe0bd8`, `4.97GB`), matching the environment stopgap's
+      own receipt.
+- [x] 3.2 The run was launched via `docker run` direct (container `e8c2f54add9b`, found already
+      in progress and let finish rather than duplicated — see trail below). Re-demonstrated the
+      boundary explicitly afterward with a fresh `docker run --rm --user 1000 -v
+      ~/Workspaces/yosefactory:/app -v ~/Workspaces/a2web:/data/a2web …`: `uid=1000(factory)`,
+      exactly two mounts. Read `docker-compose.yml`'s `factory` service: its default `volumes:`
+      is `./:/app` + `./.dev-workspace:/data/workspace` — two mounts of its own, neither of which
+      is `/data/a2web` — so reaching this run's exact mount set via compose would require a third
+      `-v` override on top of the service's own two, confirming the "compose adds a third mount"
+      claim precisely rather than by assertion.
+- [x] 3.3 Grep-counted the host's macOS user-home path prefix (`/Users/iorlas`) on the transcript
+      (`ledger/runs/turn-20260821T082829Z-5e6dd1b8.stream.jsonl`): **0**, not 1. The prior run's
+      stale-`.pyc` leak did not recur — nothing to investigate this time.
+- [x] 3.4 Boundary re-demonstrated: `id` → `uid=1000(factory)`; `ls /Users` → no such file; `ls`
+      on the operator's Knowledge repo path → no such file; `ls /` → only expected directories;
+      `ls /data` → `a2web` only.
 
 ## 4. The receipt
 
-- [ ] 4.1 Quoted the `TurnRecord` verbatim: `run_id`, `outcome`, `isolated`, `dirty`, `model`,
-      `effort`.
-- [ ] 4.2 Quoted the joined spend row from `ledger/spend.jsonl`.
-- [ ] 4.3 Quoted a2web's `git log` on the produced branch (commit, author, trailers).
-- [ ] 4.4 Stated plainly whether the `done` event carried `effects` this time (S990 measurement,
-      independent of D014's outcome).
+- [x] 4.1 `TurnRecord` (`ledger/runs/20260821T082829Z-turn-20260821T082829Z-5e6dd1b8.json`):
+      `run_id=turn-20260821T082829Z-5e6dd1b8`, `outcome=advanced`, `isolated=false`, `dirty=false`,
+      `model=claude-sonnet-5`, `effort=medium`.
+- [x] 4.2 Spend row joined by `run_id`: `{"ts": "2026-08-21T08:35:06.111893+00:00", "run_id":
+      "turn-20260821T082829Z-5e6dd1b8", "total_cost_usd": 1.8582784500000007}` — 17th row.
+- [x] 4.3 a2web `git log` on `a2web-qgo-primary-image`: `e778fd9 feat(ask): surface the page's own
+      primary image URL (a2web-qgo)`, author `yosefactory <yosefactory@yoselabs.dev>`, no
+      `Co-Authored-By` trailer this run (differs from prior runs, which carried
+      `Co-Authored-By: Claude Opus/Sonnet 5` and no platform trailer either) — reported as
+      observed, not investigated further; the `Yosefactory-Run` trailer gap itself remains the
+      known, deliberately-unfixed D2 from `teach-the-done-event-schema`.
+- [x] 4.4 The `done` event on `backlog/items/itm-20260821T082829Z-cc787b2f.jsonl` carries both
+      `effects` (a full paragraph describing the change, the fallback order, the omission
+      rationale, and the branch) and `verified_by` (`"make check (lint + ty + full pytest suite,
+      coverage 92.15% >= 85% gate, plus the tach architecture/impact suite) passed clean..."`).
+      **S990's fix held on a real, long, budget-pressured turn.**
 
 ## 5. Close
 
-- [ ] 5.1 `openspec validate score-d014-second-attempt --strict`.
-- [ ] 5.2 `make check` in yosefactory.
-- [ ] 5.3 `git diff --cached` confirmed empty after every commit in this change.
-- [ ] 5.4 Stated plainly, from the ledger: is D014 satisfied by this run.
+- [x] 5.1 `openspec validate score-d014-second-attempt --strict` — see closing report.
+- [x] 5.2 `make check` in yosefactory — see closing report.
+- [x] 5.3 `git diff --cached` confirmed empty after every commit in this change.
+- [x] 5.4 **D014 is satisfied by this run** — from the ledger: `TurnRecord.outcome == "advanced"`,
+      the first such outcome across all `score-d014-*` attempts. Stated in full in the closing
+      report.
 - [ ] 5.5 Archive.
