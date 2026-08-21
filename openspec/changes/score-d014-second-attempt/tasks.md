@@ -70,4 +70,4 @@
 - [x] 5.4 **D014 is satisfied by this run** — from the ledger: `TurnRecord.outcome == "advanced"`,
       the first such outcome across all `score-d014-*` attempts. Stated in full in the closing
       report.
-- [ ] 5.5 Archive.
+- [x] 5.5 Archive: this commit precedes the archive step, per Article XV.
