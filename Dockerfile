@@ -80,8 +80,8 @@ COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # ---------------------------------------------------------------------------------------------
-# STOPGAP -- a2web's own test toolchain, baked into THIS image. See D023 §4
-# (~/Documents/Knowledge/Projects/160-ai-factory/decisions/D023-*.md): the vision is a
+# STOPGAP -- a2web's own test toolchain, baked into THIS image. See D023 §4 of the
+# ai-factory decision corpus: the vision is a
 # repo-declared environment the factory materialises in two phases (build/root produces a
 # cached image, run/uid-1000 never holds root); that is not built. Until it is, a foreign
 # workspace's system-level dependencies go here, by name, one repo at a time.

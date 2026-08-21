@@ -165,3 +165,44 @@ def test_a_frame_amendment_keeps_the_original_readable() -> None:
     assert backlog.frame(item)["goal"] == "g"
     assert item.records[0]["frame"]["method"] == "m"
     assert item.state == "doing"
+
+
+def _documented_carries() -> dict[str, set[str]]:
+    """Parses the event table's own `Carries` column, live from the file `VOCABULARY_SPEC` points
+    an agent at -- not a copy pasted into this test, which could drift from the file without
+    anyone noticing."""
+    section = backlog.VOCABULARY_SPEC.read_text(encoding="utf-8").split(
+        "### Requirement: The event vocabulary and its transitions", 1
+    )[1]
+    lines = section.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.strip().startswith("| Event"))
+    documented: dict[str, set[str]] = {}
+    for line in lines[start:]:
+        line = line.strip()
+        if not line.startswith("|"):
+            break
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        event = cells[0].strip("`")
+        if event == "Event" or set(event) <= {"-"}:
+            continue
+        carries = cells[3]
+        documented[event] = {name.strip().strip("`") for name in carries.split(",") if name.strip() and name.strip() != "—"}
+    return documented
+
+
+def test_the_vocabulary_table_promises_at_least_what_the_fold_requires() -> None:
+    """The content half of `teach-the-done-event-schema`'s drift guard: if a future change
+    tightens `ITEM.rules`' required fields without updating the table an agent is pointed at
+    (`Invocation.vocabulary`), this fails. Subset, not equality -- the table also documents
+    non-required context (`unblocked`'s `ref` is listed but not enforced, pre-existing and
+    correct); what must never happen is the fold requiring a field the table never mentions,
+    which is the exact shape of gap that made the original `done` proposal illegible."""
+    documented = _documented_carries()
+
+    for event, rule_or_rules in backlog.ITEM.rules.items():
+        assert event in documented, f"{event!r} is not in the vocabulary table"
+        rules = rule_or_rules if isinstance(rule_or_rules, tuple) else (rule_or_rules,)
+        for rule in rules:
+            required_top_level = {path[0] for path in rule.required}
+            missing = required_top_level - documented[event]
+            assert not missing, f"{event!r} requires {missing} but the table's Carries cell doesn't mention it"

@@ -467,6 +467,28 @@ def test_the_frame_carries_no_plumbing(repo: Path, limits: Guardrails) -> None:
     assert invocation.proposal_path is not None and item.stem not in str(invocation.proposal_path)
 
 
+def test_the_agent_is_pointed_at_required_fields_before_writing(repo: Path, limits: Guardrails) -> None:
+    """`teach-the-done-event-schema`'s reachability receipt: proof by construction through the
+    real, unconditional `Invocation(...)` call site in `take_turn`, not a hand-built copy asserted
+    in isolation. `test_the_vocabulary_table_promises_at_least_what_the_fold_requires`
+    (`tests/protocol/test_backlog_fold.py`) is the content half; this is the wiring half."""
+    seed_item(repo)
+    executor = FakeExecutor(proposal={"event": "cancelled", "reason": "enough"})
+
+    take(repo, executor, limits)
+
+    invocation = executor.invocations[0]
+    assert invocation is not None
+    assert invocation.vocabulary == backlog.VOCABULARY_SPEC
+    rendered = invocation.render()
+    assert "check it before you" in rendered
+    assert str(backlog.VOCABULARY_SPEC) in rendered
+    # The reminder points; it never restates. If a required field name shows up here, the
+    # vocabulary has a second, drift-prone definition.
+    for field in ("effects", "verified_by", "awaiting"):
+        assert field not in rendered
+
+
 def test_the_record_names_the_item(repo: Path, limits: Guardrails) -> None:
     item = seed_item(repo)
     executor = FakeExecutor(proposal={"event": "cancelled", "reason": "enough"})

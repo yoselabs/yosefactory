@@ -31,7 +31,10 @@ class Invocation:
         if self.skill is not None:
             lines.append(f"Follow the skill at {self.skill}.")
         if self.vocabulary is not None:
-            lines.append(f"The event vocabulary is defined at {self.vocabulary}.")
+            lines.append(
+                f"The vocabulary at {self.vocabulary} names the required fields for whichever "
+                "event you write -- check it before you do."
+            )
         if self.proposal_path is not None:
             lines.append(f"Write your one event to {self.proposal_path}.")
         return "\n".join(lines)
