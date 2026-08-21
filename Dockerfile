@@ -79,9 +79,40 @@ RUN --mount=type=cache,target=/tmp/uv-cache \
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
+# ---------------------------------------------------------------------------------------------
+# STOPGAP -- a2web's own test toolchain, baked into THIS image. See D023 §4
+# (~/Documents/Knowledge/Projects/160-ai-factory/decisions/D023-*.md): the vision is a
+# repo-declared environment the factory materialises in two phases (build/root produces a
+# cached image, run/uid-1000 never holds root); that is not built. Until it is, a foreign
+# workspace's system-level dependencies go here, by name, one repo at a time.
+#
+# Cost, stated so it is not rediscovered as a surprise: this image now grows with every foreign
+# repository the factory touches, and it stops scaling the moment a second one needs a
+# conflicting toolchain (a different patchright/zendriver pin, a browser stack that collides
+# with this one). That is the day this stopgap is finished as a strategy, not a bug to patch.
+# Measured price of this one layer: 2.16GB -> 4.97GB, +2.81GB (baked Chromium + its desktop
+# system-lib tree; ship-a2web-toolchain-as-a-stopgap's closing report).
+#
+# What and why: a2web's own `[browser]` extra (pyproject.toml `browser = ["any-browser
+# [patchright,zendriver]"]`) is optional in ITS lockfile, so `make check` -- run via `uv run`
+# against a2web's own pyproject inside this shared /opt/venv -- never installs it, and 5 of
+# a2web's own tests fail for exactly that reason (S989, confirmed by controlled host-vs-
+# container comparison on commit fd24220). zendriver does not carry its own browser binary --
+# any_browser's zendriver backend resolves it from PLAYWRIGHT_BROWSERS_PATH, the same Chromium
+# patchright bakes (see zendriver.py::_resolve_executable in a2web's own any_browser vendor) --
+# so one bake serves both engines. Versions pinned to what a2web's own uv.lock currently
+# resolves (patchright 1.60.1, zendriver 0.15.3); installed by pip name, not folded into this
+# repo's own pyproject.toml/uv.lock, because these are a2web's dependencies, not yosefactory's.
+# `--with-deps` (not `install chromium` alone) is what a2web's own Dockerfile uses for the same
+# extra -- pulls the desktop system-lib tree (fonts, libnss, libatk, ...) Chromium needs to
+# actually launch under a container, not just the binary.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/browsers
+RUN uv pip install --python /opt/venv patchright==1.60.1 zendriver==0.15.3 \
+    && /opt/venv/bin/patchright install --with-deps chromium
+
 # The venv is built as root above (uv sync's own dependency-cache layering wants that); hand it to
 # the non-root user the container actually runs as before the switch below.
-RUN chown -R factory:factory /opt/venv
+RUN chown -R factory:factory /opt/venv /opt/browsers
 USER factory
 # HOME is not this Dockerfile's literal to own -- docker-entrypoint.sh derives it at runtime from
 # whichever user is actually running (`getent passwd`), robust to a uid change here without a
