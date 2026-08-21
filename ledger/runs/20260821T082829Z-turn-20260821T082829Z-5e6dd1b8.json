@@ -1,0 +1,14 @@
+{
+  "run_id": "turn-20260821T082829Z-5e6dd1b8",
+  "started_at": "2026-08-21T08:28:29.979135+00:00",
+  "ended_at": "2026-08-21T08:36:21.025696+00:00",
+  "outcome": "advanced",
+  "enforced_by": "agent",
+  "dirty": false,
+  "isolated": false,
+  "note": "itm-20260821T082829Z-cc787b2f: done -> done",
+  "failure_kind": null,
+  "blocked_kind": null,
+  "model": "claude-sonnet-5",
+  "effort": "medium"
+}
