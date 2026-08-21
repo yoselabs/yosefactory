@@ -39,8 +39,8 @@
 
 - [x] 5.1 `ledger/spend.jsonl` row count before and after this change — must be unchanged (no
       `take_turn`, no agent invocation).
-- [ ] 5.2 `git diff --cached` confirmed empty after every commit.
-- [ ] 5.3 `openspec validate ship-a2web-toolchain-as-a-stopgap --strict`.
+- [x] 5.2 `git diff --cached` confirmed empty after every commit.
+- [x] 5.3 `openspec validate ship-a2web-toolchain-as-a-stopgap --strict`.
 - [x] 5.4 `make check` in yosefactory stays green.
-- [ ] 5.5 Commit(s), each with an explicit literal pathspec.
+- [x] 5.5 Commit(s), each with an explicit literal pathspec.
 - [ ] 5.6 Archive.
