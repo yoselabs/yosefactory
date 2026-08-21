@@ -1,9 +1,12 @@
 """One-off driver: run `take_turn` for real, queue = this repo, workspace = a real a2web checkout.
 
 Not a `src/yosefactory` module and not imported by anything — `openspec/changes/
-run-a-turn-against-a2web` is the change this exists for. Cross-repo `take_turn` has no CLI surface
-by design (`runtime.loop.main`'s own docstring); this is the "caller that imports `run_loop`
-[`take_turn`] directly" that docstring names.
+run-a-turn-against-a2web` built this; `openspec/changes/score-d014-against-a2web` reuses it
+unchanged except for `FRAME` and the `actor`/`owner` strings, targeting a different, still-open
+a2web item (the prior FRAME's hepsiburada item is already committed to a2web, see that change's
+design.md D1). Cross-repo `take_turn` has no CLI surface by design (`runtime.loop.main`'s own
+docstring); this is the "caller that imports `run_loop` [`take_turn`] directly" that docstring
+names.
 
 Run inside the container, with the workspace path mounted separately from `/app`:
 
@@ -32,29 +35,42 @@ WORKSPACE = Path("/data/a2web")
 
 FRAME = {
     "goal": (
-        'Add "hepsiburada.com" to `_JS_HEAVY_HOSTS_SEED` in '
-        "src/a2web/fetcher/comprehension/gate.py, the frozenset of JS-heavy CSR hosts (already "
-        'contains "trendyol.com", "aliexpress.com" — follow that pattern exactly, keep the set '
-        "sorted the way it already is or append at the end, no reordering of the existing entries). "
-        "Add one matching test assertion to tests/capabilities/quality_gate/test_gate.py "
-        "confirming hepsiburada.com is now included (follow the existing test's own shape for "
-        "trendyol.com/aliexpress.com in that file — do not invent a new test style). Commit the "
-        "result on a NEW branch (never `main`), with a real commit message following this "
-        "repository's own convention (see CLAUDE.md/AGENTS.md/CONSTITUTION.md for the convention "
-        "this workspace actually uses — read them, do not guess). Do not push."
+        "Verify and, if needed, fix bead a2web-luh: "
+        "src/a2web/handlers/reddit.py's `reddit_forbidden_hint` (403 quarantined/NSFW/private, "
+        "emitted around line 241) and `reddit_deleted_hint` (deleted/removed thread, emitted "
+        "around line 924) both construct with no explicit severity, so they take OperatorHint's "
+        "default 'info' — and `OperatorHint._omit_default_severity` drops the severity key from "
+        "the wire entirely when it is 'info'. Both hints suggest trying an archive snapshot. "
+        "Trace the terminal path: when the suggested archive fallback (`_archive_escalation_"
+        "signal`, and old.reddit's own fallback in `_fetch_old_reddit_or_archive_signal`) ALSO "
+        "fails, does the fetch end with a critical operator hint (try_user_browser or "
+        "equivalent, per docs/adr/0009-never-silently-miss-a-url.md), or does it end carrying "
+        "only the unescalated 'info' hint with no severity key on the wire at all? "
+        "If it does not escalate, make it escalate. Add or extend a capability test covering the "
+        "double-failure path (both the primary shape and the archive fallback fail) asserting a "
+        "critical hint is present. Commit the result on a NEW branch (never `main`), with a real "
+        "commit message following this repository's own convention (see CLAUDE.md/AGENTS.md/"
+        "CONSTITUTION.md for the convention this workspace actually uses — read them, do not "
+        "guess). Do not push."
     ),
     "method": (
-        "Read src/a2web/fetcher/comprehension/gate.py and "
-        "tests/capabilities/quality_gate/test_gate.py first. Create and check out a new branch "
-        "before committing. Run `make check` yourself before proposing `done` if you can — the "
-        "platform runs it again regardless as the actual gate."
+        "Read src/a2web/handlers/reddit.py in full around both named emission sites and the "
+        "escalation helpers they call, and docs/adr/0009-never-silently-miss-a-url.md, before "
+        "changing anything. Read the existing reddit capability tests for the shape a new "
+        "assertion should follow — do not invent a new test style. Create and check out a new "
+        "branch before committing. Run `make check` yourself before proposing `done` if you can — "
+        "the platform runs it again regardless as the actual gate."
     ),
     "assumptions": (
-        "This is a real, already-acknowledged, standalone follow-up item in this workspace's own "
-        "backlog (bead a2web-cid, openspec/changes/flag-interaction-gated-sections/tasks.md §7.5) "
-        "— it is not attached to any other in-flight change in this workspace, and touching only "
-        "the two named files is expected to be self-contained. This repository is not yours to "
-        "push; a local commit on a new branch is the complete, correct outcome."
+        "This is a real, already-acknowledged, standalone bug in this workspace's own backlog "
+        "(bead a2web-luh, openspec/changes/flag-interaction-gated-sections/tasks.md §7.4) — it is "
+        "not attached to any other in-flight change in this workspace, and its acceptance "
+        "criterion is already stated on the bead: a Reddit fetch where both the primary shape and "
+        "the archive fallback fail ends with a critical operator hint, covered by a capability "
+        "test. This repository is not yours to push; a local commit on a new branch is the "
+        "complete, correct outcome. If verification shows the terminal path already escalates "
+        "correctly and only the test coverage is missing, adding the test alone is a legitimate, "
+        "complete outcome — do not invent a code change the investigation does not support."
     ),
 }
 
@@ -66,7 +82,7 @@ def main() -> int:
         item_path,
         backlog.ITEM,
         {"event": "created", "loop": "default", "frame": FRAME},
-        actor="yf-19",
+        actor="yf-21",
     )
     print(f"seeded item: {item_id}", file=sys.stderr)
 
@@ -99,16 +115,25 @@ def main() -> int:
         turn_ceiling=60,
         grace_seconds=30,
         question_deadline_hours=24,
-        cost_ceiling_usd=2.50,
+        # Turn 1 hit the platform's own $2.50 ceiling (budget_exhausted, correctly enforced)
+        # before committing, at $2.5365 spent. $2.40 for the retry: the remaining $2.46 of the
+        # $5 standing allowance, with a small margin, not a widened scope.
+        cost_ceiling_usd=2.40,
     )
 
     record = take_turn(
         places,
         executor,
         limits=limits,
-        owner="yf-19",
+        owner="yf-21",
         skill=Path("/app/workflows/turn-skill.md"),
         test_command=("make", "check"),
+        # `take_turn`'s own `isolated` kwarg defaults to True and only feeds the record field --
+        # separate from the `IsolationPolicy` actually handed to the executor above. `run_loop`
+        # was fixed to wire this through (cb2d2fa); this direct call site was not, so turn 1's
+        # record read "isolated": true for a run that was workspace_scoped + bypassPermissions
+        # the whole time. Passing the real policy's own flag keeps the record honest.
+        isolated=policy.isolated,
     )
 
     print(json.dumps(record.to_dict(), indent=2, default=str))
