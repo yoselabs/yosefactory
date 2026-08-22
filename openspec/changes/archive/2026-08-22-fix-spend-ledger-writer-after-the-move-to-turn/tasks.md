@@ -7,7 +7,8 @@
 ## 2. Validate and archive
 
 - [x] 2.1 `openspec validate fix-spend-ledger-writer-after-the-move-to-turn --strict` passes.
-- [ ] 2.2 `openspec archive fix-spend-ledger-writer-after-the-move-to-turn`.
-- [ ] 2.3 `git diff --stat <sha>^ <sha> -- openspec/specs/...` after archiving: the only deletion is
-      inside the block this change declares MODIFIED (the stale `executor/claude.py::run()` text),
-      named here and in the commit message, per Article XIV's amendment.
+- [x] 2.2 `openspec archive fix-spend-ledger-writer-after-the-move-to-turn`.
+- [x] 2.3 `git diff --stat -- openspec/specs/claude-executor/spend-ledger/spec.md`: 37 insertions,
+      21 deletions, all inside the block this change declares MODIFIED (the stale
+      `executor/claude.py::run()` text), named here and in the commit message, per Article XIV's
+      amendment.
