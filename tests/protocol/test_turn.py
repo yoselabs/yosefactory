@@ -109,6 +109,19 @@ def test_a_record_written_before_model_and_effort_existed_still_reads_as_not_rec
     assert loaded.effort == ""
 
 
+def test_workspace_commit_round_trips() -> None:
+    record = a_record(workspace_commit="abc123")
+    assert from_dict(record.to_dict()) == record
+    assert record.to_dict()["workspace_commit"] == "abc123"
+
+
+def test_a_record_before_workspace_commit_existed_still_reads_as_none_delivered() -> None:
+    payload = a_record().to_dict()
+    del payload["workspace_commit"]
+
+    assert from_dict(payload).workspace_commit == ""
+
+
 def test_a_failed_check_must_say_what_it_saw() -> None:
     with pytest.raises(RecordError, match="what it observed"):
         CheckResult(name="tests", passed=False, detail="")

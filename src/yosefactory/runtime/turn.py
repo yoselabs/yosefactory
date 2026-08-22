@@ -26,6 +26,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -80,8 +81,9 @@ class Places:
     `queue` — backlog items and questions. `ledger` — turn records, always nested under `queue`
     (the ledger is platform bookkeeping, never the agent's own work, so `commit()` can always reach
     it through `queue`). `workspace` — the agent's cwd, the subject of the verification gate and of
-    `dirty`, and the destination of the agent's own commits, which this module never makes and never
-    marks (`commit-attribution`'s writer rule is `turn.commit()` only).
+    `dirty`, and the destination of the agent's own checkpoint commits, which this module never makes
+    and never rewrites — it marks exactly one, `HEAD` at the moment the `done` gate passes, by
+    amendment (`_deliver_workspace`), which is the whole of `commit-attribution`'s reach here.
 
     Two locks, not one, because a single tree made them look like one job: `queue_lock` serializes
     picking and claiming against one backlog; `workspace_lock` serializes agent execution and commits
@@ -388,6 +390,48 @@ def _git(repo: Path, argv: list[str], env: dict[str, str], *, check: bool = True
     return completed
 
 
+def _head_sha(repo: Path, env: dict[str, str]) -> str | None:
+    completed = _git(repo, ["rev-parse", "HEAD"], env, check=False)
+    return completed.stdout.strip() if completed.returncode == 0 else None
+
+
+def _deliver_workspace(repo: Path, run_id: str, head_before: str | None) -> str:
+    """Amend the workspace's boundary commit with the platform's trailers, after the gate passes.
+
+    `may_write_done` already requires the tree clean before this can be reached, so there is nothing
+    left to commit — only the commit already at `HEAD` to mark. That is the one commit this run has
+    gate-backed evidence about; every earlier checkpoint the agent made this turn is untouched
+    (commit-attribution: amend, never a new commit, never anything but `HEAD`).
+
+    `head_before`, read once under the workspace lock before the executor ran: if `HEAD` never moved,
+    this turn produced no workspace commit and none is invented — `""` records that honestly.
+
+    Hooks are skipped on the amend (`--no-verify`): the tree is unchanged from what already passed
+    them when the agent's own commit ran; re-running them asks the same question again at this
+    platform's expense, in a repository it does not own, for a reason unrelated to the diff.
+    """
+    env = {**os.environ, "PREK_ALLOW_NO_CONFIG": "1"}
+    head_after = _head_sha(repo, env)
+    if head_after is None or head_after == head_before:
+        return ""
+    message = _git(repo, ["log", "-1", "--format=%B", head_after], env).stdout
+    marked = _with_platform_trailers(repo, message, run_id, env)
+    handle = NamedTemporaryFile("w", suffix=".msg", delete=False, encoding="utf-8")
+    try:
+        handle.write(marked)
+        handle.close()
+        amended = _git(repo, ["commit", "--amend", "--no-verify", "-F", handle.name], env, check=False)
+    finally:
+        Path(handle.name).unlink(missing_ok=True)
+    if amended.returncode != 0:
+        tail = (amended.stdout or amended.stderr).strip().splitlines()[-1:] or ["no output"]
+        raise TurnError(f"workspace delivery refused: {tail[0]}")
+    delivered = _head_sha(repo, env)
+    if delivered is None:
+        raise TurnError("workspace delivery amended but HEAD is unreadable")
+    return delivered
+
+
 class PublicationFailed(RuntimeWarning):
     """A push was attempted and rejected. Reported once here; D022 forbids retrying it blind."""
 
@@ -571,6 +615,9 @@ def take_turn(
 
         frame = backlog.frame(backlog.load(item_path))
         with _workspace_lock(places):
+            # Read before the executor touches anything: the only fact `_deliver_workspace` needs to
+            # tell "this turn made a commit" from "HEAD is whatever an earlier turn left."
+            workspace_head_before = _head_sha(places.workspace, dict(os.environ))
             result = executor(frame, places.workspace, limits, run_id=run_id, runs_dir=places.ledger, invocation=invocation)
             record = _dispose(
                 places,
@@ -585,6 +632,7 @@ def take_turn(
                 isolated=isolated,
                 test_command=test_command,
                 question_deadline_hours=limits.question_deadline_hours,
+                workspace_head_before=workspace_head_before,
             )
             publish(places, record)
             return record
@@ -604,6 +652,7 @@ def _dispose(
     isolated: bool,
     test_command: tuple[str, ...],
     question_deadline_hours: int,
+    workspace_head_before: str | None = None,
 ) -> TurnRecord:
     planning = item_path is None
     subject = "planning" if planning else item_path.stem
@@ -726,11 +775,15 @@ def _dispose(
 
     assert item_path is not None  # noqa: S101 — narrowed by `planning`, which ty cannot see through
     event = proposed[0]
+    workspace_commit = ""
     if event["event"] == "done":
         claim = verify.Claim(run_id=run_id, terminal_verdict=result.outcome.value)
         gate = verify.may_write_done(places.workspace, claim, test_command=test_command)
         if not gate.passed:
             return failed(gate.report())
+        # After the gate, never before: `_deliver_workspace` marks the commit the gate just
+        # certified, which is only a real fact once the gate has actually passed.
+        workspace_commit = _deliver_workspace(places.workspace, run_id, workspace_head_before)
 
     try:
         folded = append(item_path, backlog.ITEM, event, actor=owner)
@@ -749,6 +802,7 @@ def _dispose(
         isolated=isolated,
         model=result.model,
         effort=result.effort,
+        workspace_commit=workspace_commit,
     )
 
 
@@ -767,6 +821,7 @@ def _finish(
     blocked_kind: BlockedKind | None = None,
     model: str = "",
     effort: str = "",
+    workspace_commit: str = "",
 ) -> TurnRecord:
     runs_dir = places.ledger
     record = TurnRecord(
@@ -788,11 +843,11 @@ def _finish(
         # here instead of leaving the default.
         model=model,
         effort=effort,
+        workspace_commit=workspace_commit,
     )
     written = runs.append(runs_dir, slug, record)
     # Always the queue: every path this turn commits — the item, a raised question, the ledger record
-    # itself — is platform bookkeeping. The agent's own workspace commits are its own, made and left
-    # unmarked outside this function (commit-attribution: the platform's trailers are never the
-    # agent's to carry).
+    # itself — is platform bookkeeping. The workspace's own delivery already happened, if at all,
+    # in `_dispose` before this call, via `_deliver_workspace` rather than this function.
     commit(places.queue, [*paths, written, written.with_suffix(".start")], f"turn({run_id}): {outcome.value} — {note}", run_id=run_id)
     return record

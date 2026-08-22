@@ -204,6 +204,10 @@ class TurnRecord:
     # write path, not a retroactive claim about records that predate it.
     model: str = ""
     effort: str = ""
+    # The reverse half of commit-attribution's join: `Yosefactory-Run` on the commit lets a reader
+    # holding the commit find this record; this field lets a reader holding this record find the
+    # commit. "" means the turn delivered no workspace commit (never invented) or predates this field.
+    workspace_commit: str = ""
 
     def __post_init__(self) -> None:
         if not self.run_id:
@@ -236,6 +240,7 @@ class TurnRecord:
             "blocked_kind": self.blocked_kind.value if self.blocked_kind is not None else None,
             "model": self.model,
             "effort": self.effort,
+            "workspace_commit": self.workspace_commit,
         }
 
     def with_note(self, note: str) -> TurnRecord:
@@ -275,6 +280,7 @@ def from_dict(payload: Any) -> TurnRecord:
         blocked_kind=blocked_kind,
         model=str(payload.get("model", "") or ""),
         effort=str(payload.get("effort", "") or ""),
+        workspace_commit=str(payload.get("workspace_commit", "") or ""),
     )
 
 

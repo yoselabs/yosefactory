@@ -677,6 +677,110 @@ def test_trailers_extend_an_existing_block_without_duplicating_it(repo: Path) ->
     assert "Signed-off-by: someone" in full
 
 
+# 10a. Workspace delivery — the platform commits the workspace's own boundary commit, not just the queue
+
+
+def workspace_head(workspace: Path) -> str:
+    return git(workspace, "rev-parse", "HEAD")
+
+
+def checkpoint(workspace: Path, name: str, message: str) -> None:
+    """One of the agent's own commits, made with plain git — the platform never sees this happen."""
+    path = workspace / name
+    path.write_text(f"{name}\n", encoding="utf-8")
+    git(workspace, "add", name)
+    git(workspace, "commit", "-q", "-m", message)
+
+
+class CommittingExecutor(FakeExecutor):
+    """A `FakeExecutor` that also makes real workspace commits during its own call.
+
+    `_deliver_workspace` only amends a commit made *during this turn's executor call* — a checkpoint
+    made before the turn starts is not this turn's own work and must not be touched. Making the
+    checkpoints from inside `__call__`, exactly where a real agent would, is the difference between
+    testing that and accidentally testing something else.
+    """
+
+    def __init__(self, checkpoints: list[tuple[str, str]], **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.checkpoints = checkpoints
+
+    def __call__(self, frame: Mapping[str, Any], workspace: Path, limits: Guardrails, **kwargs: Any) -> RunResult:
+        for name, message in self.checkpoints:
+            checkpoint(workspace, name, message)
+        return super().__call__(frame, workspace, limits, **kwargs)
+
+
+def test_the_boundary_commit_is_amended_with_both_trailers(repo: Path, workspace: Path, limits: Guardrails) -> None:
+    seed_item(repo)
+    original_sha = workspace_head(workspace)
+    executor = CommittingExecutor(
+        [("work.txt", "agent's own checkpoint")],
+        proposal={"event": "done", "effects": ["work.txt"], "verified_by": "tests"},
+    )
+
+    record = take_split(repo, workspace, executor, limits)
+
+    assert record.outcome is Outcome.ADVANCED
+    delivered_sha = workspace_head(workspace)
+    assert delivered_sha != original_sha, "the amend produces a new commit object"
+    assert record.workspace_commit == delivered_sha
+    body = trailers(workspace)
+    assert f"Co-Authored-By: {turn.PLATFORM_CO_AUTHOR}" in body
+    assert f"{turn.RUN_TRAILER_KEY}: {record.run_id}" in body
+    assert git(workspace, "log", "-1", "--format=%s") == "agent's own checkpoint"
+
+
+def test_only_the_boundary_commit_is_amended_earlier_checkpoints_survive(
+    repo: Path, workspace: Path, limits: Guardrails
+) -> None:
+    seed_item(repo)
+    executor = CommittingExecutor(
+        [("first.txt", "first checkpoint"), ("second.txt", "second checkpoint")],
+        proposal={"event": "done", "effects": ["first.txt", "second.txt"], "verified_by": "tests"},
+    )
+
+    record = take_split(repo, workspace, executor, limits)
+
+    assert record.outcome is Outcome.ADVANCED
+    delivered = workspace_head(workspace)
+    first_sha = git(workspace, "rev-parse", f"{delivered}~1")
+    assert git(workspace, "log", "-1", "--format=%s", first_sha) == "first checkpoint"
+    assert "Yosefactory-Run" not in trailers(workspace, rev=first_sha)
+    assert f"{turn.RUN_TRAILER_KEY}: {record.run_id}" in trailers(workspace)
+
+
+def test_no_workspace_commit_delivers_nothing(repo: Path, workspace: Path, limits: Guardrails) -> None:
+    seed_item(repo)
+    original_sha = workspace_head(workspace)
+    executor = FakeExecutor(proposal={"event": "done", "effects": ["none"], "verified_by": "tests"})
+
+    record = take_split(repo, workspace, executor, limits)
+
+    assert record.outcome is Outcome.ADVANCED
+    assert record.workspace_commit == ""
+    assert workspace_head(workspace) == original_sha
+
+
+def test_delivery_does_not_re_run_the_workspaces_own_hooks(repo: Path, workspace: Path, limits: Guardrails) -> None:
+    """Passes the first `git commit` (the checkpoint) once, then rejects any further invocation —
+    so the amend can only succeed by not asking the hook a second time, exactly the property under
+    test rather than a hook that would also have blocked the checkpoint itself."""
+    hook_path = workspace / ".git" / "hooks" / "commit-msg"
+    hook_path.write_text('#!/bin/sh\nmarker="$(dirname "$0")/.fired"\n[ -f "$marker" ] && exit 1\ntouch "$marker"\n', encoding="utf-8")
+    hook_path.chmod(0o755)
+    seed_item(repo)
+    executor = CommittingExecutor(
+        [("work.txt", "agent's own checkpoint")],
+        proposal={"event": "done", "effects": ["work.txt"], "verified_by": "tests"},
+    )
+
+    record = take_split(repo, workspace, executor, limits)
+
+    assert record.outcome is Outcome.ADVANCED, record.note
+    assert f"{turn.RUN_TRAILER_KEY}: {record.run_id}" in trailers(workspace)
+
+
 def test_a_typed_executor_kind_survives_the_boundary() -> None:
     result = RunResult(
         outcome=RunOutcome.FAILED,
