@@ -113,7 +113,7 @@
 
 ## 7. Archive
 
-- [ ] 7.1 `openspec validate unstick-the-backlog --strict` passes.
+- [x] 7.1 `openspec validate unstick-the-backlog --strict` passes.
 - [ ] 7.2 `openspec archive unstick-the-backlog` — Article XV, not implied.
 - [ ] 7.3 `git diff --stat <sha>^ <sha> -- openspec/specs/...` after archiving: every deletion sits
       inside a block this change declared MODIFIED and named in the commit message (the corrected
