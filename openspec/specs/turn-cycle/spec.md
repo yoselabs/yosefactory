@@ -39,7 +39,7 @@ A turn SHALL plan when no item is eligible to be acted on, and SHALL act when at
 
 **"Eligible to be acted on" is `eligible()`'s own predicate (`ready`), not a wider "anything is
 happening" predicate.** Whether planning is additionally suppressed when no item is eligible is a
-separate question, answered by "planning is suppressed while genuinely in flight" below — the two
+separate question, answered by "Only live claims suppress planning" below — the two
 SHALL NOT be conflated into one non-terminal check, because a non-terminal state with no route back
 to `ready` (`failed`, `falsified`, `needs_split`) or with a route back nothing yet fires (`blocked`,
 `snoozed`, absent the sweeper `eligible()`'s own docstring says does not exist) is not "happening" in
