@@ -1,11 +1,14 @@
 # ADR-0010 — Image publish workflow: path-filtered trigger, dual tags, buildx-native provenance
 
-**Status:** Accepted
+**Status:** Accepted (Decision 1 superseded — see below)
 **Date:** 2026-08-22
 **Supersedes:** —
-**Superseded by:** —
+**Superseded by:** `decisions/0013-rebuild-on-every-push-the-trigger-was-arguing-backwards.md`
+(Decision 1 only — Decisions 2–5 below remain in force)
 **Revisit trigger:** a `src/`-only change is found to need to reach the published image before the
 next `Dockerfile`/lockfile change — the path filter (Decision 1) would then be too narrow.
+**This fired the same day it was written.** Ten `src/`-affecting commits reached `main` with no
+intervening `Dockerfile`/lockfile change and no rebuild — see `decisions/0013-*.md`.
 
 ## Context
 
@@ -21,12 +24,18 @@ why.
 
 `.github/workflows/publish-image.yml`:
 
-1. **Trigger** — push to `main`, path-filtered to `Dockerfile`, `.dockerignore`,
-   `docker-entrypoint.sh`, `pyproject.toml`, `uv.lock`, and the workflow file itself; plus
-   `workflow_dispatch` unconditionally. Not every push: the Chromium/patchright layer (D023 §4)
-   alone is ~2.8GB, and `src/` is `COPY`'d late in the `Dockerfile` deliberately so source edits
-   never invalidate the expensive layers — a rebuild the image doesn't need is a real, avoidable
-   cost on every commit that never touches the build recipe.
+1. **Trigger — SUPERSEDED, see `decisions/0013-*.md`.** Originally: push to `main`, path-filtered
+   to `Dockerfile`, `.dockerignore`, `docker-entrypoint.sh`, `pyproject.toml`, `uv.lock`, and the
+   workflow file itself; plus `workflow_dispatch` unconditionally. Reasoning at the time: not every
+   push, because the Chromium/patchright layer (D023 §4) alone is ~2.8GB and `src/` is `COPY`'d
+   late in the `Dockerfile` deliberately so source edits never invalidate the expensive layers — a
+   rebuild the image doesn't need is a real, avoidable cost on every commit that never touches the
+   build recipe. **The conclusion did not follow from the premise**: the image contains `src/`
+   regardless of where in the `Dockerfile` its `COPY` sits, so a source change is a content change
+   whether or not it invalidates any particular cache layer — cheap-to-*build* and safe-to-*skip*
+   are different properties, and this decision conflated them. `decisions/0013-*.md` corrects it
+   with a mechanical derivation and a measured cost; kept here verbatim as the historical record of
+   why the filter existed and what was wrong with the reasoning, not deleted.
 2. **Tagging** — `latest` (moving, default-branch head) plus `sha-<full 40-char sha>`
    (immutable, one per build). The runner in `factory-state` pins the `sha-` tag; `:latest` is
    convenience, never what anything downstream trusts.
@@ -51,8 +60,8 @@ why.
   Public) for whoever holds admin on `yoselabs`. Until that toggle happens, an anonymous
   `docker pull` of the published image fails — this is this change's one open item, not something
   this ADR or the workflow can close.
-- A `src/`-only change does not trigger a republish. Accepted per Decision 1's reasoning; the
-  revisit trigger above names the falsifying case.
+- ~~A `src/`-only change does not trigger a republish.~~ **No longer true — Decision 1 superseded
+  by `decisions/0013-*.md`.** Every push to `main` now triggers a republish.
 - `linux/amd64` only — no multi-arch build. GitHub-hosted runners are amd64; a private runner's
   own architecture is not yet a stated requirement, and multi-arch roughly doubles an already-long
   build for no known consumer.

@@ -1,21 +1,21 @@
 # Publishes the yosefactory image to GHCR. See
-# openspec/changes/publish-the-image/design.md for why each decision here was made (D1: trigger +
-# path filter; D2: tagging; D3: caching; D4: provenance; D5: visibility is NOT settable from here).
+# openspec/changes/publish-the-image/design.md for the original decisions (D2: tagging; D3:
+# caching; D4: provenance; D5: visibility is NOT settable from here) and
+# openspec/changes/rebuild-the-image-when-the-machine-changes/design.md for the trigger
+# (decisions/0013-*.md supersedes decisions/0010-*.md Decision 1 on this point).
 #
 # This workflow builds the machine; it does not run it. The private factory-state runner (a
 # separate, not-yet-built change) is the thing that pulls this image with no registry credential.
 name: Publish image
 
 on:
+  # Unconditional on purpose: `COPY . .` puts every git-tracked file into the image (mechanically
+  # confirmed — .dockerignore excludes zero of 451 tracked files, decisions/0013-*.md), so there is
+  # no honest subset of paths that can change the image without also changing what a path filter
+  # would need to list. A filter here is a second, hand-maintained copy of `git ls-files` that
+  # drifts silently — that drift (missing `src/`) is the defect this removal fixes.
   push:
     branches: [main]
-    paths:
-      - Dockerfile
-      - .dockerignore
-      - docker-entrypoint.sh
-      - pyproject.toml
-      - uv.lock
-      - .github/workflows/publish-image.yml
   workflow_dispatch: {}
 
 permissions:
