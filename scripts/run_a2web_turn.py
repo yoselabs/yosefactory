@@ -1,12 +1,22 @@
 """One-off driver: run `take_turn` for real, queue = this repo, workspace = a real a2web checkout.
 
 Not a `src/yosefactory` module and not imported by anything — `openspec/changes/
-run-a-turn-against-a2web` built this; `score-d014-against-a2web` and now
-`score-d014-second-attempt` reuse it unchanged except for `FRAME` and the `actor`/`owner` strings,
-each targeting a different, still-open a2web item (prior FRAMEs' items are already committed to
-a2web, see `score-d014-against-a2web/design.md` D1 and this change's design.md D1/D2). Cross-repo
-`take_turn` has no CLI surface by design (`runtime.loop.main`'s own docstring); this is the "caller
-that imports `run_loop` [`take_turn`] directly" that docstring names.
+run-a-turn-against-a2web` built this; `score-d014-against-a2web`, `score-d014-second-attempt`, and
+now `the-platform-delivers-the-workspace-commit` reuse it unchanged except for `FRAME` and the
+`actor`/`owner` strings, each targeting a different, still-open a2web item. Two beads tried and
+dropped for this run before landing on the one below, both verified against a2web's own git log
+rather than trusted from its `bd` listing: `a2web-qgo` is already committed at `e778fd9` (a prior
+turn's work); `a2web-luh` reads open in `bd` but is already solved on `fix-reddit-archive-rescue-
+escalation` at `9e183e4` (`git merge-base --is-ancestor 9e183e4 HEAD` on `e778fd9` is false — that
+branch never merged) — the run under that frame burned $2.5073 to `budget_exhausted` without
+reaching the gate (a2web-luh needs roughly $4.93 across two turns historically, well past one
+turn's ceiling). Landed on a deliberately small slice of `a2web-2yd` instead. Cross-repo `take_turn`
+has no CLI surface by design (`runtime.loop.main`'s own docstring); this is the "caller that imports
+`run_loop` [`take_turn`] directly" that docstring names.
+
+This run is this change's Article XVI receipt: proving `_deliver_workspace` amends a real workspace
+boundary commit with both platform trailers, and that `Yosefactory-Run` on that commit resolves to
+a real row in this repo's ledger — not that the a2web task itself is significant.
 
 Run inside the container, with the workspace path mounted separately from `/app`:
 
@@ -35,48 +45,42 @@ WORKSPACE = Path("/data/a2web")
 
 FRAME = {
     "goal": (
-        "Implement bead a2web-qgo: surface the fetched page's own primary image URL to `ask` "
-        "callers. Today `_ASK_META_ALLOWLIST` in src/a2web/fetcher_response.py (around line 273) "
-        "keeps only `og.description` from the parsed metadata dict passed to `_curate_ask_meta`; "
-        "every image signal the metadata parser already produces (`og.image*`, `twitter.image`, "
-        "`jsonld[0].image`, or similar keys — read what the parser actually emits, do not guess "
-        "the key names) is dropped. Add the page's own primary image URL to what `ask` responses "
-        "carry, choosing ONE grounded value with a sensible fallback order (og:image, then "
-        "twitter:image, then JSON-LD Product.image, then a literal hero `<img src>` if the "
-        "existing extraction pipeline already surfaces one) — never pattern-guess or invent a "
-        "URL (ADR-0014, docs/adr/0014-grounded-urls-only-off-domain-flagged.md: every URL a2web "
-        "emits must be traceable to the fetched page). Do not rank or pick a 'best' image across "
-        "a set (ADR-0012, docs/adr/0012-shape-and-relay-never-manufacture-a-selection.md): if the "
-        "page designates one primary image, relay that one; do not invent a selection criterion "
-        "of your own. The bead's own text leans toward a generic (not product-page-only), "
-        "always-on emission — treat that as the default unless investigation shows a concrete "
-        "reason not to, and if you deviate, say why in the commit message. Add or extend a "
-        "capability test asserting the image URL is surfaced when present on a fixture page and "
-        "correctly absent when the page has none. Commit the result on a NEW branch (never "
-        "`main`), with a real commit message following this repository's own convention (see "
-        "CLAUDE.md/AGENTS.md/CONSTITUTION.md for the convention this workspace actually uses — "
-        "read them, do not guess). Do not push."
+        "Implement a deliberately narrow slice of bead a2web-2yd: 'the eval capture harness has no "
+        "CI coverage'. Do NOT attempt the whole bead — `eval/_capture/capture.py` is a live-network "
+        "async orchestrator and out of scope here. The slice: `eval/_capture/corpus.py`'s own error "
+        "paths (`CorpusError`) have no direct unit test anywhere in `tests/` today (verified: every "
+        "test that touches `load_case`/`load_corpus` does so indirectly, through real fixture "
+        "corpora, never exercising the guard clauses themselves). Add direct unit tests for: "
+        "`load_case` raising `CorpusError` when a case directory has no `case.yaml`; `load_case` "
+        "raising `CorpusError` when `case.yaml` is missing the required `slug` or `url` field; "
+        "`_read_yaml`/`load_case` raising `CorpusError` when a YAML file parses to something other "
+        "than a mapping (e.g. a bare list); `load_corpus` raising `CorpusError` when the given "
+        "corpus directory does not exist. Use `tmp_path` fixtures to build minimal case directories "
+        "by hand — no real corpus fixture, no network, no async. Commit the result on a NEW branch "
+        "(never `main`), with a real commit message following this repository's own convention (see "
+        "CLAUDE.md/AGENTS.md/CONSTITUTION.md for the convention this workspace actually uses — read "
+        "them, do not guess). Do not push."
     ),
     "method": (
-        "Read src/a2web/fetcher_response.py in full around `_ASK_META_ALLOWLIST` and "
-        "`_curate_ask_meta`, and both cited ADRs, before changing anything. Find where the "
-        "metadata dict passed into `_curate_ask_meta` is actually produced (`parse_metadata` or "
-        "equivalent) to see the real key names available — do not assume the docstring comment's "
-        "key names are exact. Read the existing `ask`/fetcher_response capability tests for the "
-        "shape a new assertion should follow — do not invent a new test style. Create and check "
-        "out a new branch before committing. Run `make check` yourself before proposing `done` if "
-        "you can — the platform runs it again regardless as the actual gate."
+        "Read `eval/_capture/corpus.py` in full (176 lines) before writing anything — the four error "
+        "paths named above are `_read_yaml`, `_load_inputs` is not one of them (it degrades to empty "
+        "on missing files rather than raising), `load_case`, and `load_corpus`. Read one existing "
+        "test file under `tests/eval_replay/` (e.g. `test_selftest_corpus.py`) for this repository's "
+        "own pytest style and fixture conventions before adding a new test file — do not invent a "
+        "new style. Place the new test file under `tests/eval_replay/` alongside the others unless "
+        "an existing file there is the obviously correct home for it. Run `make check` yourself "
+        "before proposing `done` if you can — the platform runs it again regardless as the actual "
+        "gate."
     ),
     "assumptions": (
-        "This is a real, standalone feature already scoped in this workspace's own backlog (bead "
-        "a2web-qgo) — it is not attached to any other in-flight change in this workspace. Its "
-        "acceptance is: an `ask` response for a page with a page-designated primary image now "
-        "carries that image's URL, grounded (never guessed), single-valued (never a ranked set), "
-        "and covered by a capability test. This repository is not yours to push; a local commit "
-        "on a new branch is the complete, correct outcome. If investigation shows the metadata "
-        "parser genuinely produces no usable image signal for the fixtures available, say so "
-        "precisely rather than inventing one — do not build a code change the investigation does "
-        "not support."
+        "This is a real, standalone, already-scoped gap in this workspace's own backlog (bead "
+        "a2web-2yd), narrowed here to one already-identified untested module rather than the whole "
+        "harness — it is not attached to any other in-flight change. Acceptance: `corpus.py`'s four "
+        "`CorpusError` guard clauses are each covered by at least one direct, deterministic, "
+        "network-free unit test. If investigation shows a guard clause is unreachable or already "
+        "covered somewhere not found here, say so precisely with the trace as evidence rather than "
+        "manufacturing a redundant test. This repository is not yours to push; a local commit on a "
+        "new branch is the complete, correct outcome."
     ),
 }
 
@@ -88,7 +92,7 @@ def main() -> int:
         item_path,
         backlog.ITEM,
         {"event": "created", "loop": "default", "frame": FRAME},
-        actor="yf-23",
+        actor="yf-24",
     )
     print(f"seeded item: {item_id}", file=sys.stderr)
 
@@ -121,17 +125,18 @@ def main() -> int:
         turn_ceiling=60,
         grace_seconds=30,
         question_deadline_hours=24,
-        # score-d014-second-attempt: $3.00 granted for this dispatch, two prior turns cost
-        # $2.54/$2.39. Ceiling set at $2.80, leaving $0.20 margin -- not to be spent on a
-        # second full turn without reporting back first.
-        cost_ceiling_usd=2.80,
+        # the-platform-delivers-the-workspace-commit: the a2web-luh attempt spent $2.5073 of the
+        # original $5.00 allowance without reaching the gate; $2.4927 remains. This frame targets
+        # a2web-qgo's $1.86 shape (small, one module, one test file) -- ceiling set at $2.00,
+        # leaving margin inside what is left without inviting a second full turn.
+        cost_ceiling_usd=2.00,
     )
 
     record = take_turn(
         places,
         executor,
         limits=limits,
-        owner="yf-23",
+        owner="yf-24",
         skill=Path("/app/workflows/turn-skill.md"),
         test_command=("make", "check"),
         # `take_turn`'s own `isolated` kwarg defaults to True and only feeds the record field --
