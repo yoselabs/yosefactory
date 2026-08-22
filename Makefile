@@ -1,6 +1,6 @@
-.PHONY: check lint fix ty test test-live bootstrap guard guard-host-paths spell deps
+.PHONY: check lint fix ty test test-live bootstrap guard guard-host-paths spell deps citations
 
-check: lint ty test
+check: lint ty test citations
 
 bootstrap:
 	@uv sync --all-extras
@@ -52,3 +52,11 @@ spell:
 # this runs once from the root, unlike shelf's per-package packages/*/ loop.
 deps:
 	uv run deptry .
+
+# Confirms every orchestration.md article id AGENTS.md cites still exists in K. Part of `check`
+# (not the pre-commit hook) because K is routinely absent for other clones/CI, and a pre-commit
+# hook that silently no-ops most of the time is the false-confidence shape this repo's own
+# guidance warns against; `make check` is the more deliberate, rarer invocation where a skip is
+# visible rather than assumed. Skips cleanly (exit 0) when K is not found -- that is not a failure.
+citations:
+	@python3 tools/hooks/check_orchestration_citations.py

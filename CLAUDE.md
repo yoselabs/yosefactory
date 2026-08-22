@@ -10,7 +10,7 @@ The design is done and lives elsewhere. Do not re-derive it.
 
 **P160 is this repo's design authority, and it is a live reference an agent is expected to read from and write back to — not background reading.** Before proposing anything structural, look it up there. When the build contradicts it, correct it there. A session that builds without touching P160 either got lucky or skipped the check.
 
-*The paths below are a local, private knowledge base — they resolve on the operator's machine only. If you are reading this from a clone, treat the entity ids (D014, H572, M600, …) as stable names for decisions recorded there, not as links you can follow.*
+*Every tilde-shorthand path anywhere in this file (`~/Documents/Knowledge/...`, `~/Workspaces/...`) — not only the ones immediately below — resolves on the operator's machine only and is not portable. If you are reading this from a clone, treat the entity ids (D014, H572, M600, …) as stable names for decisions recorded there, not as links you can follow.*
 
 **Design record: project 160**, at `~/Documents/Knowledge/Projects/160-ai-factory/` — or resolve it, since ids are the stable reference and paths are not:
 
@@ -118,7 +118,12 @@ Python ≥3.11, `uv`, `ruff`, `ty`, `pytest`. `make check` runs lint + types + t
 
 `claude-agent-sdk` is the harness — Claude Code as a library. It is **not** the Anthropic API SDK's `client.beta.messages.tool_runner`; the two are different packages with different scope. Docs: `code.claude.com/docs/en/agent-sdk`.
 
-Model: `claude-opus-5`, adaptive thinking, effort `high` default, `xhigh` for long agentic runs.
+Model/effort for the platform's own harness invocations: `decisions/0006-executor-pinned-to-sonnet-5-medium.md`
+(`claude-sonnet-5` / `medium`, both sent explicitly on every call) — read it there; do not restate
+the value here, it has already drifted once. That decision governs `claude-agent-sdk` invocations
+this platform's own code makes (`executor/claude.py`); it does not govern which model a human- or
+director-driven build session (like the one reading this file) runs as — that is set by whoever
+opens the session, unrelated to this repo's Stack.
 
 ## Communication
 

@@ -53,8 +53,8 @@ confirmed again on the real push.
 
 **`bd remember`/`bd prime`: declined for persistent agent memory.** `bd init`'s injected
 `CLAUDE.md`/`AGENTS.md` block defaults to this; the operator already runs a global, cross-project
-memory system (`~/Documents/Knowledge/Agents/Claude/`) that predates this repo and isn't
-repo-scoped. Stated explicitly in both files, right after bd's managed block, per `adopt-beads.md`
+memory system, outside this repo, that predates this repo and isn't repo-scoped. Stated explicitly
+in both files, right after bd's managed block, per `adopt-beads.md`
 §1.6's own instruction not to let this default in silently. `TaskCreate`/`TaskUpdate` (session-scoped
 step tracking) stays in use alongside `bd` (repo-durable issues) — different scope, not a
 duplicate.
