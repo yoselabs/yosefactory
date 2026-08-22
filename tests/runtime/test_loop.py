@@ -37,12 +37,14 @@ def git(repo: Path, *args: str) -> str:
 
 @pytest.fixture
 def limits() -> Guardrails:
-    return Guardrails(window=10, wall_clock_seconds=60, turn_ceiling=4, grace_seconds=1, question_deadline_hours=24)
+    return Guardrails(window=10, wall_clock_seconds=60, turn_ceiling=4, grace_seconds=1, question_deadline_hours=24, max_attempts=3)
 
 
-def seed_snoozed_item(queue: Path) -> Path:
-    """A non-terminal, non-ready item -- present, but neither `eligible()` nor a `should_plan()`
-    trigger. Its only purpose is to hold the backlog in the free `nothing-ready` branch: with it
+def seed_in_flight_item(queue: Path) -> Path:
+    """A `claimed` item with a lease that will not expire in this test's lifetime -- present, but
+    neither `eligible()` nor a `should_plan()` trigger (unstick-the-backlog: only `claimed`/`doing`
+    with a live lease suppress planning; a `snoozed` item, used here before that change, no longer
+    does). Its only purpose is to hold the backlog in the free `nothing-ready` branch: with it
     present, `take_turn` never starts an executor at all (`turn.py`'s `target is None and not
     should_plan(...)` branch), which is what lets most of this file's receipts cost $0."""
     from yosefactory.protocol import backlog
@@ -51,7 +53,12 @@ def seed_snoozed_item(queue: Path) -> Path:
     path = queue / ITEMS / f"{new_item_id()}.jsonl"
     frame = {"goal": "held back on purpose", "method": "m", "assumptions": "a"}
     append(path, backlog.ITEM, {"event": "created", "loop": "receipt", "frame": frame}, actor="fixture")
-    append(path, backlog.ITEM, {"event": "snoozed", "scheduled_for": "2099-01-01T00:00:00+00:00"}, actor="fixture")
+    append(
+        path,
+        backlog.ITEM,
+        {"event": "claimed", "owner": "someone-else", "expires_at": "2099-01-01T00:00:00+00:00", "attempt": 1},
+        actor="fixture",
+    )
     return path
 
 
@@ -66,9 +73,9 @@ def repo(tmp_path: Path) -> Path:
     (root / "seed.txt").write_text("seed\n", encoding="utf-8")
     git(root, "add", "seed.txt")
     git(root, "commit", "-q", "-m", "seed")
-    seed_snoozed_item(root)
+    seed_in_flight_item(root)
     git(root, "add", "-A")
-    git(root, "commit", "-q", "-m", "seed snoozed item")
+    git(root, "commit", "-q", "-m", "seed in-flight item")
     return root
 
 
@@ -516,6 +523,13 @@ def test_main_still_does_not_require_a_spend_ceiling(monkeypatch: pytest.MonkeyP
         return loop_mod.LoopReport(steps=(), stopped=loop_mod.StopReason.MAX_ITERATIONS, spend_usd=0.0)
 
     monkeypatch.setattr(loop_mod, "run_loop", fake_run_loop)
+    # unstick-the-backlog: `main()` now also checks the stall verdict against `places.ledger` after
+    # `run_loop` returns -- an empty ledger (this fake never writes one) is honestly STALLED, which
+    # is not what this test is about, so the verdict itself is faked OK here (exit-code wiring has
+    # its own tests below).
+    monkeypatch.setattr(
+        loop_mod.stall, "detect", lambda *a, **k: loop_mod.stall.Verdict(loop_mod.stall.Status.OK, 10, 0, {}, 0, None, {})
+    )
     exit_code = loop_mod.main(["--max-iterations", "1", str(tmp_path)])
     assert exit_code == 0
     assert captured["bound"].spend_ceiling_usd is None
@@ -537,6 +551,103 @@ def test_a_supplied_ceiling_is_identical_via_either_entrypoint(monkeypatch: pyte
     via_scheduled = captured["bound"].spend_ceiling_usd
 
     assert via_main == via_scheduled == 2.0
+
+
+# ---------------------------------------------------------------------------
+# unstick-the-backlog / S1021 -- `main()`'s exit code surfaces the stall verdict
+# ---------------------------------------------------------------------------
+
+
+def _seed_ledger_records(repo: Path, records: list[tuple[Outcome, Any]]) -> None:
+    """Write real turn records directly into `ledger/runs/`, bypassing `take_turn` -- these tests
+    are about `main()`'s own post-`run_loop` check, not about producing the outcomes another way."""
+    from yosefactory.protocol.turn import EnforcedBy, TurnRecord
+    from yosefactory.runtime import runs
+
+    runs_dir = repo / "ledger" / "runs"
+    for index, (outcome, failure_kind) in enumerate(records):
+        run_id = f"turn-seed-{index:04d}"
+        slug = runs.open_run(runs_dir, run_id, datetime(2026, 1, 1, tzinfo=UTC))
+        record = TurnRecord(
+            run_id=run_id,
+            started_at="2026-01-01T00:00:00+00:00",
+            ended_at="2026-01-01T00:00:10+00:00",
+            outcome=outcome,
+            enforced_by=EnforcedBy.HARNESS,
+            dirty=False,
+            isolated=True,
+            failure_kind=failure_kind,
+        )
+        runs.append(runs_dir, slug, record)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "seed ledger records")
+
+
+def _main_with_faked_loop(tmp_path: Path) -> int:
+    """`run_loop` itself is irrelevant to these tests -- faked to a no-op so the seeded ledger, not
+    a real turn, is what `main()`'s own post-loop stall check reads."""
+    import pytest as _pytest
+
+    mp = _pytest.MonkeyPatch()
+    mp.setattr(
+        loop_mod,
+        "run_loop",
+        lambda *a, **k: loop_mod.LoopReport(steps=(), stopped=loop_mod.StopReason.MAX_ITERATIONS, spend_usd=0.0),
+    )
+    try:
+        return loop_mod.main(["--max-iterations", "1", str(tmp_path)])
+    finally:
+        mp.undo()
+
+
+def test_a_stalled_ledger_makes_main_exit_non_zero(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    (repo / ITEMS).mkdir(parents=True)
+    (repo / QUESTIONS).mkdir(parents=True)
+    git(repo, "init", "-q")
+    git(repo, "config", "user.email", "t@example.invalid")
+    git(repo, "config", "user.name", "T")
+    (repo / "seed.txt").write_text("seed\n", encoding="utf-8")
+    git(repo, "add", "seed.txt")
+    git(repo, "commit", "-q", "-m", "seed")
+
+    _seed_ledger_records(repo, [(Outcome.NOTHING_READY, None)] * 3)
+
+    assert _main_with_faked_loop(repo) == 1
+
+
+def test_a_starved_ledger_exits_with_its_own_distinct_status(tmp_path: Path) -> None:
+    from yosefactory.protocol.turn import FailureKind
+
+    repo = tmp_path / "repo"
+    (repo / ITEMS).mkdir(parents=True)
+    (repo / QUESTIONS).mkdir(parents=True)
+    git(repo, "init", "-q")
+    git(repo, "config", "user.email", "t@example.invalid")
+    git(repo, "config", "user.name", "T")
+    (repo / "seed.txt").write_text("seed\n", encoding="utf-8")
+    git(repo, "add", "seed.txt")
+    git(repo, "commit", "-q", "-m", "seed")
+
+    _seed_ledger_records(repo, [(Outcome.FAILED, FailureKind.BUDGET_EXHAUSTED)] * 3)
+
+    assert _main_with_faked_loop(repo) == 2
+
+
+def test_a_healthy_ledger_exits_zero_exactly_as_before(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    (repo / ITEMS).mkdir(parents=True)
+    (repo / QUESTIONS).mkdir(parents=True)
+    git(repo, "init", "-q")
+    git(repo, "config", "user.email", "t@example.invalid")
+    git(repo, "config", "user.name", "T")
+    (repo / "seed.txt").write_text("seed\n", encoding="utf-8")
+    git(repo, "add", "seed.txt")
+    git(repo, "commit", "-q", "-m", "seed")
+
+    _seed_ledger_records(repo, [(Outcome.ADVANCED, None)])
+
+    assert _main_with_faked_loop(repo) == 0
 
 
 def test_unattended_entrypoint_does_not_default_to_a_posture_that_denies_tool_calls(
@@ -653,9 +764,14 @@ def test_a_board_command_is_applied_but_never_invokes_the_executor_directly(
     item_path = places.queue / ITEMS / f"{new_item_id()}.jsonl"
     frame = {"goal": "g", "method": "m", "assumptions": "a"}
     append(item_path, backlog.ITEM, {"event": "created", "loop": "receipt", "frame": frame}, actor="fixture")
-    append(item_path, backlog.ITEM, {"event": "snoozed", "scheduled_for": "2099-01-01T00:00:00+00:00"}, actor="fixture")
+    append(
+        item_path,
+        backlog.ITEM,
+        {"event": "claimed", "owner": "someone-else", "expires_at": "2099-01-01T00:00:00+00:00", "attempt": 1},
+        actor="fixture",
+    )
     git(places.queue, "add", "-A")
-    git(places.queue, "commit", "-q", "-m", "seed a second snoozed item, addressable by the board command")
+    git(places.queue, "commit", "-q", "-m", "seed a second in-flight item, addressable by the board command")
 
     from tests.board.fake_adapter import FakeAdapter
 
@@ -698,9 +814,14 @@ def test_a_board_command_surfaces_as_a_turn_only_through_external_event(
     item_path = places.queue / ITEMS / f"{new_item_id()}.jsonl"
     frame = {"goal": "g", "method": "m", "assumptions": "a"}
     append(item_path, backlog.ITEM, {"event": "created", "loop": "receipt", "frame": frame}, actor="fixture")
-    append(item_path, backlog.ITEM, {"event": "snoozed", "scheduled_for": "2099-01-01T00:00:00+00:00"}, actor="fixture")
+    append(
+        item_path,
+        backlog.ITEM,
+        {"event": "claimed", "owner": "someone-else", "expires_at": "2099-01-01T00:00:00+00:00", "attempt": 1},
+        actor="fixture",
+    )
     git(places.queue, "add", "-A")
-    git(places.queue, "commit", "-q", "-m", "seed a second snoozed item")
+    git(places.queue, "commit", "-q", "-m", "seed a second in-flight item")
 
     from tests.board.fake_adapter import FakeAdapter
 
@@ -813,7 +934,7 @@ def test_a_completed_turns_outcome_is_projected_to_the_board(places: Places, lim
 def test_the_board_reflects_pre_existing_queue_state_before_the_first_turn(
     places: Places, limits: Guardrails, spend_log: Path
 ) -> None:
-    """`places`'s own fixture already seeds one snoozed item before the loop ever runs -- it must
+    """`places`'s own fixture already seeds one in-flight (claimed) item before the loop ever runs -- it must
     show up on the board even though no turn touches it and the executor is never called."""
     from tests.board.fake_adapter import FakeAdapter
 
@@ -836,4 +957,4 @@ def test_the_board_reflects_pre_existing_queue_state_before_the_first_turn(
         sleep_fn=clock.sleep_fn,
     )
 
-    assert len(adapter.threads) == 1  # the fixture's own pre-seeded snoozed item, projected before any turn ran
+    assert len(adapter.threads) == 1  # the fixture's own pre-seeded in-flight item, projected before any turn ran

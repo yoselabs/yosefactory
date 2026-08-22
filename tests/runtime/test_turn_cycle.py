@@ -44,7 +44,7 @@ def git(repo: Path, *args: str) -> str:
 
 @pytest.fixture
 def limits() -> Guardrails:
-    return Guardrails(window=10, wall_clock_seconds=60, turn_ceiling=4, grace_seconds=1, question_deadline_hours=24)
+    return Guardrails(window=10, wall_clock_seconds=60, turn_ceiling=4, grace_seconds=1, question_deadline_hours=24, max_attempts=3)
 
 
 @pytest.fixture
@@ -320,6 +320,17 @@ def test_an_answered_question_unblocks_its_item_in_the_same_turn(repo: Path, lim
 def test_an_open_question_leaves_its_item_ineligible(repo: Path, limits: Guardrails) -> None:
     item = seed_item(repo, state="blocked")
     seed_question(repo, item.stem, answered=False)
+    # unstick-the-backlog: `blocked` no longer suppresses planning on its own (S1021) -- a genuinely
+    # live claim, elsewhere, is what keeps this turn on the free `nothing-ready` path, so the
+    # assertion below stays about the *blocked item*, not about `should_plan`'s own predicate
+    # (covered separately in test_turn_cycle's should_plan unit tests).
+    in_flight = seed_item(repo, state="ready")
+    turn.append(
+        in_flight,
+        backlog.ITEM,
+        {"event": "claimed", "owner": "o", "expires_at": "2099-01-01T00:00:00+00:00", "attempt": 1},
+        actor="fixture",
+    )
     executor = FakeExecutor()
 
     record = take(repo, executor, limits)
@@ -344,6 +355,16 @@ def test_a_phase_argument_is_refused_before_anything_runs(repo: Path, limits: Gu
 def test_nothing_ready_costs_no_agent_and_writes_one_record(repo: Path, limits: Guardrails) -> None:
     seed_item(repo, state="blocked")
     seed_question(repo, "itm-absent", answered=False)
+    # unstick-the-backlog: a `blocked` item alone no longer suppresses planning (S1021) -- a live
+    # claim is what keeps this specific turn nothing-ready, so this test still exercises what it
+    # names (no agent, one record) rather than accidentally re-testing `should_plan`.
+    in_flight = seed_item(repo, state="ready")
+    turn.append(
+        in_flight,
+        backlog.ITEM,
+        {"event": "claimed", "owner": "o", "expires_at": "2099-01-01T00:00:00+00:00", "attempt": 1},
+        actor="fixture",
+    )
     executor = FakeExecutor()
 
     record = take(repo, executor, limits)
@@ -1284,3 +1305,173 @@ def test_an_unstated_publish_choice_publishes_both_places_exactly_as_before(
     assert git(queue_remote, "rev-parse", branch) == git(repo, "rev-parse", branch)
     branch = git(workspace, "rev-parse", "--abbrev-ref", "HEAD")
     assert git(workspace_remote, "rev-parse", branch) == git(workspace, "rev-parse", branch)
+
+
+# ---------------------------------------------------------------------------
+# 13. unstick-the-backlog / S1021 -- should_plan narrowed, leases reclaimed, exhaustion poisoned
+# ---------------------------------------------------------------------------
+
+
+def _seed_stuck_item(repo: Path, *, event: str, **payload: Any) -> Path:
+    """A `claimed`/`doing` item pushed straight into a terminal-adjacent dead end -- `failed`,
+    `falsified`, or `needs_split` -- with no route back to `ready` in the transition table."""
+    path = repo / turn.ITEMS / f"{turn.new_item_id()}.jsonl"
+    turn.append(path, backlog.ITEM, CREATED, actor="fixture")
+    turn.append(path, backlog.ITEM, {"event": "claimed", "owner": "o", "expires_at": "later", "attempt": 1}, actor="fixture")
+    turn.append(path, backlog.ITEM, {"event": "started"}, actor="fixture")
+    turn.append(path, backlog.ITEM, {"event": event, **payload}, actor="fixture")
+    return path
+
+
+def test_a_single_failed_item_does_not_freeze_planning_forever(repo: Path, limits: Guardrails) -> None:
+    """The regression test S1021 asks for directly: a backlog whose only item is stuck in a
+    non-terminal, non-eligible state must not forbid all future work. Before unstick-the-backlog,
+    `should_plan` treated `failed` as "in flight" and this turn would have reported `nothing-ready`
+    forever, for $0, exactly as the signal describes."""
+    item = _seed_stuck_item(repo, event="failed", reason="boom", attempt=1, retryable=True)
+
+    executor = FakeExecutor(proposal=[{"event": "created", "loop": "l", "frame": FRAME}])
+    record = take(repo, executor, limits)
+
+    assert executor.calls, "a stuck item must not forbid planning -- the turn should have plans instead of nothing-ready"
+    assert record.outcome is Outcome.ADVANCED
+    assert backlog.load(item).state == "failed"  # the stuck item itself is untouched
+
+
+def test_a_backlog_of_only_falsified_and_needs_split_items_still_plans(repo: Path, limits: Guardrails) -> None:
+    """The same regression, for the two states with no route back at all -- `falsified` and
+    `needs_split`, neither of which this change gives a new transition to."""
+    _seed_stuck_item(repo, event="falsified", by="disproven", successor="itm-successor")
+    _seed_stuck_item(repo, event="needs_split", children=["itm-a", "itm-b"])
+
+    executor = FakeExecutor(proposal=[{"event": "created", "loop": "l", "frame": FRAME}])
+    record = take(repo, executor, limits)
+
+    assert executor.calls
+    assert record.outcome is Outcome.ADVANCED
+
+
+def test_should_plan_is_suppressed_only_by_a_live_claim() -> None:
+    """Unit coverage for the predicate itself, independent of a full turn."""
+    from types import SimpleNamespace
+
+    stuck_states = ["failed", "falsified", "needs_split", "blocked", "snoozed"]
+    for state in stuck_states:
+        assert turn.should_plan([SimpleNamespace(state=state)]), f"{state!r} must not suppress planning"
+    for state in ("claimed", "doing"):
+        assert not turn.should_plan([SimpleNamespace(state=state)]), f"{state!r} must suppress planning"
+    assert turn.should_plan([SimpleNamespace(state=s) for s in stuck_states])  # mixed, still plans
+    assert not turn.should_plan([SimpleNamespace(state="ready"), SimpleNamespace(state="doing")])
+
+
+def test_an_expired_lease_is_reclaimed_and_may_be_reclaimed_in_the_same_turn(repo: Path, limits: Guardrails) -> None:
+    """The reclamation path, direct: an item claimed by a turn that never finished -- its lease's
+    `expires_at` is in the past and no further event was ever appended, exactly what a crash or an
+    OOM kill leaves behind."""
+    from datetime import UTC, datetime
+
+    item = repo / turn.ITEMS / f"{turn.new_item_id()}.jsonl"
+    turn.append(item, backlog.ITEM, CREATED, actor="fixture")
+    turn.append(
+        item,
+        backlog.ITEM,
+        {"event": "claimed", "owner": "dead-turn", "expires_at": "2026-01-01T00:00:00+00:00", "attempt": 1},
+        actor="fixture",
+    )
+    turn.append(item, backlog.ITEM, {"event": "started"}, actor="fixture")
+
+    executor = FakeExecutor(proposal={"event": "priority_set", "priority": 5})
+    record = take(repo, executor, limits, now=datetime(2026, 1, 2, tzinfo=UTC))
+
+    assert executor.calls, "the reclaimed item should have been eligible again in this same turn"
+    assert record.outcome is Outcome.ADVANCED
+    folded = backlog.load(item)
+    assert folded.state == "doing"
+    assert backlog.lease(folded)["attempt"] == 2  # claimed again, attempt incremented past the dead lease
+    events = [record["event"] for record in folded.records]
+    assert events.count("reclaimed") == 1
+    assert events.count("claimed") == 2
+
+
+def test_a_lease_that_keeps_expiring_is_poisoned_not_reclaimed_forever(repo: Path, limits: Guardrails) -> None:
+    """Exhaustion path: an item whose lease has expired for the `max_attempts`-th time is poisoned
+    instead of reclaimed -- a crash-looping item stops consuming turns rather than retrying forever."""
+    from datetime import UTC, datetime
+
+    item = repo / turn.ITEMS / f"{turn.new_item_id()}.jsonl"
+    turn.append(item, backlog.ITEM, CREATED, actor="fixture")
+    turn.append(
+        item,
+        backlog.ITEM,
+        {"event": "claimed", "owner": "dead-turn", "expires_at": "2026-01-01T00:00:00+00:00", "attempt": limits.max_attempts},
+        actor="fixture",
+    )
+    turn.append(item, backlog.ITEM, {"event": "started"}, actor="fixture")
+
+    # nothing else is ready or claimed once the poison sweep runs, so this turn plans -- give it
+    # something legal to propose rather than asserting it is never called.
+    executor = FakeExecutor(proposal=[{"event": "created", "loop": "l", "frame": FRAME}])
+    take(repo, executor, limits, now=datetime(2026, 1, 2, tzinfo=UTC))
+
+    folded = backlog.load(item)
+    assert folded.state == "poison"
+    events = [record["event"] for record in folded.records]
+    assert "reclaimed" not in events
+    assert events[-2:] == ["failed", "poisoned"]
+
+
+def test_a_non_retryable_failure_poisons_immediately(repo: Path, limits: Guardrails) -> None:
+    """`retryable: false` poisons on the first failure, regardless of `attempt` -- the agent's own
+    judgment that retrying is pointless is trusted once rather than re-litigated `max_attempts` times."""
+    item = seed_item(repo)
+    executor = FakeExecutor(proposal={"event": "failed", "reason": "unrecoverable", "attempt": 1, "retryable": False})
+
+    take(repo, executor, limits)
+
+    assert backlog.load(item).state == "poison"
+
+
+def test_a_retryable_failure_under_the_cap_is_not_poisoned(repo: Path, limits: Guardrails) -> None:
+    item = seed_item(repo)
+    executor = FakeExecutor(proposal={"event": "failed", "reason": "transient", "attempt": 1, "retryable": True})
+
+    take(repo, executor, limits)
+
+    assert backlog.load(item).state == "failed"  # not poisoned -- under the cap and retryable
+
+
+def test_a_sweeps_writes_are_committed_with_the_turn_and_do_not_dirty_the_tree(repo: Path, limits: Guardrails) -> None:
+    """The commit-scoping fix, found wiring the reclaim sweep: an item the sweep moves, other than
+    the one the turn goes on to act on, must land in a commit -- not sit uncommitted in the tree,
+    where `Places.local` (queue == workspace) would misread it as the agent's own dirty work."""
+    from datetime import UTC, datetime
+
+    swept = repo / turn.ITEMS / f"{turn.new_item_id()}.jsonl"
+    turn.append(swept, backlog.ITEM, CREATED, actor="fixture")
+    turn.append(
+        swept,
+        backlog.ITEM,
+        {"event": "claimed", "owner": "dead-turn", "expires_at": "2026-01-01T00:00:00+00:00", "attempt": 1},
+        actor="fixture",
+    )
+    turn.append(swept, backlog.ITEM, {"event": "started"}, actor="fixture")
+    target = seed_item(repo)  # a second, ready item -- this is the one the turn actually acts on
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "seed both items")
+
+    executor = FakeExecutor(proposal={"event": "priority_set", "priority": 5})
+    take(repo, executor, limits, now=datetime(2026, 1, 2, tzinfo=UTC))
+
+    # The tree is clean at the end -- nothing the sweep wrote was left uncommitted for a fresh
+    # clone to miss.
+    assert git(repo, "status", "--porcelain") == ""
+    # And it is not merely present on disk: it is reachable from `HEAD` by walking that file's own
+    # history, i.e. it was actually staged and committed, not written and forgotten
+    # (`apply_answers`'s own pre-existing defect, before this change fixed it).
+    swept_relative = str(swept.relative_to(repo))
+    assert "reclaimed" in git(repo, "log", "-p", "--follow", "--", swept_relative)
+    # Whichever of the two `pick()` chose (deterministic by priority-then-id, immaterial here) ends
+    # up `doing`; the other stays `ready` -- both are committed either way, which is the property
+    # under test.
+    states = {backlog.load(swept).state, backlog.load(target).state}
+    assert states == {"ready", "doing"}

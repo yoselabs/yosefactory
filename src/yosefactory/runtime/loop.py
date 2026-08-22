@@ -59,7 +59,7 @@ from yosefactory.board.adapter import BoardAdapter
 from yosefactory.board.inbox import ingest
 from yosefactory.board.projection import project_all
 from yosefactory.protocol.turn import TurnRecord
-from yosefactory.runtime import spend
+from yosefactory.runtime import spend, stall
 from yosefactory.runtime.config import Guardrails
 from yosefactory.runtime.runs import slug_for
 from yosefactory.runtime.turn import (
@@ -468,7 +468,14 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
         # the interactive path above is untouched and keeps publishing both places unconditionally,
         # exactly as `Places.local` always has.
         places = replace(places, publish_workspace=args.publish, publish_queue=args.publish)
-    limits = Guardrails(window=10, wall_clock_seconds=45 * 60, turn_ceiling=40, grace_seconds=20, question_deadline_hours=24)
+    limits = Guardrails(
+        window=10,
+        wall_clock_seconds=45 * 60,
+        turn_ceiling=40,
+        grace_seconds=20,
+        question_deadline_hours=24,
+        max_attempts=3,
+    )
     # `unattended` is the same signal `--spend-ceiling-usd`'s requiredness already keys off (D022:
     # a human is or is not present). The posture correct for a person on their own laptop is not
     # the posture correct for a process nobody is watching: `isolated` (safe-mode,
@@ -535,7 +542,15 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
     )
     for step in report.steps:
         sys.stdout.write(f"  {step.wake.value:16} {step.record.outcome.value:14} {step.record.note}\n")
-    return 0
+
+    # unstick-the-backlog / S1021: `stall.py` was already correct and already invocable on its own —
+    # nothing in this repository's own process ever called it, so a freeze reported STALLED forever
+    # and nobody saw it. This entrypoint (interactively, and via `scheduled_main` --
+    # `ops/launchd/dev.yosefactory.loop.plist.template` already names it) is what a scheduler
+    # actually runs, so its exit code is where "loud" has to land without inventing a new workflow.
+    verdict = stall.detect(places.ledger)
+    sys.stdout.write(verdict.report() + "\n")
+    return {stall.Status.OK: 0, stall.Status.STALLED: 1, stall.Status.STARVED: 2}[verdict.status]
 
 
 def scheduled_main(argv: Sequence[str] | None = None) -> int:

@@ -266,14 +266,24 @@ def eligible(item: FoldedLog) -> bool:
     return item.state == "ready"
 
 
-def should_plan(backlog_items: Sequence[FoldedLog]) -> bool:
-    """Plan only when nothing is in flight.
+def in_flight(item: FoldedLog) -> bool:
+    """`claimed` or `doing` -- genuinely being worked on right now, or was until its lease expires,
+    at which point `reclaim_expired` (below) resolves it before this is ever consulted (S1021)."""
+    return item.state in ("claimed", "doing")
 
-    Work that exists but is blocked or snoozed is not an argument for making more of it — that is how
-    a backlog fills with slop while the real item waits on an answer. `nothing-ready` is the honest
-    record of that state, and it is the one architecture.md §8 needs in order to see a green stall.
+
+def should_plan(backlog_items: Sequence[FoldedLog]) -> bool:
+    """Plan when nothing is ready and nothing is live in-flight.
+
+    Only `claimed`/`doing` suppress planning -- unstick-the-backlog / S1021. `failed`, `falsified`,
+    `needs_split`, `blocked`, `snoozed` do NOT: none of them has a bound that resolves on its own
+    today (no sweeper reads `blocked`'s deadline or `snoozed`'s `scheduled_for`), so treating them
+    as "in flight" was the freeze itself -- one stuck item forbidding all future work, forever, for
+    free. A backlog holding only such litter is now planned around exactly like an empty backlog
+    already is: bounded by `LoopBound.max_iterations`/`spend_ceiling_usd`, not by this predicate.
+    See `decisions/0012-lease-reclaim-and-should-plan-narrowed-to-in-flight.md`.
     """
-    return not any(not item.terminal for item in backlog_items)
+    return not any(in_flight(item) for item in backlog_items)
 
 
 def pick(candidates: Sequence[FoldedLog]) -> FoldedLog | None:
@@ -310,6 +320,78 @@ def apply_answers(repo: Path, *, actor: str) -> list[str]:
         )
         moved.append(item_id)
     return moved
+
+
+def _poison_if_exhausted(item_path: Path, folded: FoldedLog, *, actor: str, max_attempts: int) -> None:
+    """Escalate a `failed` item straight to `poison` when it must not be retried or has used its budget.
+
+    Reads two fields the format has required since it was defined and no code read until
+    unstick-the-backlog: `retryable` is the agent's own judgment that trying again is pointless,
+    taken at face value once; `attempt` is the same counter `claimed` increments on every claim (and
+    `reclaim_expired`'s own claims), so a crash loop and a repeatedly-declined proposal are capped by
+    one number. A no-op when the item is not `failed` or carries no `failed` record (never true for
+    a just-appended `failed` event, but `folded` is passed rather than re-derived so this stays a
+    pure function of its argument).
+    """
+    if folded.state != "failed":
+        return
+    last = backlog.failure(folded)
+    if last is None:
+        return
+    attempt = int(last.get("attempt", 0))
+    if last.get("retryable") is False or attempt >= max_attempts:
+        append(item_path, backlog.ITEM, {"event": "poisoned", "attempts": attempt}, actor=actor)
+
+
+def reclaim_expired(repo: Path, *, actor: str, now: datetime, max_attempts: int) -> list[Path]:
+    """Reclaim every `claimed`/`doing` item whose lease has expired, or poison it if attempts are used up.
+
+    Runs in the same deterministic, agent-free sweep as `apply_answers`, before classification, so a
+    reclaimed item is visible to `should_plan`/`eligible` in the same turn that reclaimed it (S1021:
+    `expires_at` was written and read by nothing before this).
+
+    D002: never edits the `claimed` record -- `reclaimed` only ever appends. Safe against a "dead"
+    turn that is not actually dead: this only ever appends too, so if the original turn is alive and
+    later appends its own event from `claimed`/`doing`, that append still succeeds locally against
+    its own clone. What is at risk is not correctness but that turn's own eventual `push_repo`, which
+    may be rejected as non-fast-forward once this reclaim has landed first -- a lost turn, not
+    corrupted state (design.md's own section on this).
+    """
+    touched: list[Path] = []
+    for path in sorted((repo / ITEMS).glob("*.jsonl")):
+        item = backlog.load(path)
+        if item.state not in ("claimed", "doing"):
+            continue
+        current_lease = backlog.lease(item)
+        if current_lease is None:
+            continue
+        expires_at = datetime.fromisoformat(str(current_lease["expires_at"]))
+        if now < expires_at:
+            continue
+        attempt = int(current_lease["attempt"])
+        owner = str(current_lease["owner"])
+        if attempt >= max_attempts:
+            append(
+                path,
+                backlog.ITEM,
+                {
+                    "event": "failed",
+                    "reason": f"lease held by {owner!r} expired on attempt {attempt}/{max_attempts}; no further reclaim",
+                    "attempt": attempt,
+                    "retryable": False,
+                },
+                actor=actor,
+            )
+            append(path, backlog.ITEM, {"event": "poisoned", "attempts": attempt}, actor=actor)
+        else:
+            append(
+                path,
+                backlog.ITEM,
+                {"event": "reclaimed", "reason": "lease expired", "expired_owner": owner, "expired_attempt": attempt},
+                actor=actor,
+            )
+        touched.append(path)
+    return touched
 
 
 def read_proposal(path: Path, *, planning: bool) -> list[dict[str, Any]] | Refusal:
@@ -574,7 +656,19 @@ def take_turn(
         # bookkeeping must not read as the agent having left work half-finished.
         slug = runs.open_run(places.ledger, run_id, started)
         commit(places.queue, [places.ledger / f"{slug}.start"], f"turn({run_id}): declared", run_id=run_id)
-        apply_answers(places.queue, actor=owner)
+        # Both sweeps are deterministic and agent-free (turn-cycle: "Answers waiting in the
+        # repository are applied before classification"). Committed immediately, before anything
+        # else this turn does -- the claim commit just below already establishes that a write left
+        # uncommitted here is a write `_finish`'s later `tree_is_dirty` check would misattribute to
+        # the agent under `Places.local` (queue == workspace), and unstick-the-backlog / S1021 found
+        # `apply_answers`'s own writes had been suffering exactly that since it was written: its
+        # return value naming the items it moved was discarded, so those items' `unblocked` lines
+        # landed on disk and were never named in any commit's pathspec.
+        unblocked_ids = apply_answers(places.queue, actor=owner)
+        reclaimed_paths = reclaim_expired(places.queue, actor=owner, now=started, max_attempts=limits.max_attempts)
+        swept = [places.queue / ITEMS / f"{item_id}.jsonl" for item_id in unblocked_ids] + reclaimed_paths
+        if swept:
+            commit(places.queue, swept, f"sweep({run_id}): {len(swept)} item(s) unblocked or reclaimed", run_id=run_id)
         present = items(places.queue)
         target = pick([item for item in present if eligible(item)])
 
@@ -613,12 +707,18 @@ def take_turn(
                     isolated=isolated,
                     test_command=test_command,
                     question_deadline_hours=limits.question_deadline_hours,
+                    max_attempts=limits.max_attempts,
                 )
                 publish(places, record)
                 return record
 
         item_path = places.queue / ITEMS / f"{target.id}.jsonl"
-        attempt = int((backlog.lease(target) or {}).get("attempt", 0)) + 1
+        # `target` is always `ready` here (picked via `eligible()`), so `backlog.lease(target)`
+        # always reads None and a computation keyed off it always restarts at 1 -- exactly the gap
+        # unstick-the-backlog / S1021 found: the `attempt` field could never exceed 1 in production,
+        # so nothing gated on it could ever fire. `backlog.claims()` counts the item's whole history
+        # instead, so the count survives every `released`/`reclaimed` trip back through `ready`.
+        attempt = backlog.claims(target) + 1
         append(
             item_path,
             backlog.ITEM,
@@ -654,6 +754,7 @@ def take_turn(
                 isolated=isolated,
                 test_command=test_command,
                 question_deadline_hours=limits.question_deadline_hours,
+                max_attempts=limits.max_attempts,
                 workspace_head_before=workspace_head_before,
             )
             publish(places, record)
@@ -674,6 +775,7 @@ def _dispose(
     isolated: bool,
     test_command: tuple[str, ...],
     question_deadline_hours: int,
+    max_attempts: int,
     workspace_head_before: str | None = None,
 ) -> TurnRecord:
     planning = item_path is None
@@ -814,6 +916,12 @@ def _dispose(
         folded = append(item_path, backlog.ITEM, event, actor=owner)
     except (LogError, TurnError) as exc:
         return failed(f"proposal refused: {exc}")
+
+    # unstick-the-backlog / S1021: an agent-reported `failed` that is not retryable, or that has
+    # used its attempt budget, escalates straight to `poison` in the same turn -- appended to the
+    # same `item_path` already in `touched`/`paths` below, so it lands in the same commit.
+    _poison_if_exhausted(item_path, folded, actor=owner, max_attempts=max_attempts)
+    folded = backlog.load(item_path)  # re-fold: may now read `poison` rather than `failed`
 
     return _finish(
         places,

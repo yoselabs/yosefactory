@@ -25,7 +25,14 @@ BROKEN = [sys.executable, "-c", "raise SystemExit(3)"]
 
 
 def guard(**overrides: int) -> Guardrails:
-    base = {"window": 5, "wall_clock_seconds": 1, "turn_ceiling": 5, "grace_seconds": 1, "question_deadline_hours": 24}
+    base = {
+        "window": 5,
+        "wall_clock_seconds": 1,
+        "turn_ceiling": 5,
+        "grace_seconds": 1,
+        "question_deadline_hours": 24,
+        "max_attempts": 3,
+    }
     return Guardrails(**{**base, **overrides})  # type: ignore[arg-type]
 
 

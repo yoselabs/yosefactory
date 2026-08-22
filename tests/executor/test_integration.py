@@ -53,7 +53,7 @@ def test_a_real_run_produces_a_structured_outcome(workspace: Path) -> None:
     result = run(
         {"goal": "Reply with exactly: OK", "method": "answer directly", "assumptions": "none"},
         workspace,
-        Guardrails(window=10, wall_clock_seconds=300, turn_ceiling=5, grace_seconds=10, question_deadline_hours=24),
+        Guardrails(window=10, wall_clock_seconds=300, turn_ceiling=5, grace_seconds=10, question_deadline_hours=24, max_attempts=3),
         run_id="receipt1",
         runs_dir=runs,
         recorder=StreamRecorder(runs),
@@ -95,7 +95,7 @@ def test_an_isolated_run_loads_no_host_or_repository_configuration(workspace: Pa
     result = run(
         {"goal": "Reply with exactly: OK"},
         workspace,
-        Guardrails(window=10, wall_clock_seconds=300, turn_ceiling=5, grace_seconds=10, question_deadline_hours=24),
+        Guardrails(window=10, wall_clock_seconds=300, turn_ceiling=5, grace_seconds=10, question_deadline_hours=24, max_attempts=3),
         run_id="receipt3",
         runs_dir=runs,
         policy=IsolationPolicy(isolated=True),
@@ -127,7 +127,7 @@ def test_a_workspace_scoped_run_admits_repo_config_and_excludes_host_config(work
     result = run(
         {"goal": "Reply with exactly: OK"},
         workspace,
-        Guardrails(window=10, wall_clock_seconds=300, turn_ceiling=5, grace_seconds=10, question_deadline_hours=24),
+        Guardrails(window=10, wall_clock_seconds=300, turn_ceiling=5, grace_seconds=10, question_deadline_hours=24, max_attempts=3),
         run_id="receipt-workspace-scoped",
         runs_dir=runs,
         policy=IsolationPolicy(isolated=False, workspace_scoped=True, opt_out_reason="the workspace-scoped receipt"),
@@ -150,7 +150,7 @@ def test_an_opted_out_run_shows_what_isolation_was_holding_back(workspace: Path)
     result = run(
         {"goal": "Reply with exactly: OK"},
         workspace,
-        Guardrails(window=10, wall_clock_seconds=300, turn_ceiling=5, grace_seconds=10, question_deadline_hours=24),
+        Guardrails(window=10, wall_clock_seconds=300, turn_ceiling=5, grace_seconds=10, question_deadline_hours=24, max_attempts=3),
         run_id="control",
         runs_dir=runs,
         policy=IsolationPolicy(isolated=False, opt_out_reason="the control for the isolation receipt"),
@@ -171,7 +171,7 @@ def test_a_run_that_exceeds_its_wall_clock_is_stopped_and_recorded(workspace: Pa
     result = run(
         {"goal": "Count slowly from 1 to 500, one number per line, with a short remark on each."},
         workspace,
-        Guardrails(window=10, wall_clock_seconds=5, turn_ceiling=40, grace_seconds=1, question_deadline_hours=24),
+        Guardrails(window=10, wall_clock_seconds=5, turn_ceiling=40, grace_seconds=1, question_deadline_hours=24, max_attempts=3),
         run_id="receipt2",
         runs_dir=runs,
         recorder=StreamRecorder(runs),

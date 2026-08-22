@@ -26,6 +26,11 @@ DEFAULTS: Final[dict[str, int]] = {
     # `cost_ceiling_usd` has one, so this is a guess with a default like its four siblings above,
     # not `_OPTIONAL` below.
     "question_deadline_hours": 24,
+    # unstick-the-backlog / S1021: how many times a lease may expire (or a `failed` proposal may
+    # land) on the same item before the reclaim sweep poisons it instead of reclaiming it again. A
+    # guess, like its siblings above -- D021's posture is build the detector, learn the condition,
+    # decide the limit later.
+    "max_attempts": 3,
 }
 
 _SECRET_ISH: Final = ("token", "key", "secret", "password", "credential", "path", "home")
@@ -46,13 +51,14 @@ class Guardrails:
     turn_ceiling: int
     grace_seconds: int
     question_deadline_hours: int
+    max_attempts: int
     # None means no flag is sent, not "no limit substituted on the caller's behalf" — the executor
     # must not pick a number nobody asked for. When set, it is a post-turn detector: the binary checks
     # after a turn completes and stops the next one, so the turn that crosses the line still finishes.
     cost_ceiling_usd: float | None = None
 
     def __post_init__(self) -> None:
-        for name in ("window", "wall_clock_seconds", "turn_ceiling", "grace_seconds", "question_deadline_hours"):
+        for name in ("window", "wall_clock_seconds", "turn_ceiling", "grace_seconds", "question_deadline_hours", "max_attempts"):
             value = getattr(self, name)
             if not isinstance(value, int) or isinstance(value, bool) or value < 1:
                 raise ConfigError(f"{name} must be a positive integer, got {value!r}")

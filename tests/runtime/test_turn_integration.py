@@ -64,7 +64,15 @@ pytestmark = [
 
 SKILL = Path("workflows/turn-skill.md").resolve()
 
-LIMITS = Guardrails(window=10, wall_clock_seconds=180, turn_ceiling=8, grace_seconds=10, question_deadline_hours=24, cost_ceiling_usd=1.0)
+LIMITS = Guardrails(
+    window=10,
+    wall_clock_seconds=180,
+    turn_ceiling=8,
+    grace_seconds=10,
+    question_deadline_hours=24,
+    max_attempts=3,
+    cost_ceiling_usd=1.0,
+)
 
 # The only posture under which an unattended tool-using turn can act at all (see module docstring).
 _POLICY = IsolationPolicy(

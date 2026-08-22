@@ -140,6 +140,70 @@ def test_a_poisoned_item_is_terminal_and_only_reachable_from_failed() -> None:
         fold(CREATED, CLAIMED, STARTED, poisoned)
 
 
+def test_claims_counts_the_whole_history_not_just_the_current_lease() -> None:
+    """`lease()` reads `None` once an item is back to `ready` (`released` or `reclaimed`), so a
+    claim-attempt computation keyed off it alone always restarts at zero -- unstick-the-backlog /
+    S1021 found `take_turn`'s own claim step doing exactly that, meaning `attempt` could never
+    exceed 1 in production. `claims()` counts every `claimed` event ever appended instead."""
+    released = {"event_id": "e4", "ts": "2026-08-14T09:05:00Z", "actor": "t1", "event": "released", "owner": "t1", "reason": "r"}
+    reclaimed_second_lease = {
+        "event_id": "e6",
+        "ts": "2026-08-14T09:07:00Z",
+        "actor": "t2",
+        "event": "claimed",
+        "owner": "t2",
+        "expires_at": "2026-08-14T09:37:00Z",
+        "attempt": 2,
+    }
+
+    once = fold(CREATED, CLAIMED, STARTED, released)
+    assert backlog.claims(once) == 1
+    assert backlog.lease(once) is None  # back to `ready` -- lease() alone would read this as zero
+
+    twice = fold(CREATED, CLAIMED, STARTED, released, reclaimed_second_lease)
+    assert backlog.claims(twice) == 2
+
+
+def test_a_reclaimed_item_returns_to_ready_and_names_the_expired_lease() -> None:
+    reclaimed = {
+        "event_id": "e4",
+        "ts": "2026-08-14T09:35:00Z",
+        "actor": "sweep",
+        "event": "reclaimed",
+        "reason": "lease expired",
+        "expired_owner": "t1",
+        "expired_attempt": 1,
+    }
+    item = fold(CREATED, CLAIMED, STARTED, reclaimed)
+    assert item.state == "ready"
+
+
+def test_reclaimed_is_illegal_from_ready() -> None:
+    reclaimed = {
+        "event_id": "e2",
+        "ts": "2026-08-14T09:01:00Z",
+        "actor": "sweep",
+        "event": "reclaimed",
+        "reason": "lease expired",
+        "expired_owner": "t1",
+        "expired_attempt": 1,
+    }
+    with pytest.raises(LogError, match="'reclaimed' is illegal from state 'ready'"):
+        fold(CREATED, reclaimed)
+
+
+def test_reclaimed_requires_its_three_fields() -> None:
+    incomplete = {
+        "event_id": "e4",
+        "ts": "2026-08-14T09:35:00Z",
+        "actor": "sweep",
+        "event": "reclaimed",
+        "reason": "lease expired",
+    }
+    with pytest.raises(LogError):
+        fold(CREATED, CLAIMED, STARTED, incomplete)
+
+
 def test_closing_a_duplicate_names_a_survivor_and_touches_nothing_else() -> None:
     duplicate = {"event_id": "e4", "ts": "2026-08-14T09:05:00Z", "actor": "t1", "event": "duplicate", "survivor": "itm-0002"}
     closed = fold(CREATED, CLAIMED, STARTED, duplicate)

@@ -69,6 +69,13 @@ ITEM = Declaration(
         "claimed": Rule(frozenset({"ready"}), "claimed", required=(("owner",), ("expires_at",), ("attempt",))),
         "started": Rule(frozenset({"claimed"}), "doing"),
         "released": Rule(frozenset({"claimed", "doing"}), "ready", required=(("owner",), ("reason",))),
+        # unstick-the-backlog / S1021: `claimed.expires_at` was written and read by nothing, so a
+        # turn that died after claiming an item parked it in `doing` forever. `reclaimed` is the
+        # route back -- distinct fields from `released`'s so a reader can tell "the owner gave it
+        # back" from "the owner's lease expired and something else took it back."
+        "reclaimed": Rule(
+            frozenset({"claimed", "doing"}), "ready", required=(("reason",), ("expired_owner",), ("expired_attempt",))
+        ),
         "blocked": Rule(
             frozenset({"claimed", "doing"}),
             "blocked",
@@ -120,6 +127,16 @@ def lease(item: FoldedLog) -> Mapping[str, Any] | None:
     return {"owner": claim["owner"], "expires_at": claim["expires_at"], "attempt": claim["attempt"]}
 
 
+def claims(item: FoldedLog) -> int:
+    """How many times this item has ever been `claimed`, across every `ready` it has passed
+    through -- `released` and `reclaimed` both return an item to `ready`, and `lease()` reads
+    nothing once that happens, so a claim-time computation keyed off `lease()` alone always sees a
+    freshly-`ready` item and always starts over at zero. unstick-the-backlog / S1021: the `attempt`
+    field `claimed` writes is meant to survive exactly that reset -- this is what makes it able to.
+    """
+    return sum(1 for record in item.records if record["event"] == "claimed")
+
+
 def priority(item: FoldedLog) -> Any:
     return _last("priority_set", item, key="priority")
 
@@ -142,6 +159,12 @@ def children(item: FoldedLog) -> list[str] | None:
 
 def falsification(item: FoldedLog) -> Mapping[str, Any] | None:
     return _last("falsified", item)
+
+
+def failure(item: FoldedLog) -> Mapping[str, Any] | None:
+    """The most recent `failed` record, or None. `retryable`/`attempt` live here -- unstick-the-backlog
+    is the first reader of either; the format has required both since it was defined."""
+    return _last("failed", item)
 
 
 def _last(event: str, item: FoldedLog, key: str | None = None) -> Any:
