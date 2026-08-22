@@ -66,6 +66,6 @@
 
 ## 7. Archive
 
-- [ ] 7.1 `openspec validate give-the-entrypoint-a-cross-repo-surface --strict` passes.
-- [ ] 7.2 Archive the change; confirm `git diff --stat <sha>^ <sha> -- openspec/specs/...` shows
+- [x] 7.1 `openspec validate give-the-entrypoint-a-cross-repo-surface --strict` passes.
+- [x] 7.2 Archive the change; confirm `git diff --stat <sha>^ <sha> -- openspec/specs/...` shows
       only additions (this change adds a capability, modifies none).
