@@ -1,0 +1,71 @@
+# Publishes the yosefactory image to GHCR. See
+# openspec/changes/publish-the-image/design.md for why each decision here was made (D1: trigger +
+# path filter; D2: tagging; D3: caching; D4: provenance; D5: visibility is NOT settable from here).
+#
+# This workflow builds the machine; it does not run it. The private factory-state runner (a
+# separate, not-yet-built change) is the thing that pulls this image with no registry credential.
+name: Publish image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - docker-entrypoint.sh
+      - pyproject.toml
+      - uv.lock
+      - .github/workflows/publish-image.yml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # D2: latest is a moving convenience tag; sha-<full sha> is the immutable one the runner
+      # pins. A receipt that names :latest is not a receipt.
+      - name: Compute tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=long,prefix=sha-
+
+      # D3: GHA cache — mode=max caches every intermediate layer, not just the final image, which
+      # matters here because the ~2.8GB Chromium/patchright layer (D023 §4 stopgap) sits behind
+      # layers that change on nearly every commit.
+      # D4: buildx's own SLSA provenance attestation, pushed with the same packages:write
+      # credential already granted — no extra permission scope, no OIDC.
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
