@@ -64,6 +64,8 @@ from yosefactory.runtime.config import Guardrails
 from yosefactory.runtime.runs import slug_for
 from yosefactory.runtime.turn import (
     DEFAULT_PLANNING_FRAME,
+    LOCK,
+    RUNS,
     Executor,
     Places,
     commit,
@@ -401,12 +403,39 @@ def run_loop(
         last_heartbeat = now_fn()
 
 
-def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
-    """Run the loop against one local repository, both queue and workspace (`Places.local`).
+def _places_for(repo: Path, queue: Path | None, workspace: Path | None) -> Places:
+    """Resolve `--queue`/`--workspace` against the `repo` positional, deriving the rest of
+    `Places` exactly as `Places.local` would when they agree, and keying `workspace_lock` to the
+    workspace's own path (matching the convention both `scripts/run_a2web_turn.py` and
+    `yoselabs/factory-state`'s driver already use by hand) when they differ.
 
-    Cross-repo, cross-machine and non-default executor configuration are left to a caller that
-    imports `run_loop` directly — this is the shape one person on one machine actually reaches for,
-    matching `stall.main`'s scope discipline rather than growing a general-purpose launcher.
+    `ledger` and `queue_lock` are always under the queue -- there is no caller, real or
+    hypothetical, that has ever wanted the ledger to live anywhere other than beside the backlog
+    it records turns against.
+    """
+    resolved_queue = (queue or repo).resolve()
+    resolved_workspace = (workspace or repo).resolve()
+    if resolved_queue == resolved_workspace:
+        return Places.local(resolved_queue)
+    return Places(
+        queue=resolved_queue,
+        ledger=resolved_queue / RUNS,
+        queue_lock=resolved_queue / LOCK,
+        workspace=resolved_workspace,
+        workspace_lock=resolved_workspace / LOCK,
+    )
+
+
+def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
+    """Run the loop, by default against one local repository playing all `Places` roles
+    (`Places.local`) — but `--queue`/`--workspace` may split queue from workspace.
+
+    Cross-machine and non-default executor configuration are still left to a caller that imports
+    `run_loop` directly. Cross-*repo* is not, as of `give-the-entrypoint-a-cross-repo-surface`:
+    `--queue`/`--workspace` (task 1.1) let this entrypoint itself be that caller for the one shape
+    that turned out to matter -- a private queue and a public workspace (K D026) -- without
+    growing into a general-purpose launcher. Omitting both keeps every existing behavior identical
+    to `Places.local(repo)`, byte for byte (see `_places_for` below).
 
     `unattended` makes `--spend-ceiling-usd` a required argument instead of an optional one.
     D022 §3 defers a program-wide cost ceiling on the premise a human is present to watch and
@@ -422,6 +451,7 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
     invocation, and does nothing on the interactive path, which was never gated on it.
     """
     import argparse
+    import shlex
     import sys
 
     from yosefactory.executor import claude
@@ -429,6 +459,20 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
 
     parser = argparse.ArgumentParser(prog="python -m yosefactory.runtime.loop")
     parser.add_argument("repo", type=Path, nargs="?", default=Path("."))
+    parser.add_argument(
+        "--queue",
+        type=Path,
+        default=None,
+        help="Defaults to `repo`. Where backlog items, questions and the ledger live. Combined "
+        "with --workspace, lets queue and workspace be different repositories (K D026) -- see "
+        "containerized-loop/cross-repo-invocation.",
+    )
+    parser.add_argument(
+        "--workspace",
+        type=Path,
+        default=None,
+        help="Defaults to `repo`. Where the agent works, is verified, and commits. See --queue.",
+    )
     parser.add_argument("--owner", default="loop")
     parser.add_argument("--skill", type=Path, default=Path("workflows/turn-skill.md"))
     parser.add_argument("--max-iterations", type=int, required=True)
@@ -438,7 +482,26 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
         default=None,
         required=unattended,
         help="Required when invoked unattended (a scheduler, never a person) -- D022 defers a "
-        "program-wide ceiling on the premise a human is present; that premise fails here.",
+        "program-wide ceiling on the premise a human is present; that premise fails here. This is "
+        "the LOOP's cumulative ceiling across iterations -- see --cost-ceiling-usd for the "
+        "per-turn one, a different quantity.",
+    )
+    parser.add_argument(
+        "--cost-ceiling-usd",
+        type=float,
+        default=None,
+        help="A single TURN's budget (Guardrails.cost_ceiling_usd, enforced post-hoc by the "
+        "executor's own --max-budget-usd). Distinct from --spend-ceiling-usd, the loop's "
+        "cumulative ceiling across iterations -- both may be given together and are applied "
+        "independently. Omitted, a turn is unbounded by cost, as before this flag existed.",
+    )
+    parser.add_argument(
+        "--test-command",
+        type=str,
+        default=None,
+        help="Overrides the built-in DEFAULT_TEST_COMMAND ('pytest -q') for the verification gate "
+        "-- e.g. --test-command \"make check\" for a workspace whose own gate is not pytest. Split "
+        "with shlex.split. Omitted, behavior is unchanged.",
     )
     parser.add_argument("--heartbeat-seconds", type=int, default=300)
     parser.add_argument("--poll-seconds", type=int, default=5)
@@ -461,7 +524,7 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
     args = parser.parse_args(argv)
 
     repo = args.repo.resolve()
-    places = Places.local(repo)
+    places = _places_for(repo, args.queue, args.workspace)
     if unattended:
         # D022 §2 granted push for a turn a human is watching. `scheduled_main` (below) is the one
         # caller with `unattended=True`, so this branch is the entire reach of the new default --
@@ -475,7 +538,11 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
         grace_seconds=20,
         question_deadline_hours=24,
         max_attempts=3,
+        # A single TURN's ceiling -- distinct from `--spend-ceiling-usd` below, the LOOP's
+        # cumulative one. `None` (the default) sends no flag, exactly as before this existed.
+        cost_ceiling_usd=args.cost_ceiling_usd,
     )
+    test_command = tuple(shlex.split(args.test_command)) if args.test_command is not None else DEFAULT_TEST_COMMAND
     # `unattended` is the same signal `--spend-ceiling-usd`'s requiredness already keys off (D022:
     # a human is or is not present). The posture correct for a person on their own laptop is not
     # the posture correct for a process nobody is watching: `isolated` (safe-mode,
@@ -527,6 +594,7 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
         bound=LoopBound(max_iterations=args.max_iterations, spend_ceiling_usd=args.spend_ceiling_usd),
         wake=WakeConfig(heartbeat_seconds=args.heartbeat_seconds, poll_seconds=args.poll_seconds),
         board=board_config,
+        test_command=test_command,
         # `run_loop`'s own `isolated` parameter (default True) is a SEPARATE value from `policy`
         # above -- it feeds `take_turn`'s turn-record field, not the executor invocation. Left
         # unwired, every record says `isolated: true` regardless of what posture actually ran --

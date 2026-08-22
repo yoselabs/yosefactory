@@ -19,13 +19,15 @@ import pytest
 
 from yosefactory.executor.invocation import Invocation
 from yosefactory.executor.outcome import RunOutcome, RunResult, Usage
+from yosefactory.protocol import backlog
 from yosefactory.protocol.turn import Outcome
 from yosefactory.runtime import loop as loop_mod
 from yosefactory.runtime.config import Guardrails
 from yosefactory.runtime.loop import LoopBound, LoopError, WakeConfig, WakeReason, run_loop
-from yosefactory.runtime.turn import ITEMS, QUESTIONS, Places
+from yosefactory.runtime.turn import ITEMS, LOCK, QUESTIONS, RUNS, Places, append, new_item_id
 
 SKILL = Path("workflows/turn-skill.md")
+TRUE_COMMAND = ("true",)
 
 
 def git(repo: Path, *args: str) -> str:
@@ -958,3 +960,193 @@ def test_the_board_reflects_pre_existing_queue_state_before_the_first_turn(
     )
 
     assert len(adapter.threads) == 1  # the fixture's own pre-seeded in-flight item, projected before any turn ran
+
+
+# ---------------------------------------------------------------------------
+# give-the-entrypoint-a-cross-repo-surface -- --queue/--workspace, --test-command,
+# --cost-ceiling-usd (distinct from --spend-ceiling-usd)
+# ---------------------------------------------------------------------------
+
+
+def git_init(root: Path) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    git(root, "init", "-q")
+    git(root, "config", "user.email", "t@example.invalid")
+    git(root, "config", "user.name", "T")
+    (root / "seed.txt").write_text("seed\n", encoding="utf-8")
+    git(root, "add", "seed.txt")
+    git(root, "commit", "-q", "-m", "seed")
+
+
+@pytest.fixture
+def queue_repo(tmp_path: Path) -> Path:
+    root = tmp_path / "queue"
+    (root / ITEMS).mkdir(parents=True)
+    (root / QUESTIONS).mkdir(parents=True)
+    git_init(root)
+    return root
+
+
+@pytest.fixture
+def workspace_repo(tmp_path: Path) -> Path:
+    """A second, foreign repository -- no queue directories of its own, matching the shape
+    `test_turn_cycle.py`'s own `workspace` fixture uses for the same reason."""
+    root = tmp_path / "workspace"
+    git_init(root)
+    return root
+
+
+def seed_ready_item(queue: Path) -> Path:
+    path = queue / ITEMS / f"{new_item_id()}.jsonl"
+    frame = {"goal": "make a real workspace commit", "method": "m", "assumptions": "a"}
+    append(path, backlog.ITEM, {"event": "created", "loop": "default", "frame": frame}, actor="fixture")
+    git(queue, "add", "-A")
+    git(queue, "commit", "-q", "-m", "seed ready item")
+    return path
+
+
+def test_places_for_with_neither_flag_matches_places_local_field_for_field(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    assert loop_mod._places_for(repo, None, None) == Places.local(repo)
+
+
+def test_places_for_derives_a_workspace_scoped_lock_when_split(tmp_path: Path) -> None:
+    queue = tmp_path / "queue"
+    workspace = tmp_path / "workspace"
+    places = loop_mod._places_for(tmp_path / "repo", queue, workspace)
+    assert places.queue == queue.resolve()
+    assert places.workspace == workspace.resolve()
+    assert places.ledger == queue.resolve() / RUNS
+    assert places.queue_lock == queue.resolve() / LOCK
+    assert places.workspace_lock == workspace.resolve() / LOCK
+    assert places.workspace_lock != places.queue_lock
+
+
+def test_cost_ceiling_and_spend_ceiling_are_independent_on_the_cli(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """--cost-ceiling-usd feeds Guardrails (a single turn); --spend-ceiling-usd feeds LoopBound (the
+    loop's cumulative total). Neither substitutes for the other, and both may be given together."""
+    captured: dict[str, Any] = {}
+
+    def fake_run_loop(places: Places, executor: Any, **kwargs: Any) -> Any:
+        captured["limits"] = kwargs["limits"]
+        captured["bound"] = kwargs["bound"]
+        return loop_mod.LoopReport(steps=(), stopped=loop_mod.StopReason.MAX_ITERATIONS, spend_usd=0.0)
+
+    monkeypatch.setattr(loop_mod, "run_loop", fake_run_loop)
+
+    loop_mod.main(
+        [
+            "--max-iterations",
+            "1",
+            "--spend-ceiling-usd",
+            "5.0",
+            "--cost-ceiling-usd",
+            "2.0",
+            str(tmp_path),
+        ]
+    )
+
+    assert captured["limits"].cost_ceiling_usd == 2.0
+    assert captured["bound"].spend_ceiling_usd == 5.0
+
+
+def test_cost_ceiling_omitted_leaves_a_turn_unbounded_by_cost_as_before(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_run_loop(places: Places, executor: Any, **kwargs: Any) -> Any:
+        captured["limits"] = kwargs["limits"]
+        return loop_mod.LoopReport(steps=(), stopped=loop_mod.StopReason.MAX_ITERATIONS, spend_usd=0.0)
+
+    monkeypatch.setattr(loop_mod, "run_loop", fake_run_loop)
+    loop_mod.main(["--max-iterations", "1", str(tmp_path)])
+    assert captured["limits"].cost_ceiling_usd is None
+
+
+def test_test_command_flag_reaches_run_loop(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_run_loop(places: Places, executor: Any, **kwargs: Any) -> Any:
+        captured["test_command"] = kwargs["test_command"]
+        return loop_mod.LoopReport(steps=(), stopped=loop_mod.StopReason.MAX_ITERATIONS, spend_usd=0.0)
+
+    monkeypatch.setattr(loop_mod, "run_loop", fake_run_loop)
+
+    loop_mod.main(["--max-iterations", "1", "--test-command", "make check", str(tmp_path)])
+    assert captured["test_command"] == ("make", "check")
+
+    loop_mod.main(["--max-iterations", "1", str(tmp_path)])
+    assert captured["test_command"] == loop_mod.DEFAULT_TEST_COMMAND
+
+
+def test_a_cross_repo_turn_through_the_cli_lands_the_record_and_the_commit_separately(
+    monkeypatch: pytest.MonkeyPatch, queue_repo: Path, workspace_repo: Path
+) -> None:
+    """The end-to-end receipt this change exists for: a turn run through `main()` -- not through
+    `take_turn` directly -- with a real queue and a real, separate workspace, produces a ledger
+    record under the queue and a workspace commit under the workspace, and neither repository's
+    git history contains the other's commit."""
+    from yosefactory.executor import claude as claude_mod
+
+    seed_ready_item(queue_repo)
+    original_workspace_head = git(workspace_repo, "rev-parse", "HEAD")
+    original_queue_head = git(queue_repo, "rev-parse", "HEAD")
+
+    def fake_claude_run(
+        frame: Any, workspace: Path, limits: Any, *, run_id: str, runs_dir: Path, invocation: Any = None, **kwargs: Any
+    ) -> RunResult:
+        assert invocation is not None and invocation.proposal_path is not None
+        checkpoint = workspace / "work.txt"
+        checkpoint.write_text("done\n", encoding="utf-8")
+        git(workspace, "add", "work.txt")
+        git(workspace, "commit", "-q", "-m", "agent checkpoint")
+        invocation.proposal_path.write_text(
+            json.dumps({"event": "done", "effects": ["work.txt"], "verified_by": "true"}), encoding="utf-8"
+        )
+        return RunResult(
+            outcome=RunOutcome.SUCCESS,
+            usage=Usage(),
+            transcript_path=runs_dir / f"{run_id}.stream.jsonl",
+            exit_code=0,
+            dirty=False,
+        )
+
+    monkeypatch.setattr(claude_mod, "run", fake_claude_run)
+
+    exit_code = loop_mod.main(
+        [
+            "--queue",
+            str(queue_repo),
+            "--workspace",
+            str(workspace_repo),
+            "--max-iterations",
+            "1",
+            "--test-command",
+            "true",
+        ]
+    )
+
+    assert exit_code == 0
+
+    # The record lands under the queue's own ledger, not the workspace's -- alongside the wake
+    # sidecar `_record_wake` also commits there (task 4.4 expects exactly the turn record itself).
+    records = [path for path in (queue_repo / RUNS).glob("*.json") if not path.name.endswith(".wake.json")]
+    assert len(records) == 1
+    record = json.loads(records[0].read_text(encoding="utf-8"))
+    assert record["outcome"] == "advanced"
+    assert not (workspace_repo / "ledger").exists(), "the ledger belongs to the queue, never the workspace"
+
+    # The agent's commit landed in the workspace repository, not the queue.
+    workspace_head = git(workspace_repo, "rev-parse", "HEAD")
+    assert workspace_head != original_workspace_head
+    assert record["workspace_commit"] == workspace_head
+    assert git(workspace_repo, "log", "-1", "--format=%s") == "agent checkpoint"
+
+    # Neither repository's history contains the other's commit -- they are genuinely separate.
+    queue_head = git(queue_repo, "rev-parse", "HEAD")
+    assert queue_head != original_queue_head
+    assert queue_head != workspace_head
+    queue_log = git(queue_repo, "log", "--format=%H")
+    workspace_log = git(workspace_repo, "log", "--format=%H")
+    assert workspace_head not in queue_log.splitlines()
+    assert queue_head not in workspace_log.splitlines()
