@@ -62,7 +62,16 @@ from yosefactory.protocol.turn import TurnRecord
 from yosefactory.runtime import spend
 from yosefactory.runtime.config import Guardrails
 from yosefactory.runtime.runs import slug_for
-from yosefactory.runtime.turn import DEFAULT_PLANNING_FRAME, Executor, Places, commit, eligible, items, take_turn
+from yosefactory.runtime.turn import (
+    DEFAULT_PLANNING_FRAME,
+    Executor,
+    Places,
+    commit,
+    eligible,
+    items,
+    spend_log_for,
+    take_turn,
+)
 from yosefactory.runtime.verify import DEFAULT_TEST_COMMAND
 
 
@@ -287,7 +296,7 @@ def run_loop(
     proposal_dir: Path | None = None,
     test_command: tuple[str, ...] = DEFAULT_TEST_COMMAND,
     isolated: bool = True,
-    spend_log: Path = spend.SPEND_LOG,
+    spend_log: Path | None = None,
     board: BoardConfig | None = None,
     now_fn: Callable[[], datetime] = lambda: datetime.now(UTC),
     sleep_fn: Callable[[float], None] = time.sleep,
@@ -302,6 +311,14 @@ def run_loop(
     function's docstring for why a bind-mounted dev container makes this the default risk rather
     than a rare accident.
 
+    `spend_log` defaults to `None`, meaning "wherever `take_turn` itself just committed this loop's
+    rows" (`turn.spend_log_for(places)`) — the same file `_finish` stages into `places.queue`, not
+    `runtime.spend.SPEND_LOG`'s package-relative default (`commit-the-spend-row-inside-the-turn`:
+    those two are the same path only under `Places.local`, and this loop is exactly the caller for
+    which they can differ). A caller pointing this loop at a real `Places` with a real queue never
+    needs to pass it; a test pointing both `take_turn` and this ceiling check at the same isolated
+    fixture still may, and both must agree — see `tests/runtime/test_loop.py`'s `spend_log` fixture.
+
     When `board` is given, two things happen that are otherwise only reachable by calling
     `board.inbox.ingest()` / `board.projection.project_all()` by hand (`turn-loop/board-wiring`):
     unconsumed board commands are applied at `board.poll_seconds`, independent of `wake`'s own
@@ -310,6 +327,7 @@ def run_loop(
     `BoardConfig`'s own docstring for why that is structural, not a convention.
     """
     _refuse_if_dirty(places.workspace)
+    resolved_spend_log = spend_log if spend_log is not None else spend_log_for(places)
     start_moment = now_fn()
     steps: list[LoopStep] = []
     iteration = 0
@@ -318,7 +336,7 @@ def run_loop(
     last_board_poll: datetime | None = None
 
     def spent_so_far() -> float:
-        return spend.total_since(start_moment, spend_log)
+        return spend.total_since(start_moment, resolved_spend_log)
 
     def poll_board_if_due() -> None:
         nonlocal last_board_poll

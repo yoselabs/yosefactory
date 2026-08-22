@@ -112,11 +112,13 @@ class FakeExecutor:
         outcome: RunOutcome = RunOutcome.SUCCESS,
         raw: str | None = None,
         kind: FailureKind | None = None,
+        total_cost_usd: float = 0.0,
     ) -> None:
         self.proposal = proposal
         self.raw = raw
         self.outcome = outcome
         self.kind = kind if kind is not None else FailureKind.CRASH
+        self.total_cost_usd = total_cost_usd
         self.calls: list[Mapping[str, Any]] = []
         self.invocations: list[Invocation | None] = []
         self.log_at_call: list[str] = []
@@ -144,7 +146,7 @@ class FakeExecutor:
             path.write_text(json.dumps(self.proposal), encoding="utf-8")
         return RunResult(
             outcome=self.outcome,
-            usage=Usage(),
+            usage=Usage(total_cost_usd=self.total_cost_usd),
             transcript_path=runs_dir / f"{run_id}.stream.jsonl",
             exit_code=0,
             dirty=False,
@@ -429,6 +431,94 @@ def test_a_done_with_a_passing_gate_advances(repo: Path, limits: Guardrails) -> 
     assert record.outcome is Outcome.ADVANCED
     assert record.enforced_by is EnforcedBy.AGENT
     assert backlog.load(item).state == "done"
+
+
+def test_a_turns_spend_row_is_committed_not_merely_written(repo: Path, limits: Guardrails) -> None:
+    """The receipt commit-the-spend-row-inside-the-turn exists for: a row on disk that a later,
+    unrelated commit might sweep up is not evidence, and neither is `Path.exists()` (K signal
+    S194 — an instrument reporting on its own execution rather than on its subject). The subject
+    is `git show HEAD`: is the row actually part of the commit history, in the same commit as the
+    run record it describes."""
+    seed_item(repo)
+    executor = FakeExecutor(
+        proposal={"event": "done", "effects": ["none"], "verified_by": "tests"}, total_cost_usd=0.2583899
+    )
+
+    record = take(repo, executor, limits)
+
+    assert record.outcome is Outcome.ADVANCED
+
+    # Same commit as the run record, not a later sweep: the run record's own path is always part
+    # of this commit's diff (`_finish` always writes one), so finding both there together is the
+    # atomicity claim, not just the row's presence somewhere in history.
+    changed = git(repo, "show", "--name-only", "--format=", "HEAD").splitlines()
+    assert "ledger/spend.jsonl" in changed
+    assert any(path.startswith("ledger/runs/") for path in changed)
+
+    committed = git(repo, "show", "HEAD:ledger/spend.jsonl")
+    rows = [json.loads(line) for line in committed.splitlines() if line.strip()]
+    matching = [row for row in rows if row["run_id"] == record.run_id]
+    assert len(matching) == 1
+    assert matching[0]["total_cost_usd"] == pytest.approx(0.2583899)
+
+    # And nothing is left behind uncommitted — the whole point of folding it into `_finish`'s own
+    # `commit()` call rather than writing it out of band.
+    assert not turn._git(repo, ["status", "--porcelain"], {}, check=False).stdout.strip()
+
+
+def test_a_turn_that_spent_exactly_zero_still_commits_a_row(repo: Path, limits: Guardrails) -> None:
+    """Zero cost is a real value (`runtime.spend.record`'s own docstring) — absence must not read
+    as "this run never happened.\""""
+    seed_item(repo)
+    executor = FakeExecutor(proposal={"event": "done", "effects": ["none"], "verified_by": "tests"}, total_cost_usd=0.0)
+
+    record = take(repo, executor, limits)
+
+    committed = git(repo, "show", "HEAD:ledger/spend.jsonl")
+    rows = [json.loads(line) for line in committed.splitlines() if line.strip()]
+    matching = [row for row in rows if row["run_id"] == record.run_id]
+    assert len(matching) == 1
+    assert matching[0]["total_cost_usd"] == 0.0
+
+
+def test_a_planning_turn_that_created_nothing_still_commits_its_spend_row(repo: Path, limits: Guardrails) -> None:
+    """A planning turn never claims an item, but it still runs an executor and still spends —
+    the spend row must not be conditioned on there being an item to attach a commit to."""
+    planner = FakeExecutor(proposal=[CREATED], total_cost_usd=0.0091)
+
+    record = take(repo, planner, limits)
+
+    assert record.outcome is Outcome.ADVANCED
+    committed = git(repo, "show", "HEAD:ledger/spend.jsonl")
+    rows = [json.loads(line) for line in committed.splitlines() if line.strip()]
+    matching = [row for row in rows if row["run_id"] == record.run_id]
+    assert len(matching) == 1
+    assert matching[0]["total_cost_usd"] == pytest.approx(0.0091)
+
+
+def test_a_spend_write_failure_does_not_cost_the_turn_its_run_record(
+    repo: Path, limits: Guardrails, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Priority order: the ledger record must survive a spend-recording failure. Simulated by
+    making the spend log's parent directory unwritable-in-effect: `spend.record` is monkeypatched
+    to raise `OSError`, the same exception class `_finish` is written to catch."""
+    seed_item(repo)
+    executor = FakeExecutor(proposal={"event": "done", "effects": ["none"], "verified_by": "tests"}, total_cost_usd=1.23)
+
+    def _raise(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("disk full (simulated)")
+
+    monkeypatch.setattr(turn.spend, "record", _raise)
+
+    record = take(repo, executor, limits)
+
+    assert record.outcome is Outcome.ADVANCED
+    assert "spend row not recorded" in record.note
+    # The run record itself, and the item's own transition to `done`, both still committed.
+    changed = git(repo, "show", "--name-only", "--format=", "HEAD").splitlines()
+    assert any(path.startswith("ledger/runs/") for path in changed)
+    assert "ledger/spend.jsonl" not in changed
+    assert not turn._git(repo, ["status", "--porcelain"], {}, check=False).stdout.strip()
 
 
 def test_a_blocked_proposal_records_blocked_and_keeps_its_awaiting(repo: Path, limits: Guardrails) -> None:

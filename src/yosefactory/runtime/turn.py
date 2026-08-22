@@ -36,7 +36,7 @@ from yosefactory.protocol import backlog, question
 from yosefactory.protocol.eventlog import Declaration, FoldedLog, LogError
 from yosefactory.protocol.eventlog import load as load_log
 from yosefactory.protocol.turn import BlockedKind, EnforcedBy, FailureKind, Outcome, TurnRecord
-from yosefactory.runtime import runs, verify
+from yosefactory.runtime import runs, spend, verify
 from yosefactory.runtime.config import Guardrails
 from yosefactory.runtime.supervise import single_flight, tree_is_dirty
 
@@ -114,6 +114,28 @@ class Places:
             workspace=repo,
             workspace_lock=repo / LOCK,
         )
+
+
+def spend_log_for(places: Places) -> Path:
+    """Where this turn's own queue commits its spend row — sibling to `ledger/runs/`, inside
+    `places.queue` rather than resolved from this package's own installed location.
+
+    `runtime.spend.SPEND_LOG` (the module's own default) resolves via `paths.repo_root()` from
+    `spend.py`'s `__file__` — deliberately the platform's own checkout, not whatever foreign
+    workspace a turn happens to be working on (that module's docstring). But "the platform's own
+    checkout" and "the repository `turn.commit()` actually writes into" are only the same
+    directory under `Places.local` (one repo playing every role). The moment `queue` and the
+    installed package diverge — `run-the-loop-inside-the-container`'s own topology, where the
+    loop's queue is a bind-mounted `/data/workspace` and the package lives read-only-to-uid-1000
+    under `/app` — a spend row written to the package's own location can never be staged by a
+    commit that only ever touches `places.queue` (`commit()`, below): `git commit -- <paths>`
+    ignores anything outside the pathspecs it was given, and a path outside the repo it runs in
+    is not even a valid pathspec. Scoping every write this module makes to `places.queue` keeps
+    "spend belongs to the platform" true in the sense that matters here — the platform's own
+    bookkeeping repository, distinct from `places.workspace` under cross-repo operation — while
+    making it the same repository `commit()` stages into, which is the property this change needs.
+    """
+    return places.ledger.parent / "spend.jsonl"
 
 
 @contextmanager
@@ -672,6 +694,7 @@ def _dispose(
             failure_kind=kind,
             model=result.model,
             effort=result.effort,
+            total_cost_usd=result.usage.total_cost_usd,
         )
 
     def blocked(detail: str, kind: BlockedKind | None) -> TurnRecord:
@@ -731,6 +754,7 @@ def _dispose(
             blocked_kind=kind,
             model=result.model,
             effort=result.effort,
+            total_cost_usd=result.usage.total_cost_usd,
         )
 
     if result.outcome is not RunOutcome.SUCCESS:
@@ -771,6 +795,7 @@ def _dispose(
             isolated=isolated,
             model=result.model,
             effort=result.effort,
+            total_cost_usd=result.usage.total_cost_usd,
         )
 
     assert item_path is not None  # noqa: S101 — narrowed by `planning`, which ty cannot see through
@@ -803,6 +828,7 @@ def _dispose(
         model=result.model,
         effort=result.effort,
         workspace_commit=workspace_commit,
+        total_cost_usd=result.usage.total_cost_usd,
     )
 
 
@@ -822,20 +848,58 @@ def _finish(
     model: str = "",
     effort: str = "",
     workspace_commit: str = "",
+    total_cost_usd: float | None = None,
 ) -> TurnRecord:
+    """Write the run record, the spend row that belongs beside it, and commit both together.
+
+    `total_cost_usd` is `None` only for the one caller with no executor invocation to attribute a
+    cost to (`take_turn`'s `nothing-ready` path) — every `_dispose` branch threads
+    `result.usage.total_cost_usd` here, zero included, because zero is a real value
+    (`runtime.spend.record`'s own docstring) and every one of those branches is reached strictly
+    after any gate this turn's event required (`_dispose`'s "done" branch calls `verify.
+    may_write_done` — which demands a clean `places.workspace` — before it can reach any return
+    that lands here). That ordering is load-bearing, not incidental: this function is the *only*
+    place either write happens, so as long as every call site is post-gate, no write this function
+    makes can ever be the reason a gate call sees a dirty tree it should not.
+
+    Ordered internally the same way, for the one case where `places.queue == places.workspace`
+    (`Places.local`) and so every write below lands in the same tree `dirty` is about: `dirty` is
+    computed from the tree *before* this turn's own bookkeeping touches it, so this function's own
+    writes can never be mistaken for the agent's.
+    """
     runs_dir = places.ledger
+    # The agent's own tree, never the queue's — `dirty` means the agent left work half-done, and
+    # when queue and workspace differ the queue's own bookkeeping (still uncommitted at this
+    # point) would otherwise be misread as the agent's mess. Read before this function writes
+    # anything of its own (the run record below, the spend row after it) — under `Places.local`
+    # those writes land in this same tree, and a dirty flag computed after them would be reporting
+    # on this function's own bookkeeping rather than on what the agent left behind.
+    dirty = tree_is_dirty(places.workspace, ignore=runs_dir)
+
+    # Committed by `turn.commit()` below — never here — the same function ADR-0004 names as the
+    # sole composer of the platform's trailers. Attempted after the gate every "done" path already
+    # ran and after `dirty` above, so a spend-write failure costs this turn only its own row, never
+    # the ledger record, the item transition, or the workspace commit `_deliver_workspace` already
+    # made before any of this function's callers were reached (commit-the-spend-row-inside-the-
+    # turn's priority: workspace delivery > ledger record > spend row).
+    spend_log = spend_log_for(places)
+    spend_detail = ""
+    if total_cost_usd is not None:
+        try:
+            spend.record(total_cost_usd, run_id=run_id, log_path=spend_log)
+        except OSError as exc:
+            spend_detail = f"spend row not recorded: {exc}"
+    full_note = f"{note} [{spend_detail}]" if spend_detail else note
+
     record = TurnRecord(
         run_id=run_id,
         started_at=started.isoformat(),
         ended_at=utc_now(),
         outcome=outcome,
         enforced_by=enforced_by,
-        # The agent's own tree, never the queue's — `dirty` means the agent left work half-done, and
-        # when queue and workspace differ the queue's own bookkeeping (still uncommitted at this
-        # point) would otherwise be misread as the agent's mess.
-        dirty=tree_is_dirty(places.workspace, ignore=runs_dir),
+        dirty=dirty,
         isolated=isolated,
-        note=note,
+        note=full_note,
         failure_kind=failure_kind,
         blocked_kind=blocked_kind,
         # "" on a turn no executor ran for (nothing-ready) -- there is no run to attribute a model
@@ -846,8 +910,21 @@ def _finish(
         workspace_commit=workspace_commit,
     )
     written = runs.append(runs_dir, slug, record)
-    # Always the queue: every path this turn commits — the item, a raised question, the ledger record
-    # itself — is platform bookkeeping. The workspace's own delivery already happened, if at all,
-    # in `_dispose` before this call, via `_deliver_workspace` rather than this function.
-    commit(places.queue, [*paths, written, written.with_suffix(".start")], f"turn({run_id}): {outcome.value} — {note}", run_id=run_id)
+    # Always the queue: every path this turn commits — the item, a raised question, the ledger
+    # record itself, the spend row — is platform bookkeeping. The workspace's own delivery already
+    # happened, if at all, in `_dispose` before this call, via `_deliver_workspace` rather than
+    # this function.
+    #
+    # `spend_log` is appended unconditionally rather than guarded by an `outcome` or
+    # `total_cost_usd` check: `commit()` already filters its pathspecs to what `.exists()` (a
+    # `nothing-ready` turn, which never wrote a row this turn, simply contributes no diff for this
+    # path — not an error, not a missing file worth naming). Every branch above that did write it
+    # is what makes this one `commit()` call the place the spend row and the run record it
+    # describes become atomic — either both land in this commit or neither does.
+    commit(
+        places.queue,
+        [*paths, written, written.with_suffix(".start"), spend_log],
+        f"turn({run_id}): {outcome.value} — {full_note}",
+        run_id=run_id,
+    )
     return record

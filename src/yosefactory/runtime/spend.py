@@ -20,6 +20,16 @@ dollars into a directory nothing will ever read.
 Every real invocation records here — test and production alike — because "what did today cost" does
 not distinguish who paid for the call. Each row carries `run_id` so it joins to the matching record
 in `ledger/runs/`: a spend row without that join is an orphan number, not evidence.
+
+**`SPEND_LOG` is the default for a caller with no queue of its own** — a direct import, a REPL, this
+package's own `make test-live` session, where the platform's own checkout is the only repository in
+play and "resolved from this file's own location" and "the repository being worked" are the same
+directory. `runtime.turn` and `runtime.loop`, which run turns against a real `Places`, do not use
+this default: they pass `log_path=turn.spend_log_for(places)` explicitly, because under
+`run-the-loop-inside-the-container`'s topology (and any other split-queue deployment) `places.queue`
+is a different directory from wherever this package happens to be installed, and only `places.queue`
+is a repository `turn.commit()` can stage a row into (see `spend_log_for`'s own docstring for why
+that split makes `SPEND_LOG` the wrong default there, not merely an inconvenient one).
 """
 
 from __future__ import annotations

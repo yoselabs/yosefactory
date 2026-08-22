@@ -26,7 +26,6 @@ from yosefactory.executor.invocation import Invocation
 from yosefactory.executor.outcome import FailureKind, RunOutcome, RunResult, Usage
 from yosefactory.executor.stream import StreamReader
 from yosefactory.protocol.turn import Outcome
-from yosefactory.runtime import spend
 from yosefactory.runtime.config import Guardrails
 from yosefactory.runtime.isolation import IsolationPolicy
 from yosefactory.runtime.supervise import Recorder, govern
@@ -302,8 +301,12 @@ def run(
         detail = "workspace scope breached: " + ", ".join(reader.init.workspace_scope_leaks)
 
     usage = _usage(reader.terminal)
-    # Durable regardless of `runs_dir`'s own lifetime -- see `runtime.spend` module docstring.
-    spend.record(usage.total_cost_usd, run_id=run_id)
+    # Cost recording moved to `runtime.turn` (commit-the-spend-row-inside-the-turn): the row must
+    # land in `places.queue`, which this function has no way to name (it sees `runs_dir`, not the
+    # `Places` that produced it), and must be committed in the same transaction as the run record
+    # `turn.py` writes after this call returns -- not written out-of-band here and left for a
+    # later, unrelated commit to maybe pick up. `result.usage.total_cost_usd` below is what
+    # `turn._dispose` reads to do that, for every executor, not just this one.
 
     # Prefer what the agent reported loading over what we asked for -- the init event is evidence,
     # the argument is only intent (same instrument `leaks`/`workspace_scope_leaks` already trust).
