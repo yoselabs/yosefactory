@@ -51,16 +51,21 @@
 
 ## 6. The live receipt — standing allowance $5
 
-- [ ] 6.1 One real `take_turn` against a2web (`a2web-qgo-primary-image`, `e778fd9`), budgeted to
-      $2.00 per the recent-turn precedent. After it completes:
-      - `git log -1 --format='%H %B' <workspace-HEAD>` in a2web, showing both trailers on the actual
-        delivered commit.
-      - The turn's record from the ledger, showing `workspace_commit` equal to that same SHA.
-      - Quote both directions of the join in the closing report, from disk, not from the code that
-        produced them.
-- [ ] 6.2 Record actual spend against the $5 allowance.
-- [ ] 6.3 Confirm no push happened to either repository (`git log origin/<branch>..<branch>` on both,
-      or equivalent) — this change does not touch `publish()` and must not accidentally rely on it.
+- [x] 6.1 Two real `take_turn` attempts against a2web. First, against `a2web-luh`
+      (`a2web-qgo-primary-image`, `e778fd9`): director corrected this bead as already solved on
+      `fix-reddit-archive-rescue-escalation` at `9e183e4` (verified: `git merge-base --is-ancestor`
+      false) before the second attempt — the first attempt itself burned $2.5073 to
+      `budget_exhausted` without reaching the gate, `workspace_commit: ""`. Second, narrowed to
+      `a2web-2yd`'s untested `corpus.py` `CorpusError` guards ($2.00 ceiling): `advanced`,
+      `workspace_commit: 77cae868cde04ccdb5ee59057c5a3dc61b7fbc8d`. Join, both directions, from disk:
+      - a2web commit `77cae868` (branch `a2web-2yd-corpus-error-tests`) trailers:
+        `Co-Authored-By: yosefactory <yosefactory@yoselabs.dev>`, `Yosefactory-Run: turn-20260822T015137Z-f9845890`
+      - `ledger/runs/20260822T015137Z-turn-20260822T015137Z-f9845890.json`:
+        `"workspace_commit": "77cae868cde04ccdb5ee59057c5a3dc61b7fbc8d"`
+- [x] 6.2 Actual spend: $2.5073 + $0.5158 = $3.0231 of the $5.00 allowance.
+- [x] 6.3 Confirmed: `git ls-remote --heads origin` on a2web shows no `a2web-2yd-corpus-error-tests`
+      and no `fix-reddit-forbidden-archive-silent-miss` (the first attempt's abandoned, uncommitted
+      branch, deleted before the second attempt). `main` unchanged at `6f26e89`.
 
 ## 7. Archive
 
