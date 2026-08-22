@@ -26,6 +26,22 @@ rules:
     - Cite the promotion's entity id from K project 160, or say plainly that there is none.
     - Include a Non-goals section. Scope widening is this repo's known failure mode.
 
+operations:
+  archive:
+    guidance:
+      - >-
+        If this change made a non-obvious build-time choice, write a `decisions/000N-*.md` ADR
+        before archiving (format: decisions/0001, decisions/0002). Non-obvious test: would a
+        future worker plausibly change this back without knowing why it is this way? A pin, a
+        refusal, a topology choice, an amend-vs-new-commit call are non-obvious; a rename or a
+        docstring fix is not.
+      - >-
+        Every ADR header carries a `Revisit trigger:` line (alongside Status/Date/Supersedes) —
+        one falsifiable, dated observation that would justify reopening it, not "if requirements
+        change." Same field name as K's `revisit_trigger:` on mechanisms; `tools/audit.py
+        triggers` sweeps both.
+      - A decision about *what* to build belongs in K (P160 D015), never in `decisions/` here.
+
 # Project context (optional)
 # This is shown to AI when creating artifacts.
 # Add your tech stack, conventions, style guides, domain knowledge, etc.
