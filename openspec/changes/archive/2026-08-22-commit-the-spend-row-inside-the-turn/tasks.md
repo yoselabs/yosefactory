@@ -46,6 +46,6 @@
 ## 5. Archive
 
 - [x] 5.1 `openspec validate commit-the-spend-row-inside-the-turn --strict` passes.
-- [ ] 5.2 `openspec archive commit-the-spend-row-inside-the-turn` — Article XV, not implied.
-- [ ] 5.3 `git diff --stat <sha>^ <sha> -- openspec/specs/...` after archiving: deletions = 0 (the
-      only spec change here is ADDED).
+- [x] 5.2 `openspec archive commit-the-spend-row-inside-the-turn` — Article XV, not implied.
+- [x] 5.3 `git diff --stat -- openspec/specs/turn-cycle/spec.md` after archiving: 52 insertions,
+      0 deletions (the only spec change here is ADDED).
