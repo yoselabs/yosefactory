@@ -1575,3 +1575,28 @@ def test_a_sweeps_writes_are_committed_with_the_turn_and_do_not_dirty_the_tree(r
     # under test.
     states = {backlog.load(swept).state, backlog.load(target).state}
     assert states == {"ready", "doing"}
+
+
+def test_a_transcript_written_mid_turn_does_not_dirty_the_tree_under_places_local(repo: Path, limits: Guardrails) -> None:
+    """S237's regression: under `Places.local`, the ledger nests inside the workspace `tree_clean`
+    inspects, so the executor's own raw transcript is an untracked file the gate used to count as
+    the agent's uncommitted work -- including the transcript of the very turn being judged."""
+
+    class TranscriptWritingExecutor(FakeExecutor):
+        """Matches what the real executor does: writes its raw transcript into `runs_dir` as a
+        side effect of running, before `take_turn` ever reaches the gate."""
+
+        def __call__(self, frame: Mapping[str, Any], workspace: Path, limits: Guardrails, **kwargs: Any) -> RunResult:
+            result = super().__call__(frame, workspace, limits, **kwargs)
+            kwargs["runs_dir"].mkdir(parents=True, exist_ok=True)
+            result.transcript_path.write_text('{"type": "assistant"}\n', encoding="utf-8")
+            return result
+
+    seed_item(repo)
+    executor = TranscriptWritingExecutor(proposal={"event": "priority_set", "priority": 5})
+
+    take(repo, executor, limits)
+
+    # Nothing about the transcript itself is asserted here -- only that its presence does not
+    # register as dirt in the tree the `done` gate later inspects (`verify.tree_clean`).
+    assert git(repo, "status", "--porcelain") == ""

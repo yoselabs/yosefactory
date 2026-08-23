@@ -674,6 +674,12 @@ def take_turn(
     # commit — the tree-wide stash S184 records makes that everyone's problem, not just this turn's.
     proposal_path = scratch / f"{run_id}.proposal.json"
 
+    # Guaranteed before anything is written to the ledger this turn (S237): under `Places.local`,
+    # `places.ledger` nests inside `places.workspace`, the tree `verify.tree_clean` inspects at the
+    # `done` gate. Without this, a raw transcript this turn's own executor writes is an untracked
+    # file the gate counts as the agent's uncommitted work.
+    runs.ensure_transcripts_ignored(places.ledger, places.workspace)
+
     with single_flight(places.queue_lock):
         # Declared before any work, and committed immediately: a turn that dies leaves a marker with
         # no record, which reads back as a gap rather than as a turn nobody knows happened. Committed

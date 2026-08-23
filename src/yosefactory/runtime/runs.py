@@ -64,6 +64,49 @@ def slug_for(run_id: str, started: datetime | None = None) -> str:
     return f"{utc_stamp(started)}-{run_id}"
 
 
+_TRANSCRIPT_GLOB = "*.stream.jsonl"
+
+
+def ensure_transcripts_ignored(runs_dir: Path, workspace: Path) -> None:
+    """Guarantee raw transcripts never dirty the tree they may be nested in (S237).
+
+    The rule this guards lived only in yosefactory's own `.gitignore` — correct there, but yosefactory
+    is never the workspace a turn's gate checks (`verify.tree_clean(places.workspace)`); the workspace
+    is whatever repo the agent works in, foreign to this platform. Under `Places.local` the ledger
+    nests inside that workspace, so `runs_dir`'s `*.stream.jsonl` files are untracked entries the gate
+    then counts as the agent's own uncommitted work — including the transcript of the very turn being
+    judged.
+
+    Written to `.git/info/exclude`, not a committed `.gitignore`: this platform has no standing to
+    leave a persistent, committed file in a foreign repository it does not own (D012's boundary, one
+    level down) — `.git/info/exclude` is local to this clone and never travels in a commit. Idempotent
+    and cheap enough to call every turn rather than once at install time, so no ordering requirement
+    is placed on callers: whichever runs first, the guard exists before any transcript can land.
+
+    A no-op when `runs_dir` is not nested under `workspace` at all (the cross-repository shape, where
+    the ledger already lives outside the tree the gate inspects and nothing here is needed), and when
+    `workspace` is not a git worktree (`.git` absent — `ensure_transcripts_ignored` guards a git
+    property, not a general directory).
+    """
+    try:
+        relative = runs_dir.relative_to(workspace)
+    except ValueError:
+        return
+    git_dir = workspace / ".git"
+    if not git_dir.is_dir():
+        return
+    exclude = git_dir / "info" / "exclude"
+    pattern = f"/{relative.as_posix()}/{_TRANSCRIPT_GLOB}"
+    existing = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
+    if pattern in existing.splitlines():
+        return
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    with exclude.open("a", encoding="utf-8") as handle:
+        if existing and not existing.endswith("\n"):
+            handle.write("\n")
+        handle.write(pattern + "\n")
+
+
 def open_run(runs_dir: Path, run_id: str, started: datetime | None = None) -> str:
     """Declare that a record is expected. Returns the slug both files are named for."""
     started = started or datetime.now(UTC)
