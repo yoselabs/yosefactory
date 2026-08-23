@@ -160,6 +160,11 @@ class Executor(Protocol):
     The skill and the proposal path travel in `invocation` and never in `frame` — the frame is
     D019's unit of falsification and lands in the item's permanent trail, where a file path is not a
     claim that can be wrong, only one that can go stale.
+
+    D030: `context` is a fourth, separate thing -- what attempts before this one produced
+    (`backlog.context()`), folded from the item's own log. Kept beside `frame` rather than inside
+    it for the same reason `invocation` is kept out: mixing what was *asked* with what was
+    *discovered* makes the frame unrecoverable as a record of authored intent.
     """
 
     def __call__(
@@ -170,6 +175,7 @@ class Executor(Protocol):
         *,
         run_id: str,
         runs_dir: Path,
+        context: Mapping[str, Any] | None = None,
         invocation: Invocation | None = None,
     ) -> RunResult: ...
 
@@ -312,10 +318,19 @@ def apply_answers(repo: Path, *, actor: str) -> list[str]:
         item_path = repo / ITEMS / f"{item_id}.jsonl"
         if not item_path.exists() or backlog.load(item_path).state != "blocked":
             continue
+        resolution = {"qid": path.stem, "by": str(closed["event"])}
+        # S1038/D030: the answer's text, not only a pointer to the question that carries it --
+        # copied here, at the moment the question closes, rather than read cross-file when
+        # `backlog.context()` folds the item later. The question log keeps the canonical
+        # `answered` record; this is a read-only echo, never the thing a second decision is made
+        # from.
+        answer = closed.get("answer")
+        if answer is not None:
+            resolution["answer"] = answer
         append(
             item_path,
             backlog.ITEM,
-            {"event": "unblocked", "resolution": {"qid": path.stem, "by": str(closed["event"])}},
+            {"event": "unblocked", "resolution": resolution},
             actor=actor,
         )
         moved.append(item_id)
@@ -735,12 +750,18 @@ def take_turn(
         # rather than never-started, which is the state architecture.md §4 found v1 had deleted.
         commit(places.queue, [item_path], f"claim({target.id}): attempt {attempt} by {owner}", run_id=run_id)
 
-        frame = backlog.frame(backlog.load(item_path))
+        loaded = backlog.load(item_path)
+        frame = backlog.frame(loaded)
+        # D030: folded from the same log `frame` was, never merged into it -- the executor's second,
+        # separate channel for what attempts before this one produced.
+        context = backlog.context(loaded)
         with _workspace_lock(places):
             # Read before the executor touches anything: the only fact `_deliver_workspace` needs to
             # tell "this turn made a commit" from "HEAD is whatever an earlier turn left."
             workspace_head_before = _head_sha(places.workspace, dict(os.environ))
-            result = executor(frame, places.workspace, limits, run_id=run_id, runs_dir=places.ledger, invocation=invocation)
+            result = executor(
+                frame, places.workspace, limits, run_id=run_id, runs_dir=places.ledger, context=context, invocation=invocation
+            )
             record = _dispose(
                 places,
                 started,
@@ -907,6 +928,19 @@ def _dispose(
         claim = verify.Claim(run_id=run_id, terminal_verdict=result.outcome.value)
         gate = verify.may_write_done(places.workspace, claim, test_command=test_command)
         if not gate.passed:
+            # S1037/D030: the rejection must reach the item, not only the ledger's `TurnRecord`,
+            # so the next attempt inherits it via `backlog.context()` instead of re-reading a
+            # byte-identical frame. `item_path` is already in `touched`, so this lands in the same
+            # commit `failed()` below makes -- no new commit call, no new attempt-budget spend
+            # (`gate_rejected` does not change state and is never read by `_poison_if_exhausted`).
+            lease = backlog.lease(backlog.load(item_path))
+            attempt_no = lease["attempt"] if lease is not None else None
+            append(
+                item_path,
+                backlog.ITEM,
+                {"event": "gate_rejected", "report": gate.report(), "attempt": attempt_no},
+                actor=owner,
+            )
             return failed(gate.report())
         # After the gate, never before: `_deliver_workspace` marks the commit the gate just
         # certified, which is only a real fact once the gate has actually passed.

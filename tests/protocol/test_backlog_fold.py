@@ -270,3 +270,174 @@ def test_the_vocabulary_table_promises_at_least_what_the_fold_requires() -> None
             required_top_level = {path[0] for path in rule.required}
             missing = required_top_level - documented[event]
             assert not missing, f"{event!r} requires {missing} but the table's Carries cell doesn't mention it"
+
+
+# carry-inherited-context-into-the-turn / D030 / S1037 / S1038: `gate_rejected` and `context()`.
+
+
+def test_gate_rejected_is_legal_from_doing_and_does_not_change_state() -> None:
+    rejected = {
+        "event_id": "e4",
+        "ts": "2026-08-14T09:05:00Z",
+        "actor": "t1",
+        "event": "gate_rejected",
+        "report": "VERIFICATION FAILED: tests_pass: 2 failed",
+        "attempt": 1,
+    }
+
+    item = fold(CREATED, CLAIMED, STARTED, rejected)
+
+    assert item.state == "doing"
+    assert item.terminal is False
+
+
+def test_gate_rejected_is_illegal_outside_doing() -> None:
+    rejected = {
+        "event_id": "e3",
+        "ts": "2026-08-14T09:02:00Z",
+        "actor": "t1",
+        "event": "gate_rejected",
+        "report": "boom",
+        "attempt": 1,
+    }
+
+    with pytest.raises(LogError, match="'gate_rejected' is illegal from state 'claimed'"):
+        fold(CREATED, CLAIMED, rejected)
+
+
+def test_repeated_gate_rejections_do_not_poison_the_item() -> None:
+    first = {
+        "event_id": "e4",
+        "ts": "2026-08-14T09:05:00Z",
+        "actor": "t1",
+        "event": "gate_rejected",
+        "report": "first failure",
+        "attempt": 1,
+    }
+    second = {
+        "event_id": "e5",
+        "ts": "2026-08-14T09:06:00Z",
+        "actor": "t1",
+        "event": "gate_rejected",
+        "report": "second failure",
+        "attempt": 1,
+    }
+
+    item = fold(CREATED, CLAIMED, STARTED, first, second)
+
+    assert item.state == "doing"
+
+
+def test_context_is_empty_for_a_first_attempt() -> None:
+    item = fold(CREATED, CLAIMED, STARTED)
+
+    assert backlog.context(item) == {}
+
+
+def test_context_folds_a_gate_rejection() -> None:
+    rejected = {
+        "event_id": "e4",
+        "ts": "2026-08-14T09:05:00Z",
+        "actor": "t1",
+        "event": "gate_rejected",
+        "report": "VERIFICATION FAILED: tests_pass: 2 failed",
+        "attempt": 1,
+    }
+
+    item = fold(CREATED, CLAIMED, STARTED, rejected)
+
+    assert backlog.context(item) == {
+        "gate_rejection": {"report": "VERIFICATION FAILED: tests_pass: 2 failed", "attempt": 1}
+    }
+
+
+def test_context_folds_an_unblocked_answer_but_not_a_pointer_only_resolution() -> None:
+    awaiting = {
+        "kind": "question",
+        "ref": "q1",
+        "who": "denis",
+        "since": "2026-08-14T09:03:00Z",
+        "return_to": "doing",
+        "nudge_at": [],
+    }
+    blocked = {"event_id": "e4", "ts": "2026-08-14T09:03:00Z", "actor": "t1", "event": "blocked", "awaiting": awaiting}
+    unblocked_with_answer = {
+        "event_id": "e5",
+        "ts": "2026-08-14T09:10:00Z",
+        "actor": "t1",
+        "event": "unblocked",
+        "resolution": {"qid": "q1", "by": "answered", "answer": "use the raw tier, not the browser tier"},
+    }
+
+    item = fold(CREATED, CLAIMED, STARTED, blocked, unblocked_with_answer)
+
+    assert backlog.context(item) == {"answer": "use the raw tier, not the browser tier"}
+
+    unblocked_pointer_only = dict(unblocked_with_answer, resolution={"qid": "q1", "by": "timed_out"})
+    pointer_item = fold(CREATED, CLAIMED, STARTED, blocked, unblocked_pointer_only)
+
+    assert backlog.context(pointer_item) == {}
+
+
+def test_context_folds_a_prior_failure() -> None:
+    failed = {
+        "event_id": "e4",
+        "ts": "2026-08-14T09:05:00Z",
+        "actor": "t1",
+        "event": "failed",
+        "reason": "origin returned HTTP 500",
+        "attempt": 1,
+        "retryable": True,
+    }
+
+    item = fold(CREATED, CLAIMED, STARTED, failed)
+
+    assert backlog.context(item) == {
+        "prior_failure": {"reason": "origin returned HTTP 500", "retryable": True, "attempt": 1}
+    }
+
+
+def test_context_folds_a_released_or_reclaimed_reason() -> None:
+    released = {
+        "event_id": "e4",
+        "ts": "2026-08-14T09:05:00Z",
+        "actor": "t1",
+        "event": "released",
+        "owner": "t1",
+        "reason": "ran out of turns",
+    }
+
+    item = fold(CREATED, CLAIMED, STARTED, released)
+
+    assert backlog.context(item) == {"ended": {"event": "released", "reason": "ran out of turns"}}
+
+
+def test_context_never_folds_a_note() -> None:
+    note = {"event_id": "e4", "ts": "2026-08-14T09:05:00Z", "actor": "denis", "event": "note", "body": "anything at all"}
+
+    item = fold(CREATED, CLAIMED, STARTED, note)
+
+    assert backlog.context(item) == {}
+
+
+def test_context_keeps_the_most_recent_of_each_source() -> None:
+    first = {
+        "event_id": "e4",
+        "ts": "2026-08-14T09:05:00Z",
+        "actor": "t1",
+        "event": "gate_rejected",
+        "report": "first failure",
+        "attempt": 1,
+    }
+    second = {
+        "event_id": "e5",
+        "ts": "2026-08-14T09:06:00Z",
+        "actor": "t1",
+        "event": "gate_rejected",
+        "report": "second failure",
+        "attempt": 1,
+    }
+
+    item = fold(CREATED, CLAIMED, STARTED, first, second)
+
+    assert backlog.context(item)["gate_rejection"]["report"] == "second failure"

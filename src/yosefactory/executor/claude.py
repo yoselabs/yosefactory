@@ -201,16 +201,41 @@ def build_argv(
     return argv
 
 
-def render(frame: Mapping[str, Any], invocation: Invocation | None = None) -> str:
+def _render_context(context: Mapping[str, Any]) -> str:
+    """D030's second channel, rendered after the frame and before `invocation`'s plumbing --
+    content before plumbing, same order the frame/invocation split already keeps. Each of
+    `backlog.context()`'s four possible keys gets one line, only when present.
+    """
+    lines = ["Inherited context from a prior attempt:"]
+    if "gate_rejection" in context:
+        lines.append(f"- gate rejected: {context['gate_rejection']['report']}")
+    if "answer" in context:
+        lines.append(f"- answered: {context['answer']}")
+    if "prior_failure" in context:
+        pf = context["prior_failure"]
+        lines.append(f"- prior attempt failed: {pf['reason']} (retryable: {pf['retryable']})")
+    if "ended" in context:
+        ended = context["ended"]
+        lines.append(f"- previous attempt ended ({ended['event']}): {ended['reason']}")
+    return "\n".join(lines)
+
+
+def render(frame: Mapping[str, Any], context: Mapping[str, Any] | None = None, invocation: Invocation | None = None) -> str:
     """D019's three fields, in a stable order so two runs of one frame are comparable.
 
     Every other key in `frame` is dropped, and that is the point: the frame is what the work *is*,
     and it is compared across runs. How to run it travels in `invocation` instead, so plumbing never
     enters the item's trail (see `executor.invocation`).
+
+    `context` (D030) sits between the two: what attempts before this one produced, folded from the
+    item's own log (`backlog.context()`). Rendered only when non-empty, so a first attempt's prompt
+    is unchanged from before this parameter existed.
     """
     parts = [f"{key}: {frame[key]}" for key in ("goal", "method", "assumptions") if frame.get(key)]
     if not parts:
         raise ExecutorError("a frame must carry at least a goal")
+    if context:
+        parts.append(_render_context(context))
     rendered = invocation.render() if invocation is not None else ""
     return "\n".join([*parts, rendered]) if rendered else "\n".join(parts)
 
@@ -236,6 +261,7 @@ def run(
     *,
     run_id: str,
     runs_dir: Path,
+    context: Mapping[str, Any] | None = None,
     invocation: Invocation | None = None,
     recorder: Recorder | None = None,
     policy: IsolationPolicy | None = None,
@@ -270,7 +296,9 @@ def run(
         return RunResult(outcome=outcome, usage=Usage(), transcript_path=transcript, exit_code=None, dirty=False).protocol_outcome
 
     record = govern(
-        build_argv(render(frame, invocation), policy, cost_ceiling_usd=limits.cost_ceiling_usd, model=model, effort=effort),
+        build_argv(
+            render(frame, context, invocation), policy, cost_ceiling_usd=limits.cost_ceiling_usd, model=model, effort=effort
+        ),
         repo=workspace,
         runs_dir=runs_dir,
         run_id=run_id,

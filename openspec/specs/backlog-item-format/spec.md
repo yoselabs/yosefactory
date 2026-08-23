@@ -86,6 +86,7 @@ The following events SHALL be defined, and each SHALL be legal only from the lis
 | `started` | `claimed` | `doing` | — |
 | `released` | `claimed`, `doing` | `ready` | `owner`, `reason` |
 | `reclaimed` | `claimed`, `doing` | `ready` | `reason`, `expired_owner`, `expired_attempt` |
+| `gate_rejected` | `doing` | unchanged | `report`, `attempt` |
 | `blocked` | `claimed`, `doing` | `blocked` | `awaiting` |
 | `unblocked` | `blocked` | the stored `awaiting.return_to` | `resolution`, `ref` |
 | `snoozed` | `ready`, `blocked` | `snoozed` | `scheduled_for` |

@@ -581,9 +581,12 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
         *,
         run_id: str,
         runs_dir: Path,
+        context: Mapping[str, Any] | None = None,
         invocation: Any = None,
     ) -> Any:
-        return claude.run(frame, workspace, limits, run_id=run_id, runs_dir=runs_dir, invocation=invocation, policy=policy)
+        return claude.run(
+            frame, workspace, limits, run_id=run_id, runs_dir=runs_dir, context=context, invocation=invocation, policy=policy
+        )
 
     report = run_loop(
         places,

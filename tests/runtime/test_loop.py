@@ -118,6 +118,7 @@ class BumpPriorityExecutor:
         *,
         run_id: str,
         runs_dir: Path,
+        context: Mapping[str, Any] | None = None,
         invocation: Invocation | None = None,
     ) -> RunResult:
         self.calls += 1

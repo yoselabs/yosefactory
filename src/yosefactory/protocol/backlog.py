@@ -69,6 +69,13 @@ ITEM = Declaration(
         "claimed": Rule(frozenset({"ready"}), "claimed", required=(("owner",), ("expires_at",), ("attempt",))),
         "started": Rule(frozenset({"claimed"}), "doing"),
         "released": Rule(frozenset({"claimed", "doing"}), "ready", required=(("owner",), ("reason",))),
+        # carry-inherited-context-into-the-turn / D030 / S1037: a `done` proposal the gate rejects
+        # left no trace on the item at all before this -- the report reached only the ledger's
+        # `TurnRecord`, never the log the next attempt actually reads. No existing state-preserving
+        # event fits (`frame_amended` and `note` are both excluded by D030 for this purpose), and
+        # every other rule reachable from `doing` changes state, which a rejection must not do --
+        # the item stays `doing`, retryable within the same attempt.
+        "gate_rejected": Rule(frozenset({"doing"}), None, required=(("report",), ("attempt",))),
         # unstick-the-backlog / S1021: `claimed.expires_at` was written and read by nothing, so a
         # turn that died after claiming an item parked it in `doing` forever. `reclaimed` is the
         # route back -- distinct fields from `released`'s so a reader can tell "the owner gave it
@@ -109,6 +116,34 @@ def frame(item: FoldedLog) -> dict[str, Any]:
         if record["event"] in ("created", "frame_amended"):
             current.update(record.get("frame", {}))
     return current
+
+
+def context(item: FoldedLog) -> dict[str, Any]:
+    """What attempts before this one produced -- D030's second channel, separate from `frame()`.
+
+    Folds exactly four sources, last-one-wins per source (same pattern as `frame()`): a gate
+    rejection, an `unblocked` answer's text, a prior `failed`, and a `released`/`reclaimed` reason.
+    `note` is deliberately not folded -- legal in any state with a free-text body, it is what keeps
+    this channel unbounded if it is let in, per D030.
+    """
+    folded: dict[str, Any] = {}
+    for record in item.records:
+        event = record["event"]
+        if event == "gate_rejected":
+            folded["gate_rejection"] = {"report": record["report"], "attempt": record["attempt"]}
+        elif event == "unblocked":
+            answer = record.get("resolution", {}).get("answer")
+            if answer is not None:
+                folded["answer"] = answer
+        elif event == "failed":
+            folded["prior_failure"] = {
+                "reason": record["reason"],
+                "retryable": record["retryable"],
+                "attempt": record["attempt"],
+            }
+        elif event in ("released", "reclaimed"):
+            folded["ended"] = {"event": event, "reason": record["reason"]}
+    return folded
 
 
 def awaiting(item: FoldedLog) -> Mapping[str, Any] | None:

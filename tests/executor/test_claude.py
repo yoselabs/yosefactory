@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from yosefactory.executor.claude import PINNED_EFFORT, PINNED_MODEL, build_argv
+from yosefactory.executor.claude import PINNED_EFFORT, PINNED_MODEL, build_argv, render
 from yosefactory.runtime.isolation import IsolationPolicy
+
+FRAME = {"goal": "g", "method": "m", "assumptions": ["a"]}
 
 
 def test_no_ceiling_sends_no_flag() -> None:
@@ -66,3 +68,40 @@ def test_model_and_effort_reach_the_opted_out_invocation_too() -> None:
 
     assert argv[argv.index("--model") + 1] == PINNED_MODEL
     assert argv[argv.index("--effort") + 1] == PINNED_EFFORT
+
+
+# carry-inherited-context-into-the-turn / D030: `context` renders between the frame and `invocation`.
+
+
+def test_no_context_renders_nothing_extra() -> None:
+    assert render(FRAME) == render(FRAME, None)
+    assert "Inherited context" not in render(FRAME)
+
+
+def test_an_empty_context_renders_nothing_extra() -> None:
+    assert "Inherited context" not in render(FRAME, {})
+
+
+def test_context_renders_between_the_frame_and_the_invocation() -> None:
+    context = {"gate_rejection": {"report": "VERIFICATION FAILED: boom", "attempt": 1}}
+    rendered = render(FRAME, context)
+
+    frame_end = rendered.index("assumptions:")
+    context_start = rendered.index("Inherited context")
+    assert frame_end < context_start
+    assert "VERIFICATION FAILED: boom" in rendered
+
+
+def test_every_context_source_renders() -> None:
+    context = {
+        "gate_rejection": {"report": "rep", "attempt": 1},
+        "answer": "use the raw tier",
+        "prior_failure": {"reason": "boom", "retryable": True, "attempt": 2},
+        "ended": {"event": "reclaimed", "reason": "lease expired"},
+    }
+    rendered = render(FRAME, context)
+
+    assert "rep" in rendered
+    assert "use the raw tier" in rendered
+    assert "boom" in rendered and "retryable: True" in rendered
+    assert "reclaimed" in rendered and "lease expired" in rendered

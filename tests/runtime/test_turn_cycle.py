@@ -120,6 +120,7 @@ class FakeExecutor:
         self.kind = kind if kind is not None else FailureKind.CRASH
         self.total_cost_usd = total_cost_usd
         self.calls: list[Mapping[str, Any]] = []
+        self.contexts: list[Mapping[str, Any] | None] = []
         self.invocations: list[Invocation | None] = []
         self.log_at_call: list[str] = []
         self.workspaces: list[Path] = []
@@ -132,8 +133,10 @@ class FakeExecutor:
         *,
         run_id: str,
         runs_dir: Path,
+        context: Mapping[str, Any] | None = None,
         invocation: Invocation | None = None,
     ) -> RunResult:
+        self.contexts.append(context)
         self.calls.append(frame)
         self.invocations.append(invocation)
         self.log_at_call.append(git(workspace, "log", "--oneline"))
@@ -441,6 +444,41 @@ def test_a_done_with_a_failing_gate_writes_no_done_event(repo: Path, limits: Gua
     assert record.outcome is Outcome.FAILED
     assert backlog.load(item).state == "doing"
     assert "VERIFICATION FAILED" in record.note
+
+
+def test_a_gate_rejection_reaches_the_item_and_the_next_turns_context(repo: Path, limits: Guardrails) -> None:
+    """S1037/D030: the rejection must land on the item, not only the ledger's `TurnRecord`, and
+    the next turn against the same item must inherit it through `context` while its `frame` stays
+    byte-identical to the rejected attempt's — the two channels stay separate."""
+    item = seed_item(repo)
+    first = FakeExecutor(proposal={"event": "done", "effects": ["none"], "verified_by": "tests"})
+
+    take(repo, first, limits, test_command=FALSE_COMMAND)
+
+    folded = backlog.load(item)
+    assert folded.state == "doing"
+    rejected = [r for r in folded.records if r["event"] == "gate_rejected"]
+    assert len(rejected) == 1
+    assert "VERIFICATION FAILED" in rejected[0]["report"]
+    assert rejected[0]["attempt"] == 1
+    # Committed in the same turn — not left dangling for a later commit to sweep up.
+    assert f"{item.stem}" in "".join(git(repo, "show", "--stat", "HEAD"))
+
+    # `pick()` only selects `ready` items -- reclaim the still-`doing` item so a second turn can
+    # act on it (S1021's own mechanism), then confirm the second turn's frame and context.
+    turn.append(
+        item,
+        backlog.ITEM,
+        {"event": "reclaimed", "reason": "test", "expired_owner": "tester", "expired_attempt": 1},
+        actor="tester",
+    )
+    turn.commit(repo, [item], "reclaim for test", run_id="r-reclaim")
+
+    second = FakeExecutor(proposal={"event": "cancelled", "reason": "done testing"})
+    take(repo, second, limits)
+
+    assert second.calls[0] == first.calls[0]  # frame byte-identical across the rejection
+    assert second.contexts[0]["gate_rejection"]["report"] == rejected[0]["report"]
 
 
 def test_a_done_with_a_passing_gate_advances(repo: Path, limits: Guardrails) -> None:
@@ -1008,7 +1046,16 @@ def test_answering_the_raised_question_unblocks_the_item_next_turn(repo: Path, l
     moved = turn.apply_answers(repo, actor="tester")
 
     assert moved == [item_path.stem]
-    assert backlog.load(item_path).state == "doing"
+    folded = backlog.load(item_path)
+    assert folded.state == "doing"
+
+    # S1038/D030: the answer's text landed on the item itself, not only a pointer to the question.
+    # `return_to` here is `doing`, not `ready` (`NEEDS_APPROVAL`'s own block), so the item is not
+    # yet `eligible()` again -- reclaiming it to exercise a next turn is covered by
+    # `test_a_gate_rejection_reaches_the_item_and_the_next_turns_context` above, which does that.
+    unblocked = next(r for r in folded.records if r["event"] == "unblocked")
+    assert unblocked["resolution"]["answer"] == "yes"
+    assert backlog.context(folded) == {"answer": "yes"}
 
 
 def test_the_note_no_longer_restates_the_reason(repo: Path, limits: Guardrails) -> None:
