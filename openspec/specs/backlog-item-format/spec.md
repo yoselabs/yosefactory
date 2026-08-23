@@ -88,7 +88,7 @@ The following events SHALL be defined, and each SHALL be legal only from the lis
 | `reclaimed` | `claimed`, `doing` | `ready` | `reason`, `expired_owner`, `expired_attempt` |
 | `gate_rejected` | `doing` | unchanged | `report`, `attempt` |
 | `blocked` | `claimed`, `doing` | `blocked` | `awaiting` |
-| `unblocked` | `blocked` | the stored `awaiting.return_to` | `resolution`, `ref` |
+| `unblocked` | `blocked` | the stored `awaiting.return_to` | `resolution` (`qid`, `by`, and `answer` when the resolution was an answered question) |
 | `snoozed` | `ready`, `blocked` | `snoozed` | `scheduled_for` |
 | `woke` | `snoozed` | `ready` | `cause` |
 | `falsified` | `doing` | `falsified` | `by`, `successor` |
@@ -125,6 +125,21 @@ ignores an event it does not understand reports a state that never existed.
   number — distinct fields from `released`'s `owner`/`reason`, so a reader can tell "the owner gave
   it back" from "the owner's lease expired and something else took it back" without inferring from
   context
+
+#### Scenario: A gate rejection leaves the item in `doing`, not silently unrecorded
+
+- **WHEN** a `done` proposal fails the verification gate on an item that is `doing`
+- **THEN** a `gate_rejected` event is appended, carrying the gate's report and the attempt it was
+  rejected on
+- **AND** the item's state is still `doing` — no state transition occurred
+- **AND** the item's log is not silent about the rejection the way it was before this event existed
+
+#### Scenario: An answered question's text lands on the item, not only on the question
+
+- **WHEN** a blocked item's question is answered and `apply_answers()` unblocks it
+- **THEN** the `unblocked` event's `resolution` carries the answer's text, not only `qid` and `by`
+- **AND** the question's own log still carries the canonical `answered` record — the item's copy is
+  read-only and never the thing a later decision is made from
 
 ### Requirement: The frame
 
@@ -300,4 +315,17 @@ claims it; the cap makes the failure visible (poisoned, terminal, named) instead
   the item's log has ever carried, not only the lease currently in force
 - **AND** this holds however many times the item has cycled back through `ready`, since `ready`
   itself carries no lease for a later read to find
+
+### Requirement: `gate_rejected` never resets or reclassifies the item
+
+`gate_rejected` SHALL NOT change the item's state and SHALL NOT be confused with `failed`: it does
+not consume the item's attempt budget in the sense `failed`/`poisoned` do, and it is not eligible for
+`poisoned` on its own. An item may carry any number of `gate_rejected` records while remaining
+`doing`.
+
+#### Scenario: Repeated gate rejections do not poison the item
+
+- **WHEN** an item accumulates several `gate_rejected` events across retried attempts
+- **THEN** its state remains `doing` throughout
+- **AND** no `poisoned` event is triggered by `gate_rejected` events alone
 
