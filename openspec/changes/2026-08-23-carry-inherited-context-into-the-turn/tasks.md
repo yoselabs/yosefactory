@@ -58,9 +58,9 @@
 
 - [x] 6.1 `make check` (lint, ty, test, citations) green.
 - [x] 6.2 `openspec validate carry-inherited-context-into-the-turn --strict` passes on the change.
-- [ ] 6.3 Decide, at archive time, whether this change's build-time choices (the new event's
+- [x] 6.3 Decide, at archive time, whether this change's build-time choices (the new event's
       no-state-change shape, answer-copied-not-referenced) need a `decisions/000N-*.md` ADR per
       `openspec/config.yaml`'s non-obvious test — likely yes for the copy-vs-reference call.
-- [ ] 6.4 Archive. Confirm `git diff --stat <sha>^ <sha> -- openspec/specs/...` shows only additions
+- [x] 6.4 Archive. Confirm `git diff --stat <sha>^ <sha> -- openspec/specs/...` shows only additions
       inside the declared MODIFIED/ADDED blocks (deletions = 0, or every deletion is inside a block
       named in the commit message).
