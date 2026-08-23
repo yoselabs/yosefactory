@@ -464,22 +464,75 @@ def test_a_gate_rejection_reaches_the_item_and_the_next_turns_context(repo: Path
     # Committed in the same turn — not left dangling for a later commit to sweep up.
     assert f"{item.stem}" in "".join(git(repo, "show", "--stat", "HEAD"))
 
-    # `pick()` only selects `ready` items -- reclaim the still-`doing` item so a second turn can
-    # act on it (S1021's own mechanism), then confirm the second turn's frame and context.
-    turn.append(
-        item,
-        backlog.ITEM,
-        {"event": "reclaimed", "reason": "test", "expired_owner": "tester", "expired_attempt": 1},
-        actor="tester",
-    )
-    turn.commit(repo, [item], "reclaim for test", run_id="r-reclaim")
-
+    # resume-gate-rejected-item / S236: `eligible()` admits the still-`doing` item directly --
+    # no manual reclaim needed, and `attempt` must not move for a rejection ADR-0015 keeps within
+    # the same attempt.
     second = FakeExecutor(proposal={"event": "cancelled", "reason": "done testing"})
     take(repo, second, limits)
 
     assert second.calls[0] == first.calls[0]  # frame byte-identical across the rejection
     assert second.contexts[0]["gate_rejection"]["report"] == rejected[0]["report"]
+    assert [r["event"] for r in backlog.load(item).records].count("claimed") == 1
 
+
+
+def test_a_gate_rejected_item_is_retried_without_waiting_out_its_lease(repo: Path, limits: Guardrails) -> None:
+    """S236, the defect this change fixes: a rejection well inside its lease must be retryable on
+    the very next turn, not only after `expires_at`. Before resume-gate-rejected-item, `eligible()`
+    admitted only `ready`, so this second turn found nothing eligible, `should_plan` was suppressed
+    by the still-`doing` item, and the turn recorded `nothing-ready` without ever calling the
+    executor -- this test fails on that code and passes once `eligible()`/`take_turn` resume the
+    item directly."""
+    item = seed_item(repo)
+    rejecting = FakeExecutor(proposal={"event": "done", "effects": ["none"], "verified_by": "tests"})
+    take(repo, rejecting, limits, test_command=FALSE_COMMAND)
+
+    before = backlog.load(item)
+    assert before.state == "doing"
+    assert before.records[-1]["event"] == "gate_rejected"
+    lease_before = backlog.lease(before)
+    assert lease_before is not None
+
+    succeeding = FakeExecutor(proposal={"event": "cancelled", "reason": "done testing"})
+    record = take(repo, succeeding, limits)
+
+    assert succeeding.calls, "a gate-rejected item inside its lease must be eligible on the next turn"
+    assert record.outcome is Outcome.ADVANCED
+    after = backlog.load(item)
+    events = [r["event"] for r in after.records]
+    assert events.count("claimed") == 1, "the resume must not append a second `claimed`"
+    assert "reclaimed" not in events and "released" not in events
+    only_claim = next(r for r in after.records if r["event"] == "claimed")
+    claim_lease = {"owner": only_claim["owner"], "expires_at": only_claim["expires_at"], "attempt": only_claim["attempt"]}
+    assert claim_lease == lease_before, "the one `claimed` record on the log must be unchanged by the resume"
+    assert after.records[-1]["event"] == "cancelled"  # nothing but the new attempt's own event lands
+
+
+def test_an_always_rejecting_item_still_poisons_within_max_attempts(repo: Path, limits: Guardrails) -> None:
+    """The bound this change must not weaken: an item whose gate can never pass still reaches
+    `poison`. The fast path added here never fires once a lease has actually expired -- so this
+    walks the pre-existing `reclaim_expired` cycle (unstick-the-backlog / S1021), one simulated
+    daily wake at a time, and must poison within `max_attempts` reclaim cycles exactly as it did
+    before this change."""
+    from datetime import UTC, datetime, timedelta
+
+    item = seed_item(repo)
+    always_rejects = FakeExecutor(proposal={"event": "done", "effects": ["none"], "verified_by": "t"})
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+
+    for day in range(limits.max_attempts):
+        take(repo, always_rejects, limits, test_command=FALSE_COMMAND, now=base + timedelta(days=day))
+        folded = backlog.load(item)
+        assert folded.state == "doing", f"day {day}: still retryable, not yet poisoned"
+
+    take(repo, always_rejects, limits, test_command=FALSE_COMMAND, now=base + timedelta(days=limits.max_attempts))
+
+    folded = backlog.load(item)
+    assert folded.state == "poison"
+    events = [r["event"] for r in folded.records]
+    assert events[-2:] == ["failed", "poisoned"]
+    claims = events.count("claimed")
+    assert claims == limits.max_attempts, "each poison-bound cycle is one real claim, unaffected by the fast path"
 
 def test_a_done_with_a_passing_gate_advances(repo: Path, limits: Guardrails) -> None:
     item = seed_item(repo)

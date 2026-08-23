@@ -268,8 +268,18 @@ def items(repo: Path) -> list[FoldedLog]:
 
 
 def eligible(item: FoldedLog) -> bool:
-    """`ready` and nothing else. Waking a snoozed item is a sweeper's job and there is no sweeper."""
-    return item.state == "ready"
+    """`ready`, or `doing` whose most recent event is `gate_rejected`.
+
+    S236/resume-gate-rejected-item: ADR-0015 chose `gate_rejected: doing -> doing` so a rejection
+    stays retryable within the same attempt, and `backlog-item-format`'s own spec already says an
+    item may carry any number of `gate_rejected` records while remaining `doing` -- nothing acted on
+    that until now. The second case resumes the existing lease (`take_turn` skips the claim step for
+    it) rather than flowing back through `ready`, which is the only way `attempt` stays unmoved.
+    Waking a snoozed item is a sweeper's job and there is no sweeper.
+    """
+    if item.state == "ready":
+        return True
+    return item.state == "doing" and item.records[-1]["event"] == "gate_rejected"
 
 
 def in_flight(item: FoldedLog) -> bool:
@@ -728,29 +738,40 @@ def take_turn(
                 return record
 
         item_path = places.queue / ITEMS / f"{target.id}.jsonl"
-        # `target` is always `ready` here (picked via `eligible()`), so `backlog.lease(target)`
-        # always reads None and a computation keyed off it always restarts at 1 -- exactly the gap
-        # unstick-the-backlog / S1021 found: the `attempt` field could never exceed 1 in production,
-        # so nothing gated on it could ever fire. `backlog.claims()` counts the item's whole history
-        # instead, so the count survives every `released`/`reclaimed` trip back through `ready`.
-        attempt = backlog.claims(target) + 1
-        append(
-            item_path,
-            backlog.ITEM,
-            {
-                "event": "claimed",
-                "owner": owner,
-                "expires_at": (started + timedelta(seconds=limits.wall_clock_seconds)).isoformat(),
-                "attempt": attempt,
-            },
-            actor=owner,
-        )
-        append(item_path, backlog.ITEM, {"event": "started"}, actor=owner)
-        # Committed before the agent runs: a crash from here on is legible as claimed-and-abandoned
-        # rather than never-started, which is the state architecture.md §4 found v1 had deleted.
-        commit(places.queue, [item_path], f"claim({target.id}): attempt {attempt} by {owner}", run_id=run_id)
+        if target.state == "doing":
+            # resume-gate-rejected-item / S236: `eligible()` admitted this target because its most
+            # recent event is `gate_rejected`, not because it is `ready`. ADR-0015 keeps that
+            # retryable within the same attempt, so no new `claimed`/`started` is appended here --
+            # the item is already `doing`, already committed, already has a lease. `attempt` is read
+            # from that lease rather than recomputed, which is what keeps it from moving.
+            existing_lease = backlog.lease(target)
+            assert existing_lease is not None  # noqa: S101 -- `eligible()` only admits a `doing` item with a lease on record
+            attempt = int(existing_lease["attempt"])
+            loaded = target
+        else:
+            # `target` is `ready` here, so `backlog.lease(target)` reads None and a computation
+            # keyed off it always restarts at 1 -- exactly the gap unstick-the-backlog / S1021
+            # found: the `attempt` field could never exceed 1 in production, so nothing gated on it
+            # could ever fire. `backlog.claims()` counts the item's whole history instead, so the
+            # count survives every `released`/`reclaimed` trip back through `ready`.
+            attempt = backlog.claims(target) + 1
+            append(
+                item_path,
+                backlog.ITEM,
+                {
+                    "event": "claimed",
+                    "owner": owner,
+                    "expires_at": (started + timedelta(seconds=limits.wall_clock_seconds)).isoformat(),
+                    "attempt": attempt,
+                },
+                actor=owner,
+            )
+            append(item_path, backlog.ITEM, {"event": "started"}, actor=owner)
+            # Committed before the agent runs: a crash from here on is legible as claimed-and-abandoned
+            # rather than never-started, which is the state architecture.md §4 found v1 had deleted.
+            commit(places.queue, [item_path], f"claim({target.id}): attempt {attempt} by {owner}", run_id=run_id)
+            loaded = backlog.load(item_path)
 
-        loaded = backlog.load(item_path)
         frame = backlog.frame(loaded)
         # D030: folded from the same log `frame` was, never merged into it -- the executor's second,
         # separate channel for what attempts before this one produced.
