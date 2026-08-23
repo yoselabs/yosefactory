@@ -37,9 +37,13 @@ accept a flag, mode, stage name, or configuration value that selects the phase.
 
 A turn SHALL plan when no item is eligible to be acted on, and SHALL act when at least one is.
 
-**"Eligible to be acted on" is `eligible()`'s own predicate (`ready`), not a wider "anything is
-happening" predicate.** Whether planning is additionally suppressed when no item is eligible is a
-separate question, answered by "Only live claims suppress planning" below — the two
+**"Eligible to be acted on" is `eligible()`'s own predicate — `ready`, or `doing` whose most recent
+event is `gate_rejected`** — not a wider "anything is happening" predicate. The second case resumes
+the item's existing lease (same `attempt`, same `owner`) rather than claiming it fresh, per
+ADR-0015's own choice that a gate rejection stays retryable within the same attempt
+(`backlog-item-format`'s "`gate_rejected` never resets or reclassifies the item" carries the
+transition-level guarantee this reads). Whether planning is additionally suppressed when no item is
+eligible is a separate question, answered by "Only live claims suppress planning" below — the two
 SHALL NOT be conflated into one non-terminal check, because a non-terminal state with no route back
 to `ready` (`failed`, `falsified`, `needs_split`) or with a route back nothing yet fires (`blocked`,
 `snoozed`, absent the sweeper `eligible()`'s own docstring says does not exist) is not "happening" in
@@ -67,6 +71,14 @@ any sense that justifies withholding all future work.
 - **THEN** the turn plans
 - **AND** this holds regardless of how many such items exist or how long they have been in that
   state
+
+#### Scenario: A gate-rejected item is retried without waiting out its lease
+
+- **WHEN** an item is `doing` and its most recent event is `gate_rejected`, and its lease has not
+  yet expired
+- **THEN** the item is eligible for action on the very next turn
+- **AND** the turn that acts on it appends no new `claimed` or `started` event
+- **AND** the turn reads `attempt` and `owner` from the lease already on the item, unchanged
 
 ### Requirement: Steps one and two are deterministic and cost nothing
 
