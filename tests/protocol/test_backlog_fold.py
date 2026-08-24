@@ -441,3 +441,77 @@ def test_context_keeps_the_most_recent_of_each_source() -> None:
     item = fold(CREATED, CLAIMED, STARTED, first, second)
 
     assert backlog.context(item)["gate_rejection"]["report"] == "second failure"
+
+
+# type-the-payloads-context-reads / D032 / S246: `unblocked.resolution` as the deadline-sweep's
+# literal string, and the type declarations `context()`'s three read sources now carry.
+
+
+def test_context_folds_a_deadline_timeout_resolution_without_crashing() -> None:
+    """S246: `record.get("resolution", {}).get("answer")` raised `AttributeError` on the string
+    `"timeout"` -- the shape `backlog-item-format/spec.md`'s "The deadline fires" scenario already
+    requires and no writer produced yet. Fails on `main` before this change; passes after."""
+    awaiting = {
+        "kind": "item",
+        "ref": "itm-other",
+        "who": "sweeper",
+        "since": "2026-08-14T09:03:00Z",
+        "return_to": "doing",
+        "nudge_at": [],
+        "deadline": "2026-08-14T09:04:00Z",
+        "on_timeout": "escalate",
+    }
+    blocked = {"event_id": "e4", "ts": "2026-08-14T09:03:00Z", "actor": "t1", "event": "blocked", "awaiting": awaiting}
+    timed_out = {
+        "event_id": "e5",
+        "ts": "2026-08-14T09:10:00Z",
+        "actor": "sweeper",
+        "event": "unblocked",
+        "resolution": "timeout",
+    }
+
+    item = fold(CREATED, CLAIMED, STARTED, blocked, timed_out)
+
+    assert backlog.context(item) == {}
+
+
+def test_a_wrong_shaped_resolution_fails_the_read() -> None:
+    unblocked_wrong_shape = {
+        "event_id": "e5",
+        "ts": "2026-08-14T09:10:00Z",
+        "actor": "t1",
+        "event": "unblocked",
+        "resolution": ["not", "a", "string", "or", "a", "mapping"],
+    }
+    awaiting = {
+        "kind": "item",
+        "ref": "itm-other",
+        "who": "sweeper",
+        "since": "2026-08-14T09:03:00Z",
+        "return_to": "doing",
+        "nudge_at": [],
+        "deadline": "2026-08-14T09:04:00Z",
+        "on_timeout": "escalate",
+    }
+    blocked = {"event_id": "e4", "ts": "2026-08-14T09:03:00Z", "actor": "t1", "event": "blocked", "awaiting": awaiting}
+
+    with pytest.raises(LogError, match=r"resolution is \['not', 'a', 'string'.*expected"):
+        fold(CREATED, CLAIMED, STARTED, blocked, unblocked_wrong_shape)
+
+
+def test_a_hand_seeded_failed_record_with_the_wrong_retryable_type_fails_the_read() -> None:
+    """A plausible hand-seeding mistake: `retryable` written as the string `"true"` rather than the
+    boolean. D032: a malformed event already on disk must be caught, not only one a current writer
+    could produce."""
+    failed = {
+        "event_id": "e4",
+        "ts": "2026-08-14T09:05:00Z",
+        "actor": "denis",
+        "event": "failed",
+        "reason": "origin returned HTTP 500",
+        "attempt": 1,
+        "retryable": "true",
+    }
+
+    with pytest.raises(LogError, match=r"retryable is 'true'.*expected"):
+        fold(CREATED, CLAIMED, STARTED, failed)

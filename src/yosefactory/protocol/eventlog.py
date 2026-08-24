@@ -65,6 +65,11 @@ class Rule:
     to: str | ReturnTo | None
     required: tuple[Path_, ...] = ()
     patterns: Mapping[Path_, str] = field(default_factory=dict)
+    # D032/S246: a declared type is a property of a path, same as `required`/`patterns` — checked
+    # only when the field is present. `required` already owns "must be present"; this owns "if
+    # present, must be this shape." A tuple of types means any one of them is legal (e.g.
+    # `unblocked.resolution` is legitimately either a string or a mapping, per the spec).
+    types: Mapping[Path_, type | tuple[type, ...]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -222,6 +227,14 @@ def _check_payload(rule: Rule, record: Record, name: str, source: str, line: int
             continue
         if not isinstance(value, str) or re.fullmatch(pattern, value) is None:
             raise LogError(f"{'.'.join(path)} is {value!r}, which does not match {pattern!r}", source=source, line=line)
+    for path, expected in rule.types.items():
+        found, value = _dig(record, path)
+        if not found:
+            continue
+        if not isinstance(value, expected):
+            raise LogError(
+                f"{'.'.join(path)} is {value!r} ({type(value).__name__}), expected {expected!r}", source=source, line=line
+            )
 
 
 def _target(rule: Rule, state: str, arrivals: Sequence[tuple[str, Record]], name: str, source: str, line: int) -> str | None:

@@ -113,3 +113,33 @@ def test_the_sentinels_keep_their_meaning() -> None:
 
     with pytest.raises(LogError, match=r"'touched' is illegal from terminal state 'closed'"):
         fold(declaration, OPENED, event("closed", n=2), event("touched", n=3))
+
+
+# type-the-payloads-context-reads / D032 / S246: `Rule.types` -- a declared field is checked for
+# presence by `required` and, if present, for shape by `types`. Neither implies the other.
+
+
+TYPED = Declaration(
+    initial="opened",
+    states=frozenset({"open", "closed"}),
+    terminal=frozenset({"closed"}),
+    rules={
+        "opened": Rule(frozenset(), "open"),
+        "closed": Rule(frozenset({"open"}), "closed", types={("count",): int, ("kind",): (str, dict)}),
+    },
+)
+
+
+def test_a_present_field_of_the_wrong_type_fails_the_read() -> None:
+    with pytest.raises(LogError, match=r"count is '3' \(str\), expected <class 'int'>"):
+        fold(TYPED, OPENED, event("closed", count="3"))
+
+
+def test_a_present_field_matching_any_declared_type_in_a_tuple_passes() -> None:
+    assert fold(TYPED, OPENED, event("closed", kind="a")).state == "closed"
+    assert fold(TYPED, OPENED, event("closed", kind={"a": 1})).state == "closed"
+
+
+def test_a_field_with_no_types_entry_is_never_checked() -> None:
+    """Nothing declares a type for `count`'s absence -- a `types` entry does not imply `required`."""
+    assert fold(TYPED, OPENED, event("closed")).state == "closed"

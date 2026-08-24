@@ -75,7 +75,9 @@ ITEM = Declaration(
         # event fits (`frame_amended` and `note` are both excluded by D030 for this purpose), and
         # every other rule reachable from `doing` changes state, which a rejection must not do --
         # the item stays `doing`, retryable within the same attempt.
-        "gate_rejected": Rule(frozenset({"doing"}), None, required=(("report",), ("attempt",))),
+        "gate_rejected": Rule(
+            frozenset({"doing"}), None, required=(("report",), ("attempt",)), types={("report",): str, ("attempt",): int}
+        ),
         # unstick-the-backlog / S1021: `claimed.expires_at` was written and read by nothing, so a
         # turn that died after claiming an item parked it in `doing` forever. `reclaimed` is the
         # route back -- distinct fields from `released`'s so a reader can tell "the owner gave it
@@ -89,11 +91,25 @@ ITEM = Declaration(
             required=tuple(("awaiting", name) for name in _AWAITING_FIELDS),
             patterns={("awaiting", "kind"): _AWAITING_KIND, ("awaiting", "on_timeout"): _ON_TIMEOUT},
         ),
-        "unblocked": Rule(frozenset({"blocked"}), ReturnTo(("awaiting", "return_to")), required=(("resolution",),)),
+        "unblocked": Rule(
+            frozenset({"blocked"}),
+            ReturnTo(("awaiting", "return_to")),
+            required=(("resolution",),),
+            # D032/S246: `resolution` is a dict when an answer resolved the block (`apply_answers`'s
+            # own shape, carrying `qid`/`by`/an optional `answer`) and the literal string `"timeout"`
+            # when a deadline resolves it instead (`backlog-item-format`'s "The deadline fires"
+            # scenario) -- both are legal; a third shape is not.
+            types={("resolution",): (str, Mapping)},
+        ),
         "snoozed": Rule(frozenset({"ready", "blocked"}), "snoozed", required=(("scheduled_for",),)),
         "woke": Rule(frozenset({"snoozed"}), "ready", required=(("cause",),)),
         "falsified": Rule(frozenset({"doing"}), "falsified", required=(("by",), ("successor",))),
-        "failed": Rule(frozenset({"claimed", "doing"}), "failed", required=(("reason",), ("attempt",), ("retryable",))),
+        "failed": Rule(
+            frozenset({"claimed", "doing"}),
+            "failed",
+            required=(("reason",), ("attempt",), ("retryable",)),
+            types={("reason",): str, ("attempt",): int, ("retryable",): bool},
+        ),
         "needs_split": Rule(frozenset({"doing"}), "needs_split", required=(("children",),)),
         "done": Rule(frozenset({"doing"}), "done", required=(("effects",), ("verified_by",))),
         "cancelled": Rule(ANY_NON_TERMINAL, "cancelled", required=(("reason",),)),
@@ -132,7 +148,12 @@ def context(item: FoldedLog) -> dict[str, Any]:
         if event == "gate_rejected":
             folded["gate_rejection"] = {"report": record["report"], "attempt": record["attempt"]}
         elif event == "unblocked":
-            answer = record.get("resolution", {}).get("answer")
+            # `resolution` is a dict when an answer resolved the block (`apply_answers`'s own
+            # shape, carrying `qid`/`by`/an optional `answer`) and the literal string `"timeout"`
+            # when a deadline resolved it instead (`sweep_deadlines` / `backlog-item-format`'s "The
+            # deadline fires" scenario) -- only the dict shape ever has an answer to carry forward.
+            resolution = record.get("resolution")
+            answer = resolution.get("answer") if isinstance(resolution, Mapping) else None
             if answer is not None:
                 folded["answer"] = answer
         elif event == "failed":
