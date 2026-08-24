@@ -61,7 +61,7 @@ from yosefactory.board.projection import project_all
 from yosefactory.protocol.turn import TurnRecord
 from yosefactory.runtime import spend, stall
 from yosefactory.runtime.config import Guardrails
-from yosefactory.runtime.runs import slug_for
+from yosefactory.runtime.runs import ensure_transcripts_ignored, slug_for
 from yosefactory.runtime.turn import (
     DEFAULT_PLANNING_FRAME,
     LOCK,
@@ -313,6 +313,13 @@ def run_loop(
     function's docstring for why a bind-mounted dev container makes this the default risk rather
     than a rare accident.
 
+    Asserts the transcript-ignore guard (`runs.ensure_transcripts_ignored`) before that dirty
+    check, not after (S238): `take_turn` also asserts it, but only after `_refuse_if_dirty` has
+    already run once at the top of this function, so a `Places.local` workspace already carrying
+    untracked transcripts from a turn that ran before the guard existed would refuse to start
+    before `take_turn` ever got the chance to fix it. Calling it here first closes that gap; the
+    call inside `take_turn` stays for callers that invoke it directly, without this loop.
+
     `spend_log` defaults to `None`, meaning "wherever `take_turn` itself just committed this loop's
     rows" (`turn.spend_log_for(places)`) — the same file `_finish` stages into `places.queue`, not
     `runtime.spend.SPEND_LOG`'s package-relative default (`commit-the-spend-row-inside-the-turn`:
@@ -328,6 +335,7 @@ def run_loop(
     first turn — is projected back to the board. Neither ever starts an executor; see
     `BoardConfig`'s own docstring for why that is structural, not a convention.
     """
+    ensure_transcripts_ignored(places.ledger, places.workspace)
     _refuse_if_dirty(places.workspace)
     resolved_spend_log = spend_log if spend_log is not None else spend_log_for(places)
     start_moment = now_fn()

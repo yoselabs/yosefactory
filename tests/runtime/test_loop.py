@@ -219,6 +219,33 @@ def test_run_loop_refuses_before_any_turn_when_the_workspace_is_dirty(places: Pl
     assert after == before  # no ledger record was written -- refused before the first turn
 
 
+def test_run_loop_starts_when_a_pre_existing_untracked_transcript_is_the_only_dirt(
+    places: Places, limits: Guardrails, spend_log: Path
+) -> None:
+    """S238: a `Places.local` workspace that took a turn before the transcript-ignore guard
+    existed carries an untracked `*.stream.jsonl` file already. Before this change, that untracked
+    file alone was enough for `_refuse_if_dirty` to raise `LoopError` -- `ensure_transcripts_ignored`
+    lived only inside `take_turn`, which `_refuse_if_dirty` runs ahead of, so the guard that would
+    have excluded the file never got the chance to run. Fails before the fix, passes after."""
+    places.ledger.mkdir(parents=True, exist_ok=True)
+    (places.ledger / "stale-run.stream.jsonl").write_text("{}\n", encoding="utf-8")
+
+    report = run_loop(
+        places,
+        NeverCalled(),
+        limits=limits,
+        owner="loop-test",
+        skill=SKILL,
+        bound=LoopBound(max_iterations=1),
+        wake=WakeConfig(heartbeat_seconds=30, poll_seconds=5),
+        proposal_dir=places.queue.parent,
+        spend_log=spend_log,
+    )
+
+    assert report.stopped == loop_mod.StopReason.MAX_ITERATIONS
+    assert (places.ledger / "stale-run.stream.jsonl").exists()  # untouched, only excluded
+
+
 # ---------------------------------------------------------------------------
 # Self-chaining and the bound, at $0 — the `nothing-ready` path never starts an executor
 # ---------------------------------------------------------------------------
