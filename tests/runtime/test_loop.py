@@ -134,6 +134,21 @@ class BumpPriorityExecutor:
         )
 
 
+class LimitsCapturingExecutor(BumpPriorityExecutor):
+    """Same cheap real turn as `BumpPriorityExecutor`, plus a record of the `Guardrails` it was
+    actually invoked with -- the only way to observe, from outside `run_loop`, whether a per-turn
+    cost ceiling reached the executor or arrived as `None` (S244)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen_limits: list[Guardrails] = []
+
+    def __call__(self, *args: Any, **kwargs: Any) -> RunResult:
+        limits = kwargs.get("limits") if "limits" in kwargs else args[2]
+        self.seen_limits.append(limits)
+        return super().__call__(*args, **kwargs)
+
+
 @dataclass
 class FakeClock:
     """A controllable clock -- `sleep` advances `now` deterministically, so heartbeat tests never
@@ -501,6 +516,98 @@ def test_the_loop_stops_at_the_spend_ceiling_before_the_iteration_bound(places: 
     assert report.stopped is loop_mod.StopReason.SPEND_CEILING
     assert len(report.steps) == 1  # only the startup turn ran; the second never started
     assert report.spend_usd >= 0.50
+
+
+def test_a_turn_with_no_explicit_per_turn_ceiling_receives_one_derived_from_remaining_budget(
+    places: Places, limits: Guardrails, tmp_path: Path
+) -> None:
+    """S244: a loop configured with only a cumulative ceiling let one turn spend unbounded by cost
+    -- the cumulative check only fires *between* turns. `limits.cost_ceiling_usd` is `None` here
+    (the fixture's default, matching a caller that supplied no per-turn flag). $1.00 of this run's
+    $2.00 cumulative ceiling is already spent, so the turn about to run must receive a per-turn
+    ceiling of exactly the $1.00 remaining -- not `None`. Fails before this change (the executor
+    would see `cost_ceiling_usd=None`, an unbounded turn), passes after."""
+    from yosefactory.protocol import backlog
+    from yosefactory.runtime import spend
+    from yosefactory.runtime.turn import append, new_item_id
+
+    spend_log = tmp_path / "spend.jsonl"
+    spend.record(1.00, run_id="external-spend", log_path=spend_log)
+
+    path = places.queue / ITEMS / f"{new_item_id()}.jsonl"
+    frame = {"goal": "g", "method": "m", "assumptions": "a"}
+    append(path, backlog.ITEM, {"event": "created", "loop": "receipt", "frame": frame}, actor="external")
+    git(places.queue, "add", "-A")
+    git(places.queue, "commit", "-q", "-m", "seed ready item")  # else _refuse_if_dirty trips at startup
+
+    executor = LimitsCapturingExecutor()
+    clock = FakeClock(now=datetime(2026, 1, 1, tzinfo=UTC))
+
+    report = run_loop(
+        places,
+        executor,
+        limits=limits,
+        owner="loop-test",
+        skill=SKILL,
+        bound=LoopBound(max_iterations=1, spend_ceiling_usd=2.00),
+        wake=WakeConfig(heartbeat_seconds=99_999, poll_seconds=5),
+        proposal_dir=places.queue.parent,
+        spend_log=spend_log,
+        now_fn=clock.now_fn,
+        sleep_fn=clock.sleep_fn,
+    )
+
+    assert report.stopped is loop_mod.StopReason.MAX_ITERATIONS
+    assert executor.calls == 1
+    assert executor.seen_limits[0].cost_ceiling_usd == pytest.approx(1.00)
+    assert limits.cost_ceiling_usd is None  # the caller's own Guardrails was never mutated
+
+
+def test_an_explicit_per_turn_ceiling_is_never_overridden_by_the_derivation(
+    places: Places, tmp_path: Path
+) -> None:
+    """A caller that set its own `cost_ceiling_usd` (e.g. `take-a-turn.yml`, which passes both
+    flags from one number deliberately) must see that value reach the executor untouched, even
+    though a cumulative ceiling is also set."""
+    from yosefactory.protocol import backlog
+    from yosefactory.runtime.turn import append, new_item_id
+
+    explicit_limits = Guardrails(
+        window=10,
+        wall_clock_seconds=60,
+        turn_ceiling=4,
+        grace_seconds=1,
+        question_deadline_hours=24,
+        max_attempts=3,
+        cost_ceiling_usd=0.42,
+    )
+    spend_log = tmp_path / "spend.jsonl"
+
+    path = places.queue / ITEMS / f"{new_item_id()}.jsonl"
+    frame = {"goal": "g", "method": "m", "assumptions": "a"}
+    append(path, backlog.ITEM, {"event": "created", "loop": "receipt", "frame": frame}, actor="external")
+    git(places.queue, "add", "-A")
+    git(places.queue, "commit", "-q", "-m", "seed ready item")  # else _refuse_if_dirty trips at startup
+
+    executor = LimitsCapturingExecutor()
+    clock = FakeClock(now=datetime(2026, 1, 1, tzinfo=UTC))
+
+    run_loop(
+        places,
+        executor,
+        limits=explicit_limits,
+        owner="loop-test",
+        skill=SKILL,
+        bound=LoopBound(max_iterations=1, spend_ceiling_usd=2.00),
+        wake=WakeConfig(heartbeat_seconds=99_999, poll_seconds=5),
+        proposal_dir=places.queue.parent,
+        spend_log=spend_log,
+        now_fn=clock.now_fn,
+        sleep_fn=clock.sleep_fn,
+    )
+
+    assert executor.calls == 1
+    assert executor.seen_limits[0].cost_ceiling_usd == pytest.approx(0.42)
 
 
 def test_the_spend_ceiling_is_ignored_when_unset(places: Places, limits: Guardrails, spend_log: Path) -> None:

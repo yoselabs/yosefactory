@@ -328,6 +328,13 @@ def run_loop(
     needs to pass it; a test pointing both `take_turn` and this ceiling check at the same isolated
     fixture still may, and both must agree — see `tests/runtime/test_loop.py`'s `spend_log` fixture.
 
+    When `bound.spend_ceiling_usd` is set and `limits.cost_ceiling_usd` is not, each turn is handed
+    a derived per-turn ceiling instead of `limits` unchanged -- the remaining cumulative budget at
+    the moment that turn starts (S244: a cumulative ceiling with no per-turn one lets a single turn
+    run cost-unbounded between the checks that would catch it). `limits` itself is never mutated; a
+    fresh `Guardrails` is built per iteration. An explicit `limits.cost_ceiling_usd` is passed through
+    untouched, and no derivation happens at all when `bound.spend_ceiling_usd` is `None`.
+
     When `board` is given, two things happen that are otherwise only reachable by calling
     `board.inbox.ingest()` / `board.projection.project_all()` by hand (`turn-loop/board-wiring`):
     unconsumed board commands are applied at `board.poll_seconds`, independent of `wake`'s own
@@ -386,15 +393,23 @@ def run_loop(
         # Checked again after waking, before spending anything: the wait itself can be where the
         # ceiling was crossed (another turn, another process, another loop), and a check made only
         # before the wait would miss spend that landed during it.
+        turn_limits = limits
         if bound.spend_ceiling_usd is not None:
             spent = spent_so_far()
             if spent >= bound.spend_ceiling_usd:
                 return LoopReport(steps=tuple(steps), stopped=StopReason.SPEND_CEILING, spend_usd=spent)
+            # S244: a cumulative ceiling with no per-turn one is not a spending limit, it is a stop
+            # condition a single turn can cross arbitrarily far before anyone checks it again. When
+            # the caller gave no explicit per-turn ceiling, derive one from what is left of the
+            # cumulative budget so the turn about to run is never simply unbounded by omission.
+            # An explicit `limits.cost_ceiling_usd` is never touched here (turn-loop/wake-and-bound).
+            if limits.cost_ceiling_usd is None:
+                turn_limits = replace(limits, cost_ceiling_usd=bound.spend_ceiling_usd - spent)
 
         record = take_turn(
             places,
             executor,
-            limits=limits,
+            limits=turn_limits,
             owner=owner,
             skill=skill,
             planning_frame=planning_frame,
@@ -501,7 +516,10 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
         help="A single TURN's budget (Guardrails.cost_ceiling_usd, enforced post-hoc by the "
         "executor's own --max-budget-usd). Distinct from --spend-ceiling-usd, the loop's "
         "cumulative ceiling across iterations -- both may be given together and are applied "
-        "independently. Omitted, a turn is unbounded by cost, as before this flag existed.",
+        "independently. Omitted with no --spend-ceiling-usd either, a turn is unbounded by cost, "
+        "as before this flag existed. Omitted WITH --spend-ceiling-usd set, one is derived before "
+        "each turn from the remaining cumulative budget (S244) -- pass this explicitly to opt out "
+        "of that derivation.",
     )
     parser.add_argument(
         "--test-command",
