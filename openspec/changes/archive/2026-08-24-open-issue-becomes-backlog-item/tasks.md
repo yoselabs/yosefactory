@@ -49,10 +49,10 @@
 - [x] 5.2 `decisions/0016-*.md`: the thin-issue frame choice and the marker-write-back-as-
       idempotence mechanism, each with a `Revisit trigger:` line.
 - [x] 5.3 `make check` passes.
-- [ ] 5.4 Archive; confirm `git diff --stat <sha>^ <sha> -- openspec/specs/...` shows only
+- [x] 5.4 Archive; confirm `git diff --stat <sha>^ <sha> -- openspec/specs/...` shows only
       additions inside the `board-projection/inbox` block declared MODIFIED above, plus the new
       ADDED requirement.
-- [ ] 5.5 Re-run `make check` after archiving.
-- [ ] 5.6 Report back to the director for write-back against D031/D028/D029: what a thin issue does
+- [x] 5.5 Re-run `make check` after archiving.
+- [x] 5.6 Report back to the director for write-back against D031/D028/D029: what a thin issue does
       and why, how double-ingest is prevented and how that was tested, and the open question named
       in design.md (no concurrent-`ingest()` lock).
