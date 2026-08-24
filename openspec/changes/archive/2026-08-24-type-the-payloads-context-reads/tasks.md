@@ -42,7 +42,7 @@
 - [x] 5.3 Decide whether this change's mechanism choice (extend `Rule` over pydantic/`TypedDict`)
       needs a `decisions/000N-*.md` ADR — likely yes: a future worker could plausibly reach for
       pydantic without knowing D032 already weighed it and this change chose otherwise.
-- [ ] 5.4 Archive. Confirm `git diff --stat <sha>^ <sha> -- openspec/specs/...` shows only
+- [x] 5.4 Archive. Confirm `git diff --stat <sha>^ <sha> -- openspec/specs/...` shows only
       additions inside the declared MODIFIED block (deletions = 0, or every deletion is named in
       the commit message).
-- [ ] 5.5 Re-run `make check` after archiving.
+- [x] 5.5 Re-run `make check` after archiving.

@@ -105,6 +105,13 @@ An event that is legal from no state, or whose `event` name is not in this table
 rather than be skipped. Forward compatibility is deliberately not offered: a reader that silently
 ignores an event it does not understand reports a state that never existed.
 
+Some carried fields SHALL additionally declare a required type, not only required presence. Where
+declared, a present field whose value does not match its declared type SHALL fail the read the same
+way a missing required field or a pattern mismatch does — naming the field, the value, and the
+expected type(s). `unblocked`'s `resolution` is declared as either a string (the deadline-timeout
+case) or a mapping (the answer case): both are legal shapes for the same field, and only a third
+shape is rejected.
+
 #### Scenario: An unknown event fails loudly
 
 - **WHEN** a log contains an event named `archived`, which is not in the vocabulary
@@ -140,6 +147,14 @@ ignores an event it does not understand reports a state that never existed.
 - **THEN** the `unblocked` event's `resolution` carries the answer's text, not only `qid` and `by`
 - **AND** the question's own log still carries the canonical `answered` record — the item's copy is
   read-only and never the thing a later decision is made from
+
+#### Scenario: A payload field with the wrong declared type fails the read
+
+- **WHEN** a `failed` event carries `retryable: "true"` — a string, where the declared type is
+  `bool`
+- **THEN** reading the item fails and names the field, the value, and the expected type
+- **AND** the same posture applies to any other event whose carried field has a declared type, the
+  same way a malformed `on_timeout` fails wherever it appears
 
 ### Requirement: The frame
 
