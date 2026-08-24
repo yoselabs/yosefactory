@@ -64,6 +64,14 @@ RUN useradd --create-home --uid 1000 --shell /bin/bash factory \
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 
+# The dev compose file mounts /app read-only (stop-source-mount-being-writable, [[S245]]). ruff and
+# pytest are the only two tools measured to need a write inside /app to run at all (a temp file for
+# ruff's cache, .pytest_cache for pytest) -- both fixed by pointing their caches somewhere outside
+# the mount instead of a source change. Set here, not in docker-compose.yml, so `make check` passes
+# the same way under a bare `docker run` as under compose.
+ENV RUFF_CACHE_DIR=/tmp/ruff-cache
+ENV PYTEST_ADDOPTS="-o cache_dir=/tmp/pytest-cache"
+
 WORKDIR /app
 
 # Dependency layers first, so an edit to source (which the dev compose mount handles live anyway)

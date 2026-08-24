@@ -25,7 +25,12 @@ services:
     volumes:
       # Source, live-editable -- a change here takes effect on the NEXT command run inside the
       # container, no rebuild. The image's own /opt/venv (outside /app) is untouched by this mount.
-      - ./:/app
+      # Read-only ([[S245]]): a writable mount let an unattended turn commit into the machine's own
+      # source. The developer's own editor writes the host copy directly; the container never
+      # needs write access to observe those edits. Dockerfile sets RUFF_CACHE_DIR/PYTEST_ADDOPTS so
+      # `ruff`/`pytest` don't need to write here either -- see
+      # openspec/changes/stop-source-mount-being-writable/design.md.
+      - ./:/app:ro
       # The loop's queue+workspace. Deliberately NOT /app (D1 -- the mount race): this is a
       # separate small git repository the developer creates once, so the loop never points at the
       # same tree a human has open in an editor.
