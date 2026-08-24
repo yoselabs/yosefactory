@@ -33,12 +33,11 @@ all — the act of opening such a thread is the command.
   built from the thread's own title/body
 - **AND** the item's fold shows state `ready` on the next read
 
-### Requirement: Ref resolution has no other source of truth
+### Requirement: Projection is re-derivable from git alone
 
-- **WHEN** `open(item)` is called for an item that already has a board thread
-- **THEN** it is found by searching the board for the item's id marker, never by reading a
-  persisted mapping file
-- **AND** if no thread is found, one is created and marked with the item's id
+Deleting every artifact `project_all()` has created on the board and re-running it SHALL reproduce
+an equivalent board: the same set of (item id, title, state) triples, independent of any cache,
+mapping file, or prior run's return value.
 
 **The same no-cache discipline governs intake in the other direction.** Whether a board thread has
 already produced an item SHALL be answered by reading that thread's own body for the item marker
@@ -46,6 +45,21 @@ at the moment `list_events()` runs — never by a separately stored "already ing
 what "no thread with a marker is ever offered again as a `create` candidate" means structurally:
 the marker is written back onto the same thread before the ingesting call returns, so the very
 next read of that thread's body already shows it as ingested.
+
+#### Scenario: A destroyed board re-projects identically
+
+- **WHEN** every issue `project_all()` created for a set of items is deleted from the board
+- **AND** `project_all()` is run again against the same items
+- **THEN** the re-projected board's (item id, title, state) triples equal the pre-destruction
+  snapshot
+- **AND** no file other than the board itself and the git items was consulted to produce the match
+
+#### Scenario: Ref resolution has no other source of truth
+
+- **WHEN** `open(item)` is called for an item that already has a board thread
+- **THEN** it is found by searching the board for the item's id marker, never by reading a
+  persisted mapping file
+- **AND** if no thread is found, one is created and marked with the item's id
 
 #### Scenario: A thread with a marker is never a create candidate
 
