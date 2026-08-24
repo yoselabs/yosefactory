@@ -102,6 +102,21 @@ capable of spending money with nobody between iterations. A bound with an infini
 spend check that can be satisfied and then falsified during a long wait, both defeat the property
 the bound exists for.
 
+**When `spend_ceiling_usd` is set and the caller supplied no explicit per-turn
+`Guardrails.cost_ceiling_usd`, `run_loop` SHALL derive one before each turn: the cumulative
+remaining budget (`spend_ceiling_usd` minus spend recorded so far), rather than leaving the turn
+unbounded by cost.** An explicit `cost_ceiling_usd` SHALL be left untouched — the derivation applies
+only when the caller supplied none. When `spend_ceiling_usd` is `None`, no derivation happens and a
+turn's cost bound is exactly what the caller passed (unchanged, including `None`).
+
+**Reason, carried with the rule:** K [[S244]] — a loop configured with a $2.00 cumulative ceiling
+and no per-turn ceiling spent $8.18 before the cumulative check, evaluated only between turns, ever
+saw the overspend. A cumulative ceiling with no per-turn bound is not a spending limit; it is a stop
+condition evaluated at a boundary a single turn can cross arbitrarily far. This does not turn the
+executor's own per-turn ceiling into a preventive bound — `claude-executor/cost-ceiling` already
+documents it as a post-hoc detector, unchanged by this — but it ensures the caller never gets *no*
+per-turn number by omission when a cumulative one is in force.
+
 #### Scenario: An unbounded `LoopBound` is refused
 - **WHEN** `LoopBound` is constructed with `max_iterations=0`, a negative value, or omitted
 - **THEN** construction raises before any turn runs
@@ -118,6 +133,22 @@ the bound exists for.
 #### Scenario: No spend ceiling means no spend-based stop
 - **WHEN** `spend_ceiling_usd` is `None`
 - **THEN** the loop runs until `max_iterations` regardless of recorded spend
+
+#### Scenario: A cumulative ceiling with no explicit per-turn ceiling derives one
+- **WHEN** `bound.spend_ceiling_usd` is set to `2.00`, `$1.00` has already been recorded as spent
+  this run, and the caller's `Guardrails.cost_ceiling_usd` is `None`
+- **THEN** the turn about to run is invoked with a per-turn cost ceiling of `1.00` (the remaining
+  cumulative budget), not with no per-turn ceiling at all
+
+#### Scenario: An explicit per-turn ceiling is never overridden by the derivation
+- **WHEN** `bound.spend_ceiling_usd` is set and the caller's `Guardrails.cost_ceiling_usd` is also
+  set explicitly
+- **THEN** the turn is invoked with the caller's own value, unchanged by any derivation
+
+#### Scenario: No cumulative ceiling means no derivation either
+- **WHEN** `bound.spend_ceiling_usd` is `None`
+- **THEN** the turn's per-turn cost ceiling is exactly what the caller passed, including `None`,
+  with no value derived or substituted
 
 ### Requirement: The loop's own turns cost nothing when nothing is eligible
 
