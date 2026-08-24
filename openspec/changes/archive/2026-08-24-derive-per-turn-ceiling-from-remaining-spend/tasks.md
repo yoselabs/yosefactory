@@ -23,4 +23,4 @@
       `AssertionError: Obtained: None, Expected: 1.0` — the exact S244 shape (executor sees an
       unbounded turn). Popped the stash back, test passes.
 - [x] 3.2 `make check` green: lint clean, `ty` clean, 420 passed / 13 deselected, citations OK.
-- [ ] 3.3 Re-run `make check` after archiving.
+- [x] 3.3 Re-run `make check` after archiving: green again, 420 passed / 13 deselected.
