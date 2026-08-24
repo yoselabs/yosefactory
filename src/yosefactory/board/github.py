@@ -126,9 +126,24 @@ class GitHubIssuesAdapter:
         events: list[Event] = []
         for issue in self._issues():
             item_id = _extract_item_id(issue.get("body") or "")
-            if item_id is None:
-                continue  # not a thread this adapter projected -- ignore anything else on the repo
             number = str(issue["number"])
+            if item_id is None:
+                # design.md ("the property create doesn't share with the other three"): a
+                # markerless issue has no item to dispatch comments against yet, so this pass reads
+                # only its title/body -- fresh, never cached -- and offers it as intake. Once
+                # `ingest()`'s create branch calls `project()` on this same issue, the next call
+                # here finds the marker and this issue never reaches this branch again.
+                events.append(
+                    Event(
+                        event_id=f"gh-issue-create-{number}",
+                        ts=issue["created_at"],
+                        actor=(issue.get("user") or {}).get("login", "unknown"),
+                        type="create",
+                        payload={"title": issue.get("title") or "", "body": issue.get("body") or "", "ref": number},
+                    )
+                )
+                continue
+
             comments_args = [f"repos/{self.repo}/issues/{number}/comments", "--paginate", "-X", "GET", "-f", "per_page=100"]
             comments = self._paginated_json_array(comments_args)
             for comment in comments:

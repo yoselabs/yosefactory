@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-TYPES = frozenset({"set_priority", "answer", "cancel"})
+TYPES = frozenset({"set_priority", "answer", "cancel", "create"})
 
 _PRIORITY = re.compile(r"^/priority\s+(-?\d+)\s*$")
 _ANSWER = re.compile(r"^/answer\s+(.+)$", re.DOTALL)

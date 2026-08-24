@@ -25,7 +25,7 @@ from yosefactory.board.adapter import BoardAdapter
 from yosefactory.board.event import Event
 from yosefactory.protocol import backlog, question
 from yosefactory.protocol.eventlog import LogError
-from yosefactory.runtime.turn import ITEMS, QUESTIONS, TurnError, new_run_id
+from yosefactory.runtime.turn import ITEMS, QUESTIONS, TurnError, new_item_id, new_run_id
 from yosefactory.runtime.turn import append as turn_append
 from yosefactory.runtime.turn import commit as turn_commit
 
@@ -125,6 +125,30 @@ _APPLIERS = {
     "answer": _apply_answer,
 }
 
+# D031 / design.md ("thin-issue choice"): a GitHub issue supplies at most a title and a body,
+# never `goal`/`method`/`assumptions` as such. Building a rigorizer here would contradict D031's
+# own boundary -- that step belongs to M440 and applies to every intake door equally -- so a
+# missing body is filled with a fixed, honest placeholder rather than invented content.
+_NO_METHOD_GIVEN = "(no method given -- the issue body was empty; frame not rigorized)"
+_UNRIGORIZED_ASSUMPTIONS = "created from a tracker issue; frame not rigorized (D031, M440 out of scope here)"
+
+
+def _apply_create(repo: Path, payload: dict[str, Any], *, actor: str) -> tuple[str, str, Path]:
+    """No existing item to act on -- allocates one. design.md, "why create is not in _APPLIERS":
+    this is the one applier that both manufactures its own `item_id` and needs the caller to reach
+    back into the adapter afterward (`project()`, to imprint the marker), so `ingest()` special-
+    cases it rather than forcing the shared table into a signature only one row needs.
+    """
+    item_id = new_item_id()
+    item_path = repo / ITEMS / f"{item_id}.jsonl"
+    frame = {
+        "goal": (str(payload.get("title") or "")).strip() or f"(untitled issue, ref {payload.get('ref')!r})",
+        "method": (str(payload.get("body") or "")).strip() or _NO_METHOD_GIVEN,
+        "assumptions": _UNRIGORIZED_ASSUMPTIONS,
+    }
+    turn_append(item_path, backlog.ITEM, {"event": "created", "loop": "board-intake", "frame": frame}, actor=actor)
+    return item_id, f"created {item_id} from tracker issue", item_path
+
 
 def ingest(repo: Path, adapter: BoardAdapter, *, actor: str) -> list[IngestResult]:
     """Apply every unconsumed board command. Never raises on a single command's own rejection.
@@ -141,8 +165,31 @@ def ingest(repo: Path, adapter: BoardAdapter, *, actor: str) -> list[IngestResul
     for event in adapter.list_events(since):
         if event.event_id in consumed_ids:
             continue  # already processed in a prior run over an overlapping window
-        item_id = str(event.payload.get("item_id", "")) or None
         ref = event.payload.get("ref")
+
+        if event.type == "create":
+            # design.md ("why create is not in _APPLIERS"): no existing item_id to dispatch on,
+            # and success needs a call back into the adapter the other three never make.
+            try:
+                item_id, detail, touched = _apply_create(repo, dict(event.payload), actor=actor)
+            except (LogError, TurnError) as exc:
+                detail = str(exc)
+                _record_consumed(path, event, "rejected", detail)
+                turn_commit(repo, [path], f"board({event.event_id}): create rejected — {detail}", run_id=run_id)
+                results.append(IngestResult(event.event_id, None, "rejected", detail))
+                if ref is not None:
+                    adapter.comment(str(ref), f"rejected: {detail}")
+                continue
+            # Structural idempotence (design.md): imprint the new item's marker on the same
+            # thread the create event arrived on, before this call returns, so the next
+            # list_events() read of this thread's own body already shows it as ingested.
+            adapter.project(backlog.load(touched), str(ref))
+            _record_consumed(path, event, "applied", detail)
+            turn_commit(repo, [touched, path], f"board({event.event_id}): create — {detail}", run_id=run_id)
+            results.append(IngestResult(event.event_id, item_id, "applied", detail))
+            continue
+
+        item_id = str(event.payload.get("item_id", "")) or None
         applier = _APPLIERS[event.type]
         try:
             if item_id is None:

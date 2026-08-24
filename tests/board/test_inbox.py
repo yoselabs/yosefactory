@@ -11,7 +11,7 @@ from yosefactory.board.inbox import CONSUMED_LOG, ingest
 from yosefactory.protocol import backlog, question
 from yosefactory.runtime import turn
 
-from .fake_adapter import FakeAdapter
+from .fake_adapter import FakeAdapter, Thread
 
 FRAME = {"goal": "g", "method": "m", "assumptions": "a"}
 
@@ -223,3 +223,92 @@ def test_consumed_log_is_append_only_on_disk(repo: Path) -> None:
     assert consumed_path.exists()
     lines = consumed_path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
+
+
+# -- create (D031, open-issue-becomes-backlog-item) --------------------------------------------
+
+
+def test_create_command_makes_a_new_item_with_a_degenerate_frame(repo: Path) -> None:
+    adapter = FakeAdapter()
+    adapter.threads["1"] = Thread(item_id="")  # the pre-existing, not-yet-ingested issue
+    payload = {"title": "fix the flaky login test", "body": "it fails on CI about 1/10 runs", "ref": "1"}
+    adapter.queued_events = [_event("e1", "create", payload)]
+
+    results = ingest(repo, adapter, actor="board")
+
+    assert [r.result for r in results] == ["applied"]
+    item_id = results[0].item_id
+    assert item_id is not None
+    item = backlog.load(repo / turn.ITEMS / f"{item_id}.jsonl")
+    assert item.state == "ready"
+    frame = backlog.frame(item)
+    assert frame["goal"] == "fix the flaky login test"
+    assert frame["method"] == "it fails on CI about 1/10 runs"
+    assert frame["assumptions"]  # non-empty; degenerate but present
+    assert item.records[0]["loop"] == "board-intake"
+
+
+def test_create_from_a_thin_issue_still_produces_a_legal_frame(repo: Path) -> None:
+    """design.md's thin-issue choice: an empty body is filled with a placeholder, not refused
+    and not blocked -- this is the motivating scenario (a one-line issue dictated by phone)."""
+    adapter = FakeAdapter()
+    adapter.threads["1"] = Thread(item_id="")
+    adapter.queued_events = [_event("e1", "create", {"title": "wifi keeps dropping", "body": "", "ref": "1"})]
+
+    results = ingest(repo, adapter, actor="board")
+
+    assert [r.result for r in results] == ["applied"]
+    item = backlog.load(repo / turn.ITEMS / f"{results[0].item_id}.jsonl")
+    assert item.state == "ready"
+    frame = backlog.frame(item)
+    assert frame["method"]  # a placeholder, not empty -- backlog.ITEM's `created` rule requires it
+
+
+def test_create_stamps_the_marker_back_onto_the_source_thread(repo: Path) -> None:
+    """Structural idempotence (design.md): the same call that creates the item projects it back
+    onto the thread it came from, before ingest() returns."""
+    adapter = FakeAdapter()
+    adapter.threads["1"] = Thread(item_id="")
+    adapter.queued_events = [_event("e1", "create", {"title": "g", "body": "m", "ref": "1"})]
+
+    results = ingest(repo, adapter, actor="board")
+
+    thread = adapter.threads["1"]
+    assert thread.title  # project() wrote something derived from the new item
+    assert thread.state == "ready"
+    assert results[0].result == "applied"
+
+
+def test_rejected_create_leaves_no_item_file_and_is_visible_on_the_thread(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    adapter = FakeAdapter()
+    adapter.threads["1"] = Thread(item_id="")
+    adapter.queued_events = [_event("e1", "create", {"title": "g", "body": "m", "ref": "1"})]
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        from yosefactory.protocol.eventlog import LogError
+
+        raise LogError("forced failure", source="test")
+
+    from yosefactory.board import inbox as inbox_module
+
+    monkeypatch.setattr(inbox_module, "turn_append", _boom)
+
+    results = ingest(repo, adapter, actor="board")
+
+    assert results[0].result == "rejected"
+    assert not list((repo / turn.ITEMS).glob("*.jsonl"))  # no item file was left behind
+    assert adapter.threads["1"].comments
+    assert "rejected" in adapter.threads["1"].comments[0]
+
+
+def test_create_is_idempotent_by_event_id(repo: Path) -> None:
+    adapter = FakeAdapter()
+    adapter.threads["1"] = Thread(item_id="")
+    adapter.queued_events = [_event("e1", "create", {"title": "g", "body": "m", "ref": "1"})]
+
+    first = ingest(repo, adapter, actor="board")
+    second = ingest(repo, adapter, actor="board")  # same event still "queued" (fake never drains)
+
+    assert len(first) == 1
+    assert len(second) == 0  # already consumed -- not re-created
+    assert len(list((repo / turn.ITEMS).glob("*.jsonl"))) == 1
