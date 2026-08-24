@@ -13,4 +13,4 @@
 ## 3. Verify
 
 - [x] 3.1 `make check` green.
-- [ ] 3.2 Re-run `make check` after archiving.
+- [x] 3.2 Re-run `make check` after archiving.

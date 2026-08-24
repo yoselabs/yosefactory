@@ -302,6 +302,10 @@ This guarantee SHALL hold regardless of which repository the workspace is (this 
 source tree, or a foreign repository the turn is pointed at), and SHALL NOT depend on that
 repository's own committed configuration already carrying the exclusion.
 
+When a turn runs inside the self-chaining loop, the guarantee SHALL be asserted before the loop's
+own pre-flight dirty-tree check, so a workspace already carrying untracked transcripts from a prior
+turn is excluded before that check inspects it, not only after the loop's first turn runs.
+
 #### Scenario: A transcript is written during a turn whose ledger nests inside its workspace
 
 - **WHEN** a turn runs with its ledger located inside its workspace (the single-repository
@@ -322,6 +326,14 @@ repository's own committed configuration already carrying the exclusion.
 - **WHEN** a turn's ledger is located in a different repository from its workspace
 - **THEN** no exclusion is written into the workspace, because nothing there could cause a
   transcript to be mistaken for the workspace's own uncommitted work
+
+#### Scenario: A `Places.local` workspace already carries untracked transcripts before the loop starts
+
+- **WHEN** the self-chaining loop is started against a `Places.local` workspace that already has
+  untracked raw transcript files on disk (a workspace that took a turn before this exclusion
+  existed)
+- **THEN** the exclusion is asserted before the loop's dirty-tree refusal check runs
+- **AND** the loop starts successfully instead of refusing to start
 
 ### Requirement: An item is claimed before any agent runs
 
