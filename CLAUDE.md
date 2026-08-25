@@ -116,6 +116,11 @@ Checking whether a process already exists is the cheapest high-yield move availa
 
 Python ≥3.11, `uv`, `ruff`, `ty`, `pytest`. `make check` runs lint + types + tests.
 
+`make check` never touches the board's own live receipt (`tests/board/test_reprojection.py`,
+marked `boardlive`) — it needs `gh` auth and mutates a real throwaway repo (`BOARD_REPO`), so it is
+excluded on the same principle as `make test-live`. Run `make test-boardlive` before merging or
+releasing any change under `src/yosefactory/board/`; nothing else runs it (S243, K project 160).
+
 `claude-agent-sdk` is the harness — Claude Code as a library. It is **not** the Anthropic API SDK's `client.beta.messages.tool_runner`; the two are different packages with different scope. Docs: `code.claude.com/docs/en/agent-sdk`.
 
 Model/effort for the platform's own harness invocations: `decisions/0006-executor-pinned-to-sonnet-5-medium.md`

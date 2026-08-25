@@ -13,6 +13,7 @@ throwaway repo.
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -101,9 +102,29 @@ def _snapshot_stable(adapter: GitHubIssuesAdapter, expected: int, *, attempts: i
     return snapshot
 
 
+def _git(target: Path, *args: str) -> str:
+    binary = shutil.which("git")
+    assert binary is not None
+    completed = subprocess.run([binary, *args], cwd=target, capture_output=True, text=True, check=True)  # noqa: S603
+    return completed.stdout.strip()
+
+
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
-    return tmp_path / "repo"
+    """A real git repo -- `ingest()` (exercised by the rejected-command test below) commits what
+    it applies or rejects via `runtime.turn.commit()`, which runs `git add`/`git commit` inside
+    this path. A bare directory made that call fail with `fatal: not a git repository` (S243) --
+    fixed here to match `test_inbox.py`'s identical fixture, the file this module's `repo` fell
+    out of sync with when `ingest()` grew its commit behavior."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    _git(root, "init", "-q")
+    _git(root, "config", "user.email", "t@example.invalid")
+    _git(root, "config", "user.name", "T")
+    (root / "seed.txt").write_text("seed\n", encoding="utf-8")
+    _git(root, "add", "seed.txt")
+    _git(root, "commit", "-q", "-m", "seed")
+    return root
 
 
 def test_reprojection_acid_test(repo: Path) -> None:

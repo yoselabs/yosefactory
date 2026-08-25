@@ -1,4 +1,4 @@
-.PHONY: check lint fix ty test test-live bootstrap guard guard-host-paths spell deps citations
+.PHONY: check lint fix ty test test-live test-boardlive bootstrap guard guard-host-paths spell deps citations
 
 check: lint ty test citations
 
@@ -27,6 +27,15 @@ test:
 # (see runtime/spend.py) and this target prints the session's total spend when it finishes.
 test-live:
 	@uv run pytest -q -m live
+
+# Drives real GitHub over `gh` against BOARD_REPO, a throwaway repo. COSTS NOTHING in model spend
+# (no executor runs) but mutates external state and needs `gh` authenticated as the identity
+# BOARD_REPO is visible to -- same exclusion principle as test-live, for a different resource.
+# Run this before merging or releasing any change that touches src/yosefactory/board/ (S243: an
+# excluded check that nobody runs is worse than no check -- it looks like coverage and provides
+# none).
+test-boardlive:
+	@uv run pytest -q -m boardlive tests/board/
 
 # Verifies no dependency resolves to a local shelf checkout instead of a pinned
 # tag. Vacuous today (no shelf package is adopted yet) but wired ahead of one.
