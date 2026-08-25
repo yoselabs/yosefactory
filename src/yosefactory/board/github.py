@@ -42,14 +42,36 @@ def _extract_item_id(body: str) -> str | None:
 
 class GitHubIssuesAdapter:
     """One instance per repository. `gh` supplies auth (the operator's session, or `GH_TOKEN` in
-    a container) -- this class never reads, prints, or stores a credential itself."""
+    a container) -- this class never reads, prints, or stores a credential itself.
+
+    S242: identity is not, however, silent. `self.identity` names which `gh` login answered --
+    resolved once, on first read, from `gh api user` -- so a call that failed or returned less
+    than expected is diagnosable after the fact without a second manual `gh auth status`."""
 
     def __init__(self, repo: str) -> None:
         if "/" not in repo:
             raise ValueError(f"repo must be 'owner/name', got {repo!r}")
         self.repo = repo
+        self.identity: str | None = None  # resolved on first read; see `_ensure_identity`
 
     # -- gh plumbing -----------------------------------------------------------------------
+
+    def _ensure_identity(self) -> None:
+        """S242: identity was ambient -- whichever `gh` account is active answers every call, and
+        a second account's 404 was the only sign anything had changed. Resolve+cache the
+        authenticated login (`gh api user`'s `.login`) once, so every `BoardError` this instance
+        raises from here on names who made the call, not only which repo it named.
+
+        Login only, never a token -- `gh api user` returns profile data, the same shape `gh auth
+        status` already prints. Best-effort: a failure here must not block the read that
+        triggered it, so it degrades to `identity` staying `None` rather than raising.
+        """
+        if self.identity is not None:
+            return
+        try:
+            self.identity = json.loads(self._api(["user"]))["login"]
+        except (BoardError, KeyError, ValueError):
+            pass
 
     def _api(self, args: Sequence[str], *, input_text: str | None = None) -> str:
         argv = ["gh", "api", *args]
@@ -57,7 +79,10 @@ class GitHubIssuesAdapter:
             argv, input=input_text, capture_output=True, text=True, check=False
         )
         if completed.returncode != 0:
-            raise BoardError(f"gh api {' '.join(args)} failed: {(completed.stderr or completed.stdout).strip()}")
+            who = f" as {self.identity!r}" if self.identity else ""
+            raise BoardError(
+                f"gh api {' '.join(args)} failed{who}: {(completed.stderr or completed.stdout).strip()}"
+            )
         return completed.stdout
 
     def _paginated_json_array(self, args: Sequence[str]) -> list[dict]:
@@ -76,6 +101,7 @@ class GitHubIssuesAdapter:
         return items
 
     def _issues(self, *, state: str = "all") -> list[dict]:
+        self._ensure_identity()
         args = [f"repos/{self.repo}/issues", "--paginate", "-X", "GET", "-f", f"state={state}", "-f", "per_page=100"]
         return [issue for issue in self._paginated_json_array(args) if "pull_request" not in issue]
 

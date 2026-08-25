@@ -156,6 +156,17 @@ def test_reprojection_acid_test(repo: Path) -> None:
     assert after == before, f"re-projection diverged from the pre-destruction snapshot:\nbefore={before}\nafter={after}"
 
 
+def test_identity_matches_the_board_repos_owner(repo: Path) -> None:
+    """S242's own live assertion: the account actually reading `BOARD_REPO` is the account it is
+    owned by. `BOARD_REPO`'s owner segment is used rather than a second literal -- this test
+    introduces no account name beyond what the module already names."""
+    adapter = GitHubIssuesAdapter(BOARD_REPO)
+
+    adapter._issues()
+
+    assert adapter.identity == BOARD_REPO.split("/")[0]
+
+
 def test_rejected_command_is_a_visible_reply_on_the_thread(repo: Path) -> None:
     """What Denis sees on his phone when a command does not land."""
     adapter = GitHubIssuesAdapter(BOARD_REPO)

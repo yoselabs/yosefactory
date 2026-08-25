@@ -24,9 +24,10 @@ REPO = "yoselabs/yosefactory-test"
 class FakeGh:
     """An in-memory GitHub issues store, keyed the same way the real API responds."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, login: str = "denis") -> None:
         self.issues: dict[int, dict] = {}
         self.comments: dict[int, list[dict]] = {}
+        self.login = login
 
     def seed_issue(self, number: int, *, title: str, body: str, created_at: str = "2026-08-24T00:00:00Z") -> None:
         self.issues[number] = {
@@ -41,6 +42,8 @@ class FakeGh:
 
     def api(self, args: list[str], *, input_text: str | None = None) -> str:
         path = args[0]
+        if path == "user":
+            return json.dumps({"login": self.login})
         if path == f"repos/{REPO}/issues" and "--paginate" in args:
             return json.dumps(list(self.issues.values()))
         if path.startswith(f"repos/{REPO}/issues/") and path.endswith("/comments") and "--paginate" in args:
