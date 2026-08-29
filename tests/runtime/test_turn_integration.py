@@ -5,7 +5,12 @@ of them drives `runtime.turn.take_turn` — the reducer that claims, runs, dispo
 publishes — against a real executor. This file is that receipt: one real `claude` binary, a real
 second (foreign) workspace repository, a trivial one-line-file task.
 
-Skipped when `claude` is absent or the pinned version has moved, exactly like the executor receipts.
+Skipped, quietly, when `claude` is absent. Failed, loudly, when `claude` is present but its version
+has moved (`require_pinned_claude`), exactly like the executor receipts
+(`tests/executor/test_integration.py`) — see that file's docstring and
+`the-conformance-test-that-cannot-fail` for why the two are no longer one silent condition.
+`test_the_wrapper_matches_the_executor_protocol` at the bottom of this file needs no `claude`
+binary at all (it inspects a Python signature) and carries neither mark: it always runs.
 
 **What this file does not prove, so a later reader does not credit it with more than it demonstrates:**
 
@@ -54,13 +59,24 @@ from yosefactory.runtime.config import Guardrails
 from yosefactory.runtime.isolation import IsolationPolicy
 from yosefactory.runtime.runs import read_window
 
-pytestmark = [
-    pytest.mark.live,
-    pytest.mark.skipif(
-        shutil.which("claude") is None or resolve_version() != PINNED_VERSION,
-        reason=f"needs claude {PINNED_VERSION} on PATH",
-    ),
-]
+_needs_live_claude = pytest.mark.skipif(shutil.which("claude") is None, reason="claude is not on PATH")
+
+
+@pytest.fixture
+def require_pinned_claude() -> None:
+    """Requested by every test below that drives the real binary -- never by the protocol check.
+
+    Absence of `claude` is an ordinary environment gap (`_needs_live_claude` above, quiet). A
+    `claude` present but at a different version is not: these tests' assertions were checked
+    against `PINNED_VERSION` specifically, so a drifted binary makes them unverified -- fail loud
+    rather than let that pass as a silent skip.
+    """
+    installed = resolve_version()
+    assert installed == PINNED_VERSION, (
+        f"claude on PATH is {installed}, tests are pinned to {PINNED_VERSION} -- "
+        "bump PINNED_VERSION (and re-verify behaviour) rather than let this drift silently"
+    )
+
 
 SKILL = Path("workflows/turn-skill.md").resolve()
 
@@ -195,6 +211,9 @@ def tool_calls(transcript_path: Path, name: str) -> list[dict[str, Any]]:
     return calls
 
 
+@pytest.mark.live
+@_needs_live_claude
+@pytest.mark.usefixtures("require_pinned_claude")
 def test_take_turn_drives_a_real_agent_against_a_real_foreign_workspace(queue: Path, workspace: Path) -> None:
     """Receipts 1-4: queue != workspace, a real executor, the ledger row, both commit trailers.
 
@@ -238,6 +257,9 @@ def test_take_turn_drives_a_real_agent_against_a_real_foreign_workspace(queue: P
     assert f"{turn.RUN_TRAILER_KEY}: {record.run_id}" in body
 
 
+@pytest.mark.live
+@_needs_live_claude
+@pytest.mark.usefixtures("require_pinned_claude")
 def test_a_real_agent_reaches_done_once_the_vocabulary_is_reachable(queue: Path, workspace: Path) -> None:
     """Receipt 7, `teach-event-vocabulary`'s deferred scope: the `done` path itself, driven for real.
 
@@ -282,6 +304,9 @@ def test_a_real_agent_reaches_done_once_the_vocabulary_is_reachable(queue: Path,
     assert str(backlog.VOCABULARY_SPEC) in read_paths
 
 
+@pytest.mark.live
+@_needs_live_claude
+@pytest.mark.usefixtures("require_pinned_claude")
 def test_two_turns_share_a_byte_identical_co_author_and_independent_run_ids(queue: Path, workspace: Path) -> None:
     """Receipt 5: the property no unit test can stand in for -- a unit test asserts the id it made.
 
@@ -326,6 +351,9 @@ def test_two_turns_share_a_byte_identical_co_author_and_independent_run_ids(queu
     assert co_author_line(first_trailer) == co_author_line(second_trailer)
 
 
+@pytest.mark.live
+@_needs_live_claude
+@pytest.mark.usefixtures("require_pinned_claude")
 def test_a_turn_that_crashes_before_commit_leaves_a_legible_gap(queue: Path, tmp_path: Path) -> None:
     """Receipt 6: `.start` is committed before the executor ever runs, so a real crash leaves a gap.
 
@@ -372,8 +400,22 @@ def test_a_turn_that_crashes_before_commit_leaves_a_legible_gap(queue: Path, tmp
 
 
 def test_the_wrapper_matches_the_executor_protocol() -> None:
-    """A cheap, offline check that `real_executor`'s signature is what `take_turn` will call."""
+    """A cheap, offline check that `real_executor`'s signature is what `take_turn` will call.
+
+    No `claude` binary, no `pytest.mark.live`, no version guard -- this is a Python signature
+    check, not a claim about the binary's behaviour, and it must not be able to go silent the way
+    it did before (module docstring; `the-conformance-test-that-cannot-fail`).
+    """
     import inspect
 
     sig = inspect.signature(real_executor)
-    assert list(sig.parameters) == ["frame", "workspace", "limits", "run_id", "runs_dir", "invocation"]
+    assert list(sig.parameters) == [
+        "frame",
+        "workspace",
+        "limits",
+        "run_id",
+        "runs_dir",
+        "transcripts_dir",
+        "context",
+        "invocation",
+    ]

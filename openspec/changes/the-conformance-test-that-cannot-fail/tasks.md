@@ -8,43 +8,43 @@
 
 ## 2. Fix the assertion
 
-- [ ] 2.1 `test_the_wrapper_matches_the_executor_protocol`: update the expected parameter list to
+- [x] 2.1 `test_the_wrapper_matches_the_executor_protocol`: update the expected parameter list to
       `["frame", "workspace", "limits", "run_id", "runs_dir", "transcripts_dir", "context",
       "invocation"]`.
 
 ## 3. Move the offline test out of the live gate
 
-- [ ] 3.1 `tests/runtime/test_turn_integration.py`: replace the module-level `pytestmark` with
+- [x] 3.1 `tests/runtime/test_turn_integration.py`: replace the module-level `pytestmark` with
       per-test `@pytest.mark.live` + an absent-binary `skipif`, applied to the five behaviour
       tests individually. `test_the_wrapper_matches_the_executor_protocol` carries neither.
 
 ## 4. Split the guard: absent (skip) vs. drifted (fail)
 
-- [ ] 4.1 `tests/runtime/test_turn_integration.py`: add `require_pinned_claude` fixture (plain
+- [x] 4.1 `tests/runtime/test_turn_integration.py`: add `require_pinned_claude` fixture (plain
       `assert installed == PINNED_VERSION`, requested explicitly, not autouse); each of the five
       behaviour tests requests it.
-- [ ] 4.2 `tests/executor/test_integration.py`: same split — module-level `pytestmark` narrows to
+- [x] 4.2 `tests/executor/test_integration.py`: same split — module-level `pytestmark` narrows to
       absent-binary skip only; each of the six tests requests `require_pinned_claude`.
-- [ ] 4.3 Confirm the fixture's failure message names both the installed and pinned versions.
+- [x] 4.3 Confirm the fixture's failure message names both the installed and pinned versions.
 
 ## 5. Spec
 
-- [ ] 5.1 `claude-executor/run-interface` spec delta: ADDED requirement — the protocol-conformance
+- [x] 5.1 `claude-executor/run-interface` spec delta: ADDED requirement — the protocol-conformance
       check runs unconditionally.
-- [ ] 5.2 `claude-executor/live-test-gating` (new spec file): ADDED requirement — absent-vs-drifted
+- [x] 5.2 `claude-executor/live-test-gating` (new spec file): ADDED requirement — absent-vs-drifted
       split.
 
 ## 6. ADR
 
-- [ ] 6.1 `decisions/0021-fail-loud-on-claude-version-drift-not-a-minimum-version-guard.md` —
+- [x] 6.1 `decisions/0021-fail-loud-on-claude-version-drift-not-a-minimum-version-guard.md` —
       Decision 1 and Decision 2 from `design.md`, condensed.
 
 ## 7. Verify
 
-- [ ] 7.1 `make check` green (the wrapper-conformance test now included, unconditionally).
-- [ ] 7.2 `PREK_ALLOW_NO_CONFIG=1 uv run pytest -q -m live -rs tests/runtime/test_turn_integration.py tests/executor/test_integration.py`
+- [x] 7.1 `make check` green (the wrapper-conformance test now included, unconditionally).
+- [x] 7.2 `PREK_ALLOW_NO_CONFIG=1 uv run pytest -q -m live -rs tests/runtime/test_turn_integration.py tests/executor/test_integration.py`
       on this machine: the conformance test no longer appears in this run at all (it runs under
       plain `pytest`, not `-m live`); the other ten fail loudly, naming `2.1.251` vs `2.1.225`,
       none skip silently.
-- [ ] 7.3 `openspec validate the-conformance-test-that-cannot-fail --strict` passes.
+- [x] 7.3 `openspec validate the-conformance-test-that-cannot-fail --strict` passes.
 - [ ] 7.4 Commit, then archive; re-run `make check` after archiving.

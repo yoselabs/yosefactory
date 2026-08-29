@@ -3,9 +3,11 @@
 The wall clock, the turn ceiling and the isolation policy shipped with no caller. Passing unit tests
 are not the same claim as a guard that has been observed to fire, so these drive the real binary.
 
-Skipped when `claude` is absent or the pinned version has moved — a receipt against a different
-binary is not this receipt, and a capability claim without a check against a pinned version is
-invalid by construction.
+Skipped, quietly, when `claude` is absent. Failed, loudly, when `claude` is present but its version
+has moved (`require_pinned_claude`) — a receipt against a different binary is not this receipt, and
+a capability claim without a check against a pinned version is invalid by construction. The two
+used to be one silent condition; that hid a real version drift for as long as nobody ran
+`-m live -rs` by hand (`the-conformance-test-that-cannot-fail`).
 """
 
 from __future__ import annotations
@@ -27,11 +29,24 @@ from yosefactory.runtime.supervise import StreamRecorder
 
 pytestmark = [
     pytest.mark.live,
-    pytest.mark.skipif(
-        shutil.which("claude") is None or (shutil.which("claude") is not None and resolve_version() != PINNED_VERSION),
-        reason=f"needs claude {PINNED_VERSION} on PATH",
-    ),
+    pytest.mark.skipif(shutil.which("claude") is None, reason="claude is not on PATH"),
 ]
+
+
+@pytest.fixture
+def require_pinned_claude() -> None:
+    """Requested by every test below that drives the real binary.
+
+    Absence of `claude` is an ordinary environment gap (module-level `skipif` above, quiet). A
+    `claude` present but at a different version is not: every assertion below was checked against
+    `PINNED_VERSION` specifically (module docstring), so a drifted binary makes them unverified,
+    not "probably still fine" -- fail loud rather than let that pass as a silent skip.
+    """
+    installed = resolve_version()
+    assert installed == PINNED_VERSION, (
+        f"claude on PATH is {installed}, tests are pinned to {PINNED_VERSION} -- "
+        "bump PINNED_VERSION (and re-verify behaviour) rather than let this drift silently"
+    )
 
 
 @pytest.fixture
@@ -43,6 +58,7 @@ def workspace(tmp_path: Path) -> Path:
     return tmp_path
 
 
+@pytest.mark.usefixtures("require_pinned_claude")
 def test_a_real_run_produces_a_structured_outcome(workspace: Path) -> None:
     """Receipt 1: one bounded, isolated invocation, verdict taken from the agent's own terminal event.
 
@@ -77,6 +93,7 @@ def test_a_real_run_produces_a_structured_outcome(workspace: Path) -> None:
     assert positions[0].record.enforced_by is EnforcedBy.AGENT
 
 
+@pytest.mark.usefixtures("require_pinned_claude")
 def test_an_isolated_run_loads_no_host_or_repository_configuration(workspace: Path) -> None:
     """Receipt 3: the posture asserted from the agent's own init event, on a fully configured host.
 
@@ -113,6 +130,7 @@ def test_an_isolated_run_loads_no_host_or_repository_configuration(workspace: Pa
     assert reader.init.slash_commands == ()
 
 
+@pytest.mark.usefixtures("require_pinned_claude")
 def test_a_workspace_scoped_run_admits_repo_config_and_excludes_host_config(workspace: Path) -> None:
     """Receipt for `scope-isolation-by-config-source`: the third posture, verified both directions.
 
@@ -140,6 +158,7 @@ def test_a_workspace_scoped_run_admits_repo_config_and_excludes_host_config(work
     assert reader.init.workspace_scope_leaks == ()
 
 
+@pytest.mark.usefixtures("require_pinned_claude")
 def test_an_opted_out_run_shows_what_isolation_was_holding_back(workspace: Path) -> None:
     """The control for the receipt above, and the reason the assertion is worth anything.
 
@@ -163,6 +182,7 @@ def test_an_opted_out_run_shows_what_isolation_was_holding_back(workspace: Path)
     assert reader.init.leaks, "the host loads nothing, so the isolated receipt proves nothing"
 
 
+@pytest.mark.usefixtures("require_pinned_claude")
 def test_a_run_that_exceeds_its_wall_clock_is_stopped_and_recorded(workspace: Path) -> None:
     """Receipt 2: the harness stop fires, says so, and reports the tree honestly."""
     runs = workspace / "runs"
@@ -193,6 +213,7 @@ def test_a_run_that_exceeds_its_wall_clock_is_stopped_and_recorded(workspace: Pa
     assert record.enforced_by is EnforcedBy.HARNESS
 
 
+@pytest.mark.usefixtures("require_pinned_claude")
 def test_isolated_invocation_never_reaches_for_bare_mode() -> None:
     """Bare mode buys isolation by making a subscription run unable to authenticate at all."""
     argv = build_argv("hello", IsolationPolicy())
