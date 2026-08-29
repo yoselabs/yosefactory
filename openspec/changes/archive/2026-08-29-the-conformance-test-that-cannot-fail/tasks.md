@@ -47,4 +47,4 @@
       plain `pytest`, not `-m live`); the other ten fail loudly, naming `2.1.251` vs `2.1.225`,
       none skip silently.
 - [x] 7.3 `openspec validate the-conformance-test-that-cannot-fail --strict` passes.
-- [ ] 7.4 Commit, then archive; re-run `make check` after archiving.
+- [x] 7.4 Commit, then archive; re-run `make check` after archiving.
