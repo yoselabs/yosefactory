@@ -135,21 +135,6 @@ class BumpPriorityExecutor:
         )
 
 
-class LimitsCapturingExecutor(BumpPriorityExecutor):
-    """Same cheap real turn as `BumpPriorityExecutor`, plus a record of the `Guardrails` it was
-    actually invoked with -- the only way to observe, from outside `run_loop`, whether a per-turn
-    cost ceiling reached the executor or arrived as `None` (S244)."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.seen_limits: list[Guardrails] = []
-
-    def __call__(self, *args: Any, **kwargs: Any) -> RunResult:
-        limits = kwargs.get("limits") if "limits" in kwargs else args[2]
-        self.seen_limits.append(limits)
-        return super().__call__(*args, **kwargs)
-
-
 @dataclass
 class FakeClock:
     """A controllable clock -- `sleep` advances `now` deterministically, so heartbeat tests never
@@ -181,15 +166,15 @@ def test_loop_bound_requires_a_positive_max_iterations() -> None:
         LoopBound(max_iterations=-1)
 
 
-def test_loop_bound_spend_ceiling_must_be_positive_when_set() -> None:
-    with pytest.raises(LoopError):
-        LoopBound(max_iterations=1, spend_ceiling_usd=0)
-    with pytest.raises(LoopError):
-        LoopBound(max_iterations=1, spend_ceiling_usd=-5)
+def test_loop_bound_no_longer_accepts_a_spend_ceiling() -> None:
+    """K D034: the cumulative spend ceiling is deleted, not merely unused -- `LoopBound` SHALL
+    refuse the keyword outright, not silently accept and ignore it."""
+    with pytest.raises(TypeError):
+        LoopBound(max_iterations=1, spend_ceiling_usd=5.0)  # type: ignore[call-arg]
 
 
-def test_loop_bound_with_no_spend_ceiling_is_legal() -> None:
-    assert LoopBound(max_iterations=3).spend_ceiling_usd is None
+def test_stop_reason_no_longer_has_a_spend_ceiling_member() -> None:
+    assert "SPEND_CEILING" not in loop_mod.StopReason.__members__
 
 
 def test_wake_config_requires_positive_intervals() -> None:
@@ -480,180 +465,14 @@ def test_wakes_on_heartbeat_when_nothing_else_changes(places: Places, limits: Gu
 
 
 # ---------------------------------------------------------------------------
-# The spend ceiling — the half of the bound that matters once a turn can cost money
+# scheduled_main -- K D034 deleted --spend-ceiling-usd; scheduled_main no longer requires anything
+# main() doesn't (see design.md, delete-the-cumulative-spend-ceiling, for why it still exists)
 # ---------------------------------------------------------------------------
 
 
-def test_the_loop_stops_at_the_spend_ceiling_before_the_iteration_bound(places: Places, limits: Guardrails, tmp_path: Path) -> None:
-    """A live executor's `spend.record()` call is out of scope for this fake-executor file (that
-    integration lives in `record-live-spend-and-gate-make-check` and `test_turn_integration.py`), so
-    this test writes the same row shape `spend.record` would, to prove `run_loop` itself reads and
-    honours the ledger rather than trusting the executor to self-report an in-band number."""
-    from yosefactory.runtime import spend
-
-    spend_log = tmp_path / "spend.jsonl"
-    clock = FakeClock(now=datetime(2026, 1, 1, tzinfo=UTC))
-
-    def record_spend_mid_sleep() -> None:
-        if clock.sleeps == 1:
-            spend.record(0.75, run_id="external-spend", log_path=spend_log)
-
-    clock.on_sleep.append(record_spend_mid_sleep)
-
-    report = run_loop(
-        places,
-        NeverCalled(),
-        limits=limits,
-        owner="loop-test",
-        skill=SKILL,
-        bound=LoopBound(max_iterations=10, spend_ceiling_usd=0.50),
-        wake=WakeConfig(heartbeat_seconds=10, poll_seconds=5),
-        proposal_dir=places.queue.parent,
-        spend_log=spend_log,
-        now_fn=clock.now_fn,
-        sleep_fn=clock.sleep_fn,
-    )
-
-    assert report.stopped is loop_mod.StopReason.SPEND_CEILING
-    assert len(report.steps) == 1  # only the startup turn ran; the second never started
-    assert report.spend_usd >= 0.50
-
-
-def test_a_turn_with_no_explicit_per_turn_ceiling_receives_one_derived_from_remaining_budget(
-    places: Places, limits: Guardrails, tmp_path: Path
-) -> None:
-    """S244: a loop configured with only a cumulative ceiling let one turn spend unbounded by cost
-    -- the cumulative check only fires *between* turns. `limits.cost_ceiling_usd` is `None` here
-    (the fixture's default, matching a caller that supplied no per-turn flag). $1.00 of this run's
-    $2.00 cumulative ceiling is already spent, so the turn about to run must receive a per-turn
-    ceiling of exactly the $1.00 remaining -- not `None`. Fails before this change (the executor
-    would see `cost_ceiling_usd=None`, an unbounded turn), passes after."""
-    from yosefactory.protocol import backlog
-    from yosefactory.runtime import spend
-    from yosefactory.runtime.turn import append, new_item_id
-
-    spend_log = tmp_path / "spend.jsonl"
-    spend.record(1.00, run_id="external-spend", log_path=spend_log)
-
-    path = places.queue / ITEMS / f"{new_item_id()}.jsonl"
-    frame = {"goal": "g", "method": "m", "assumptions": "a"}
-    append(path, backlog.ITEM, {"event": "created", "loop": "receipt", "frame": frame}, actor="external")
-    git(places.queue, "add", "-A")
-    git(places.queue, "commit", "-q", "-m", "seed ready item")  # else _refuse_if_dirty trips at startup
-
-    executor = LimitsCapturingExecutor()
-    clock = FakeClock(now=datetime(2026, 1, 1, tzinfo=UTC))
-
-    report = run_loop(
-        places,
-        executor,
-        limits=limits,
-        owner="loop-test",
-        skill=SKILL,
-        bound=LoopBound(max_iterations=1, spend_ceiling_usd=2.00),
-        wake=WakeConfig(heartbeat_seconds=99_999, poll_seconds=5),
-        proposal_dir=places.queue.parent,
-        spend_log=spend_log,
-        now_fn=clock.now_fn,
-        sleep_fn=clock.sleep_fn,
-    )
-
-    assert report.stopped is loop_mod.StopReason.MAX_ITERATIONS
-    assert executor.calls == 1
-    assert executor.seen_limits[0].cost_ceiling_usd == pytest.approx(1.00)
-    assert limits.cost_ceiling_usd is None  # the caller's own Guardrails was never mutated
-
-
-def test_an_explicit_per_turn_ceiling_is_never_overridden_by_the_derivation(
-    places: Places, tmp_path: Path
-) -> None:
-    """A caller that set its own `cost_ceiling_usd` (e.g. `take-a-turn.yml`, which passes both
-    flags from one number deliberately) must see that value reach the executor untouched, even
-    though a cumulative ceiling is also set."""
-    from yosefactory.protocol import backlog
-    from yosefactory.runtime.turn import append, new_item_id
-
-    explicit_limits = Guardrails(
-        window=10,
-        wall_clock_seconds=60,
-        turn_ceiling=4,
-        grace_seconds=1,
-        question_deadline_hours=24,
-        max_attempts=3,
-        cost_ceiling_usd=0.42,
-    )
-    spend_log = tmp_path / "spend.jsonl"
-
-    path = places.queue / ITEMS / f"{new_item_id()}.jsonl"
-    frame = {"goal": "g", "method": "m", "assumptions": "a"}
-    append(path, backlog.ITEM, {"event": "created", "loop": "receipt", "frame": frame}, actor="external")
-    git(places.queue, "add", "-A")
-    git(places.queue, "commit", "-q", "-m", "seed ready item")  # else _refuse_if_dirty trips at startup
-
-    executor = LimitsCapturingExecutor()
-    clock = FakeClock(now=datetime(2026, 1, 1, tzinfo=UTC))
-
-    run_loop(
-        places,
-        executor,
-        limits=explicit_limits,
-        owner="loop-test",
-        skill=SKILL,
-        bound=LoopBound(max_iterations=1, spend_ceiling_usd=2.00),
-        wake=WakeConfig(heartbeat_seconds=99_999, poll_seconds=5),
-        proposal_dir=places.queue.parent,
-        spend_log=spend_log,
-        now_fn=clock.now_fn,
-        sleep_fn=clock.sleep_fn,
-    )
-
-    assert executor.calls == 1
-    assert executor.seen_limits[0].cost_ceiling_usd == pytest.approx(0.42)
-
-
-def test_the_spend_ceiling_is_ignored_when_unset(places: Places, limits: Guardrails, spend_log: Path) -> None:
-    clock = FakeClock(now=datetime(2026, 1, 1, tzinfo=UTC))
-    report = run_loop(
-        places,
-        NeverCalled(),
-        limits=limits,
-        owner="loop-test",
-        skill=SKILL,
-        bound=LoopBound(max_iterations=2),
-        wake=WakeConfig(heartbeat_seconds=10, poll_seconds=5),
-        proposal_dir=places.queue.parent,
-        spend_log=spend_log,
-        now_fn=clock.now_fn,
-        sleep_fn=clock.sleep_fn,
-    )
-    assert report.stopped is loop_mod.StopReason.MAX_ITERATIONS
-    assert len(report.steps) == 2
-
-
-# ---------------------------------------------------------------------------
-# scheduled_main -- the scheduler-only entrypoint requires a spend ceiling; main() does not
-# ---------------------------------------------------------------------------
-
-
-def test_scheduled_main_refuses_to_start_without_a_spend_ceiling(monkeypatch: pytest.MonkeyPatch) -> None:
-    """argparse SHALL reject the invocation before `run_loop` is ever reached -- the ceiling is
-    enforced by the parser, not by a convention an installer could forget."""
-    called = False
-
-    def fail_if_called(*args: Any, **kwargs: Any) -> Any:
-        nonlocal called
-        called = True
-        raise AssertionError("run_loop must not be called when --spend-ceiling-usd is missing")
-
-    monkeypatch.setattr(loop_mod, "run_loop", fail_if_called)
-    with pytest.raises(SystemExit):
-        loop_mod.scheduled_main(["--max-iterations", "1"])
-    assert called is False
-
-
-def test_main_still_does_not_require_a_spend_ceiling(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """`main()`'s own default (`unattended=False`) is unchanged by this entrypoint's addition --
-    D022's interactive deferral stands."""
+def test_scheduled_main_no_longer_requires_a_spend_ceiling(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The flag `scheduled_main` used to require is gone entirely -- it SHALL reach `run_loop` on
+    `--max-iterations` alone, the same as `main()`."""
     captured: dict[str, Any] = {}
 
     def fake_run_loop(places: Places, executor: Any, **kwargs: Any) -> Any:
@@ -661,34 +480,21 @@ def test_main_still_does_not_require_a_spend_ceiling(monkeypatch: pytest.MonkeyP
         return loop_mod.LoopReport(steps=(), stopped=loop_mod.StopReason.MAX_ITERATIONS, spend_usd=0.0)
 
     monkeypatch.setattr(loop_mod, "run_loop", fake_run_loop)
-    # unstick-the-backlog: `main()` now also checks the stall verdict against `places.ledger` after
-    # `run_loop` returns -- an empty ledger (this fake never writes one) is honestly STALLED, which
-    # is not what this test is about, so the verdict itself is faked OK here (exit-code wiring has
-    # its own tests below).
     monkeypatch.setattr(
         loop_mod.stall, "detect", lambda *a, **k: loop_mod.stall.Verdict(loop_mod.stall.Status.OK, 10, 0, {}, 0, None, {})
     )
-    exit_code = loop_mod.main(["--max-iterations", "1", str(tmp_path)])
+    exit_code = loop_mod.scheduled_main(["--max-iterations", "1", str(tmp_path)])
     assert exit_code == 0
-    assert captured["bound"].spend_ceiling_usd is None
+    assert captured["bound"].max_iterations == 1
 
 
-def test_a_supplied_ceiling_is_identical_via_either_entrypoint(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    captured: dict[str, Any] = {}
-
-    def fake_run_loop(places: Places, executor: Any, **kwargs: Any) -> Any:
-        captured["bound"] = kwargs["bound"]
-        return loop_mod.LoopReport(steps=(), stopped=loop_mod.StopReason.MAX_ITERATIONS, spend_usd=0.0)
-
-    monkeypatch.setattr(loop_mod, "run_loop", fake_run_loop)
-
-    loop_mod.main(["--max-iterations", "1", "--spend-ceiling-usd", "2.0", str(tmp_path)])
-    via_main = captured["bound"].spend_ceiling_usd
-
-    loop_mod.scheduled_main(["--max-iterations", "1", "--spend-ceiling-usd", "2.0", str(tmp_path)])
-    via_scheduled = captured["bound"].spend_ceiling_usd
-
-    assert via_main == via_scheduled == 2.0
+def test_removed_spend_ceiling_flag_is_rejected_by_argparse(tmp_path: Path) -> None:
+    """`--spend-ceiling-usd` is deleted, not merely unwired -- passing it SHALL fail argument
+    parsing, on either entrypoint, rather than being silently accepted and ignored."""
+    with pytest.raises(SystemExit):
+        loop_mod.main(["--max-iterations", "1", "--spend-ceiling-usd", "2.0", str(tmp_path)])
+    with pytest.raises(SystemExit):
+        loop_mod.scheduled_main(["--max-iterations", "1", "--spend-ceiling-usd", "2.0", str(tmp_path)])
 
 
 # ---------------------------------------------------------------------------
@@ -810,7 +616,7 @@ def test_unattended_entrypoint_does_not_default_to_a_posture_that_denies_tool_ca
     monkeypatch.setattr(claude_mod, "run", fake_claude_run)
     monkeypatch.setattr(loop_mod, "run_loop", fake_run_loop)
 
-    loop_mod.scheduled_main(["--max-iterations", "1", "--spend-ceiling-usd", "2.0", str(tmp_path)])
+    loop_mod.scheduled_main(["--max-iterations", "1", str(tmp_path)])
     unattended_policy = captured["policy"]
     assert unattended_policy.isolated is False
     assert unattended_policy.workspace_scoped is True
@@ -839,12 +645,12 @@ def test_unattended_entrypoint_declines_publication_unless_told_otherwise(
 
     monkeypatch.setattr(loop_mod, "run_loop", fake_run_loop)
 
-    loop_mod.scheduled_main(["--max-iterations", "1", "--spend-ceiling-usd", "2.0", str(tmp_path)])
+    loop_mod.scheduled_main(["--max-iterations", "1", str(tmp_path)])
     declined = captured["places"]
     assert declined.publish_workspace is False
     assert declined.publish_queue is False
 
-    loop_mod.scheduled_main(["--max-iterations", "1", "--spend-ceiling-usd", "2.0", "--publish", str(tmp_path)])
+    loop_mod.scheduled_main(["--max-iterations", "1", "--publish", str(tmp_path)])
     reopened = captured["places"]
     assert reopened.publish_workspace is True
     assert reopened.publish_queue is True
@@ -1099,8 +905,7 @@ def test_the_board_reflects_pre_existing_queue_state_before_the_first_turn(
 
 
 # ---------------------------------------------------------------------------
-# give-the-entrypoint-a-cross-repo-surface -- --queue/--workspace, --test-command,
-# --cost-ceiling-usd (distinct from --spend-ceiling-usd)
+# give-the-entrypoint-a-cross-repo-surface -- --queue/--workspace, --test-command, --cost-ceiling-usd
 # ---------------------------------------------------------------------------
 
 
@@ -1159,32 +964,20 @@ def test_places_for_derives_a_workspace_scoped_lock_when_split(tmp_path: Path) -
     assert places.workspace_lock != places.queue_lock
 
 
-def test_cost_ceiling_and_spend_ceiling_are_independent_on_the_cli(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """--cost-ceiling-usd feeds Guardrails (a single turn); --spend-ceiling-usd feeds LoopBound (the
-    loop's cumulative total). Neither substitutes for the other, and both may be given together."""
+def test_cost_ceiling_reaches_guardrails_on_the_cli(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """--cost-ceiling-usd feeds Guardrails (a single turn) and nothing else -- there is no longer a
+    second, cumulative ceiling for it to be independent from (K D034)."""
     captured: dict[str, Any] = {}
 
     def fake_run_loop(places: Places, executor: Any, **kwargs: Any) -> Any:
         captured["limits"] = kwargs["limits"]
-        captured["bound"] = kwargs["bound"]
         return loop_mod.LoopReport(steps=(), stopped=loop_mod.StopReason.MAX_ITERATIONS, spend_usd=0.0)
 
     monkeypatch.setattr(loop_mod, "run_loop", fake_run_loop)
 
-    loop_mod.main(
-        [
-            "--max-iterations",
-            "1",
-            "--spend-ceiling-usd",
-            "5.0",
-            "--cost-ceiling-usd",
-            "2.0",
-            str(tmp_path),
-        ]
-    )
+    loop_mod.main(["--max-iterations", "1", "--cost-ceiling-usd", "2.0", str(tmp_path)])
 
     assert captured["limits"].cost_ceiling_usd == 2.0
-    assert captured["bound"].spend_ceiling_usd == 5.0
 
 
 def test_cost_ceiling_omitted_leaves_a_turn_unbounded_by_cost_as_before(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

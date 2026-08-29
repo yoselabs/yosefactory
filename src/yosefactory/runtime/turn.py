@@ -349,7 +349,7 @@ def should_plan(backlog_items: Sequence[FoldedLog]) -> bool:
     today (no sweeper reads `blocked`'s deadline or `snoozed`'s `scheduled_for`), so treating them
     as "in flight" was the freeze itself -- one stuck item forbidding all future work, forever, for
     free. A backlog holding only such litter is now planned around exactly like an empty backlog
-    already is: bounded by `LoopBound.max_iterations`/`spend_ceiling_usd`, not by this predicate.
+    already is: bounded by `LoopBound.max_iterations`, not by this predicate.
     See `decisions/0012-lease-reclaim-and-should-plan-narrowed-to-in-flight.md`.
     """
     return not any(in_flight(item) for item in backlog_items)

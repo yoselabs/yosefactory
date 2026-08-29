@@ -34,13 +34,22 @@ record and commits it, so *why a turn ran* is readable from `ledger/runs/` alone
 who never saw the `LoopReport` -- the same test S194 applies to every other claim this platform
 makes about itself: check the subject on disk, not the return value.
 
-**The bound, stated once.** The loop stops the first time either holds: `bound.max_iterations`
-turns have run, or (when set) cumulative spend recorded in `ledger/spend.jsonl` since the loop
-started reaches `bound.spend_ceiling_usd`. `max_iterations` has no default and is always required --
-there is no infinite mode. Money classes of turn (a claimed item, or a planning turn) are the only
-ones that can spend anything; `nothing-ready` turns and the wake-wait between them cost $0 by
-construction (`take_turn` never starts an executor when nothing is eligible and nothing needs
-planning), so a loop that never has work to do never spends waiting for it.
+**The bound, stated once.** The loop stops the first time `bound.max_iterations` turns have run.
+`max_iterations` has no default and is always required -- there is no infinite mode. Money classes
+of turn (a claimed item, or a planning turn) are the only ones that can spend anything;
+`nothing-ready` turns and the wake-wait between them cost $0 by construction (`take_turn` never
+starts an executor when nothing is eligible and nothing needs planning), so a loop that never has
+work to do never spends waiting for it.
+
+**No cumulative spend ceiling.** A prior revision of this module also stopped the loop when
+cumulative spend recorded in `ledger/spend.jsonl` since the loop started reached a configured
+ceiling. Deleted, not repaired (K D034): every unattended invocation runs `--max-iterations 1`, so
+the ceiling's own window -- spend recorded since *this process* started -- was always empty at the
+one moment the check ran, before the turn that would have filled it. It never once bound anything
+in production, and D034 rules out the cross-run cumulative view it was reaching for: per-issue and
+per-run spend, read from `ledger/spend.jsonl` directly, is enough. The only remaining spend
+enforcement is `Guardrails.cost_ceiling_usd` (`--cost-ceiling-usd`), a single turn's own post-hoc
+budget -- unchanged by this deletion.
 """
 
 from __future__ import annotations
@@ -94,27 +103,24 @@ class StopReason(StrEnum):
     """Why the loop stopped. Always one of these — a loop that stops for neither reason is a bug."""
 
     MAX_ITERATIONS = "max_iterations"
-    SPEND_CEILING = "spend_ceiling"
 
 
 @dataclass(frozen=True, slots=True)
 class LoopBound:
-    """The one sentence: stop at N turns, or at $C spent, whichever comes first.
+    """The one sentence: stop at N turns.
 
     `max_iterations` is mandatory — a loop capable of spending money between iterations with nobody
-    watching must not have a code path that runs forever by omission. `spend_ceiling_usd` is optional
-    because a loop with no money-spending turn ever eligible (e.g. `nothing-ready` only) has nothing
-    for a spend ceiling to bound; `max_iterations` alone still bounds it.
+    watching must not have a code path that runs forever by omission. A prior revision also carried
+    an optional cumulative `spend_ceiling_usd`; deleted per K D034, not modified — see this module's
+    own docstring for why the check never fired and why the design it reached for is now explicitly
+    unwanted.
     """
 
     max_iterations: int
-    spend_ceiling_usd: float | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.max_iterations, int) or isinstance(self.max_iterations, bool) or self.max_iterations < 1:
             raise LoopError(f"max_iterations must be a positive integer, got {self.max_iterations!r}")
-        if self.spend_ceiling_usd is not None and not (self.spend_ceiling_usd > 0):
-            raise LoopError(f"spend_ceiling_usd must be a positive number or None, got {self.spend_ceiling_usd!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,13 +334,6 @@ def run_loop(
     needs to pass it; a test pointing both `take_turn` and this ceiling check at the same isolated
     fixture still may, and both must agree — see `tests/runtime/test_loop.py`'s `spend_log` fixture.
 
-    When `bound.spend_ceiling_usd` is set and `limits.cost_ceiling_usd` is not, each turn is handed
-    a derived per-turn ceiling instead of `limits` unchanged -- the remaining cumulative budget at
-    the moment that turn starts (S244: a cumulative ceiling with no per-turn one lets a single turn
-    run cost-unbounded between the checks that would catch it). `limits` itself is never mutated; a
-    fresh `Guardrails` is built per iteration. An explicit `limits.cost_ceiling_usd` is passed through
-    untouched, and no derivation happens at all when `bound.spend_ceiling_usd` is `None`.
-
     When `board` is given, two things happen that are otherwise only reachable by calling
     `board.inbox.ingest()` / `board.projection.project_all()` by hand (`turn-loop/board-wiring`):
     unconsumed board commands are applied at `board.poll_seconds`, independent of `wake`'s own
@@ -351,9 +350,6 @@ def run_loop(
     last_head = _queue_head(places.queue)
     last_heartbeat = start_moment
     last_board_poll: datetime | None = None
-
-    def spent_so_far() -> float:
-        return spend.total_since(start_moment, resolved_spend_log)
 
     def poll_board_if_due() -> None:
         nonlocal last_board_poll
@@ -374,7 +370,11 @@ def run_loop(
     while True:
         # Checked before waking: a count already at its cap needs no wait to know that.
         if iteration >= bound.max_iterations:
-            return LoopReport(steps=tuple(steps), stopped=StopReason.MAX_ITERATIONS, spend_usd=spent_so_far())
+            return LoopReport(
+                steps=tuple(steps),
+                stopped=StopReason.MAX_ITERATIONS,
+                spend_usd=spend.total_since(start_moment, resolved_spend_log),
+            )
 
         if iteration == 0:
             poll_board_if_due()  # a command that arrived before the loop started still applies
@@ -390,26 +390,10 @@ def run_loop(
                 on_tick=poll_board_if_due,
             )
 
-        # Checked again after waking, before spending anything: the wait itself can be where the
-        # ceiling was crossed (another turn, another process, another loop), and a check made only
-        # before the wait would miss spend that landed during it.
-        turn_limits = limits
-        if bound.spend_ceiling_usd is not None:
-            spent = spent_so_far()
-            if spent >= bound.spend_ceiling_usd:
-                return LoopReport(steps=tuple(steps), stopped=StopReason.SPEND_CEILING, spend_usd=spent)
-            # S244: a cumulative ceiling with no per-turn one is not a spending limit, it is a stop
-            # condition a single turn can cross arbitrarily far before anyone checks it again. When
-            # the caller gave no explicit per-turn ceiling, derive one from what is left of the
-            # cumulative budget so the turn about to run is never simply unbounded by omission.
-            # An explicit `limits.cost_ceiling_usd` is never touched here (turn-loop/wake-and-bound).
-            if limits.cost_ceiling_usd is None:
-                turn_limits = replace(limits, cost_ceiling_usd=bound.spend_ceiling_usd - spent)
-
         record = take_turn(
             places,
             executor,
-            limits=turn_limits,
+            limits=limits,
             owner=owner,
             skill=skill,
             planning_frame=planning_frame,
@@ -490,13 +474,14 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
     growing into a general-purpose launcher. Omitting both keeps every existing behavior identical
     to `Places.local(repo)`, byte for byte (see `_places_for` below).
 
-    `unattended` makes `--spend-ceiling-usd` a required argument instead of an optional one.
-    D022 §3 defers a program-wide cost ceiling on the premise a human is present to watch and
-    interrupt a run; that premise holds for a person typing this command and does not hold for a
-    scheduler invoking it with nobody there. Rather than re-litigate the deferral, this keeps
-    interactive use exactly as it was (`unattended=False`, the default `main()` still gets when
-    called directly) and adds the requirement only on the path a scheduler actually takes —
-    `scheduled_main()`, below.
+    `unattended` gates the isolation posture (`IsolationPolicy`, below) — D022 §3 defers a
+    program-wide cost ceiling on the premise a human is present to watch and interrupt a run; that
+    premise holds for a person typing this command and does not hold for a scheduler invoking it
+    with nobody there. Rather than re-litigate the deferral, this keeps interactive use exactly as
+    it was (`unattended=False`, the default `main()` still gets when called directly) and switches
+    posture only on the path a scheduler actually takes — `scheduled_main()`, below. (A prior
+    revision of this docstring also had `unattended` make `--spend-ceiling-usd` required; that flag
+    is deleted — K D034 — and no longer part of what `unattended` gates.)
 
     The same `unattended` signal now also gates publication (`pin-the-executor-and-close-the-push-
     grant`): D022 §2 granted push for a turn a human is watching, and an unattended run committing
@@ -539,26 +524,15 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
     parser.add_argument("--skill", type=Path, default=Path("workflows/turn-skill.md"))
     parser.add_argument("--max-iterations", type=int, required=True)
     parser.add_argument(
-        "--spend-ceiling-usd",
-        type=float,
-        default=None,
-        required=unattended,
-        help="Required when invoked unattended (a scheduler, never a person) -- D022 defers a "
-        "program-wide ceiling on the premise a human is present; that premise fails here. This is "
-        "the LOOP's cumulative ceiling across iterations -- see --cost-ceiling-usd for the "
-        "per-turn one, a different quantity.",
-    )
-    parser.add_argument(
         "--cost-ceiling-usd",
         type=float,
         default=None,
         help="A single TURN's budget (Guardrails.cost_ceiling_usd, enforced post-hoc by the "
-        "executor's own --max-budget-usd). Distinct from --spend-ceiling-usd, the loop's "
-        "cumulative ceiling across iterations -- both may be given together and are applied "
-        "independently. Omitted with no --spend-ceiling-usd either, a turn is unbounded by cost, "
-        "as before this flag existed. Omitted WITH --spend-ceiling-usd set, one is derived before "
-        "each turn from the remaining cumulative budget (S244) -- pass this explicitly to opt out "
-        "of that derivation.",
+        "executor's own --max-budget-usd). Omitted, a turn is unbounded by cost. (A prior revision "
+        "of this flag also interacted with a now-deleted --spend-ceiling-usd, the loop's cumulative "
+        "ceiling across iterations -- removed, K D034: it never once fired in production and the "
+        "cross-run cumulative view it was reaching for is explicitly unwanted. This flag is the "
+        "only remaining spend enforcement point and is otherwise unchanged.)",
     )
     parser.add_argument(
         "--test-command",
@@ -603,13 +577,12 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
         grace_seconds=20,
         question_deadline_hours=24,
         max_attempts=3,
-        # A single TURN's ceiling -- distinct from `--spend-ceiling-usd` below, the LOOP's
-        # cumulative one. `None` (the default) sends no flag, exactly as before this existed.
+        # A single TURN's ceiling. `None` (the default) sends no flag, exactly as before this existed.
         cost_ceiling_usd=args.cost_ceiling_usd,
     )
     test_command = tuple(shlex.split(args.test_command)) if args.test_command is not None else DEFAULT_TEST_COMMAND
-    # `unattended` is the same signal `--spend-ceiling-usd`'s requiredness already keys off (D022:
-    # a human is or is not present). The posture correct for a person on their own laptop is not
+    # `unattended` signals a human is or is not present (D022). The posture correct for a person on
+    # their own laptop is not
     # the posture correct for a process nobody is watching: `isolated` (safe-mode,
     # `--permission-mode manual`) denies every tool call pending an approval nobody unattended can
     # give. `scheduled_main` -- the container's own entrypoint -- goes through here with
@@ -668,7 +641,7 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
         limits=limits,
         owner=args.owner,
         skill=args.skill,
-        bound=LoopBound(max_iterations=args.max_iterations, spend_ceiling_usd=args.spend_ceiling_usd),
+        bound=LoopBound(max_iterations=args.max_iterations),
         wake=WakeConfig(heartbeat_seconds=args.heartbeat_seconds, poll_seconds=args.poll_seconds),
         board=board_config,
         test_command=test_command,
@@ -701,12 +674,18 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
 def scheduled_main(argv: Sequence[str] | None = None) -> int:
     """Entry point for a scheduler (`launchd`, `cron`) — never a person.
 
-    Identical to `main()` except `--spend-ceiling-usd` is mandatory, and publication defaults to
-    declined unless `--publish` is given: see `main`'s own docstring for why both live on this
+    Identical to `main()` except `unattended=True`: the isolation posture switches to
+    `workspace_scoped` (no human present to approve a tool prompt), and publication defaults to
+    declined unless `--publish` is given — see `main`'s own docstring for why both live on this
     entrypoint and not on `main` itself. This is the function
     `ops/launchd/dev.yosefactory.loop.plist.template` names, via the `yosefactory-loop-scheduled`
     console script (`pyproject.toml`) — a scheduler invokes a stable installed script, never
     `python -m` re-typed inside a plist.
+
+    (A prior revision also made `--spend-ceiling-usd` mandatory here and nowhere else — that flag
+    is deleted, K D034, and this entrypoint no longer requires anything beyond what `main()` already
+    requires; see design.md of `delete-the-cumulative-spend-ceiling` for why `scheduled_main` still
+    exists once that was its most-cited reason.)
     """
     return main(argv, unattended=True)
 

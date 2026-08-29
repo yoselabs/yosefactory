@@ -29,8 +29,8 @@ dependencies = [
 # these directly, never `python -m yosefactory.runtime.loop` re-typed inside a plist, so it does
 # not depend on the invoking environment's PYTHONPATH or shell profile to resolve the module.
 yosefactory-loop = "yosefactory.runtime.loop:main"
-# Same loop, but `--spend-ceiling-usd` is required (runtime.loop.main's own docstring explains
-# why): the entrypoint a scheduler is configured to call, never one a person types by hand.
+# Same loop, but `unattended=True` (runtime.loop.scheduled_main's own docstring explains why): the
+# entrypoint a scheduler is configured to call, never one a person types by hand.
 yosefactory-loop-scheduled = "yosefactory.runtime.loop:scheduled_main"
 
 [build-system]
