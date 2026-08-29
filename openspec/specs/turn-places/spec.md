@@ -8,17 +8,22 @@ work in another, while a turn that names one location for all four behaves exact
 ### Requirement: A turn's four roles are independently addressable
 
 A turn SHALL read its queue (backlog items and questions) and its ledger (turn records) from
-locations that are named separately from the location it executes work in. Each of the four roles —
-queue, ledger, lock, workspace — SHALL be resolvable to a location of its own.
+locations that are named separately from the location it executes work in, and SHALL write the
+executor's raw transcript to a location that is named separately from the ledger. Each of these five
+roles — queue, ledger, transcripts, lock, workspace — SHALL be resolvable to a location of its own.
 
 A queue MAY be a subdirectory of the workspace's own repository rather than a repository of its own.
 In that configuration, the queue and the workspace SHALL share one lock: both `queue_lock` and
 `workspace_lock` SHALL resolve to the workspace repository's own lock file, never to a lock path
 computed under the queue subdirectory, which is not itself a repository.
 
+Transcripts SHALL default to the ledger's own location when a caller does not name one explicitly, so
+that a turn configured with no opinion about transcripts behaves exactly as a turn that named a
+single ledger location for both roles.
+
 #### Scenario: A turn targeting one repository behaves as before
 
-- **WHEN** a turn is configured with one location for all four roles
+- **WHEN** a turn is configured with one location for all four original roles
 - **THEN** the turn's queue, ledger, lock, and workspace all resolve to that one location
 - **AND** its observable behaviour is unchanged from a turn that named a single repository directly
 
@@ -46,6 +51,23 @@ computed under the queue subdirectory, which is not itself a repository.
 - **WHEN** two turns are each configured with their queue nested inside a different workspace
 - **THEN** an item present in one workspace's queue is never visible to, pickable by, or claimable
   from the other workspace's queue
+
+#### Scenario: Transcripts default to the ledger when unconfigured
+
+- **WHEN** a turn is configured with no explicit transcripts location
+- **THEN** the executor's raw transcript is written to the same location as the ledger's own turn
+  records
+- **AND** this matches the location every turn wrote its transcript to before the transcripts role
+  existed as a separate concept
+
+#### Scenario: Transcripts are configured to a location outside the workspace
+
+- **WHEN** a turn's queue is nested inside its workspace, and the turn is configured with a
+  transcripts location that is not inside the workspace
+- **THEN** the executor's raw transcript is written to that configured location
+- **AND** the workspace's own working tree contains no untracked file for that transcript
+- **AND** the turn's ledger records (`.start` files and terminal turn records) are unaffected and
+  continue to be written to, and committed from, the ledger's own location inside the workspace
 
 ### Requirement: The workspace's own configuration is not the queue's concern
 
