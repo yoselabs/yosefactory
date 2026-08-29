@@ -115,6 +115,30 @@ class Places:
             workspace_lock=repo / LOCK,
         )
 
+    @classmethod
+    def nested(cls, workspace: Path, *, queue_subdir: str = ".factory") -> Places:
+        """K D033: the queue lives *inside* the workspace's own repository, in a subdirectory --
+        not in a repository of its own. One workspace, one commit history, one push target; a
+        second workspace's queue is a different repository entirely and can never see this one's
+        items (`pick()` has no cross-workspace reach, so two workspaces can never pay for the same
+        item -- that is the whole point of D033).
+
+        `queue_lock` and `workspace_lock` both resolve to `workspace`'s own lock file, never to one
+        computed under `queue` -- `queue_subdir` is not itself a repository and has no `.git` to
+        anchor a lock under. This is the same collapse `Places.local` already relies on when
+        `queue == workspace`; `_workspace_lock` tests exactly this equality to skip a redundant
+        re-lock, and it applies unchanged here because the two paths, though different directories,
+        share one working tree.
+        """
+        queue = workspace / queue_subdir
+        return cls(
+            queue=queue,
+            ledger=queue / RUNS,
+            queue_lock=workspace / LOCK,
+            workspace=workspace,
+            workspace_lock=workspace / LOCK,
+        )
+
 
 def spend_log_for(places: Places) -> Path:
     """Where this turn's own queue commits its spend row — sibling to `ledger/runs/`, inside

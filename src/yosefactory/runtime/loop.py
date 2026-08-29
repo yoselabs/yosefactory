@@ -435,11 +435,28 @@ def _places_for(repo: Path, queue: Path | None, workspace: Path | None) -> Place
     `ledger` and `queue_lock` are always under the queue -- there is no caller, real or
     hypothetical, that has ever wanted the ledger to live anywhere other than beside the backlog
     it records turns against.
+
+    K D033: a queue given as a subdirectory of the workspace (`--workspace <ws> --queue
+    <ws>/.factory`, `Places.nested`'s own shape) is not a repository of its own -- `resolved_queue
+    / LOCK` would compute a lock path under a nonexistent `.git`, and would key it differently from
+    `resolved_workspace / LOCK`, defeating `_workspace_lock`'s one-tree-one-lock collapse for the
+    one shape that most needs it (queue-side and workspace-side operations landing in the same
+    tree). Detected by containment rather than by a separate flag: this is the only shape in which
+    `resolved_queue` sits inside `resolved_workspace`, since the fully-separate-repositories shape
+    below has no reason for one to nest inside the other.
     """
     resolved_queue = (queue or repo).resolve()
     resolved_workspace = (workspace or repo).resolve()
     if resolved_queue == resolved_workspace:
         return Places.local(resolved_queue)
+    if resolved_queue.is_relative_to(resolved_workspace):
+        return Places(
+            queue=resolved_queue,
+            ledger=resolved_queue / RUNS,
+            queue_lock=resolved_workspace / LOCK,
+            workspace=resolved_workspace,
+            workspace_lock=resolved_workspace / LOCK,
+        )
     return Places(
         queue=resolved_queue,
         ledger=resolved_queue / RUNS,
