@@ -11,6 +11,9 @@ has moved (`require_pinned_claude`), exactly like the executor receipts
 `the-conformance-test-that-cannot-fail` for why the two are no longer one silent condition.
 `test_the_wrapper_matches_the_executor_protocol` at the bottom of this file needs no `claude`
 binary at all (it inspects a Python signature) and carries neither mark: it always runs.
+`test_a_turn_that_crashes_before_commit_leaves_a_legible_gap` also carries neither mark
+(`ungate-the-crash-gap-test`): its crash fires before any executor call is reached, so it too runs
+unconditionally.
 
 **What this file does not prove, so a later reader does not credit it with more than it demonstrates:**
 
@@ -351,11 +354,15 @@ def test_two_turns_share_a_byte_identical_co_author_and_independent_run_ids(queu
     assert co_author_line(first_trailer) == co_author_line(second_trailer)
 
 
-@pytest.mark.live
-@_needs_live_claude
-@pytest.mark.usefixtures("require_pinned_claude")
 def test_a_turn_that_crashes_before_commit_leaves_a_legible_gap(queue: Path, tmp_path: Path) -> None:
     """Receipt 6: `.start` is committed before the executor ever runs, so a real crash leaves a gap.
+
+    No `claude` binary, no `pytest.mark.live`, no version guard -- traced (`ungate-the-crash-gap-
+    test`), not assumed, that `mkdir(parents=True)` inside `_workspace_lock`'s `single_flight` call
+    raises `NotADirectoryError` before either of `take_turn`'s two `executor(...)` call sites is
+    reached. This was left under the live gate by `the-conformance-test-that-cannot-fail`, which
+    scoped itself to the wrapper-conformance test specifically and flagged this one as a separate
+    finding.
 
     Triggered for real, not mocked, and genuinely free: `Places.workspace` names a path that is a
     regular *file*, not a directory. `_workspace_lock`'s `single_flight(workspace_lock)` does
