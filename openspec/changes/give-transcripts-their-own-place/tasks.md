@@ -55,6 +55,7 @@
       shape was tried first and rejected by the type checker; a future worker would plausibly try
       it again without knowing why it fails).
 - [x] 6.3 `openspec validate give-transcripts-their-own-place --strict` passes.
-- [ ] 6.4 Commit with explicit pathspecs (Article V), confirm `git diff --cached` empty after.
+- [x] 6.4 Commit with explicit pathspecs (Article V), confirm `git diff --cached` empty after
+      (`a3d7fdd`).
 - [ ] 6.5 Archive the change; re-run `make check` after archiving; confirm
       `git diff --stat <sha>^ <sha> -- openspec/specs/...` shows only the declared MODIFIED block.
