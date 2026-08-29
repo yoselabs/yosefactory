@@ -124,6 +124,7 @@ class FakeExecutor:
         self.invocations: list[Invocation | None] = []
         self.log_at_call: list[str] = []
         self.workspaces: list[Path] = []
+        self.transcripts_dirs: list[Path] = []
 
     def __call__(
         self,
@@ -133,6 +134,7 @@ class FakeExecutor:
         *,
         run_id: str,
         runs_dir: Path,
+        transcripts_dir: Path,
         context: Mapping[str, Any] | None = None,
         invocation: Invocation | None = None,
     ) -> RunResult:
@@ -141,6 +143,7 @@ class FakeExecutor:
         self.invocations.append(invocation)
         self.log_at_call.append(git(workspace, "log", "--oneline"))
         self.workspaces.append(workspace)
+        self.transcripts_dirs.append(transcripts_dir)
         assert invocation is not None and invocation.proposal_path is not None
         path = invocation.proposal_path
         if self.raw is not None:
@@ -150,7 +153,7 @@ class FakeExecutor:
         return RunResult(
             outcome=self.outcome,
             usage=Usage(total_cost_usd=self.total_cost_usd),
-            transcript_path=runs_dir / f"{run_id}.stream.jsonl",
+            transcript_path=transcripts_dir / f"{run_id}.stream.jsonl",
             exit_code=0,
             dirty=False,
             failure_kind=self.kind if self.outcome is not RunOutcome.SUCCESS else None,
@@ -183,6 +186,7 @@ def take_split(
         queue_lock=queue / turn.LOCK,
         workspace=workspace,
         workspace_lock=workspace / turn.LOCK,
+        transcripts=queue / turn.RUNS,
         publish_queue=publish_queue,
         publish_workspace=publish_workspace,
     )
@@ -1373,6 +1377,7 @@ def test_declined_is_not_conflated_with_skipped_even_with_a_real_remote(
         queue_lock=repo / turn.LOCK,
         workspace=workspace,
         workspace_lock=workspace / turn.LOCK,
+        transcripts=repo / turn.RUNS,
         publish_workspace=False,
     )
     record = turn.take_turn(

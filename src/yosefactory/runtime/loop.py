@@ -426,7 +426,7 @@ def run_loop(
         last_heartbeat = now_fn()
 
 
-def _places_for(repo: Path, queue: Path | None, workspace: Path | None) -> Places:
+def _places_for(repo: Path, queue: Path | None, workspace: Path | None, transcripts: Path | None = None) -> Places:
     """Resolve `--queue`/`--workspace` against the `repo` positional, deriving the rest of
     `Places` exactly as `Places.local` would when they agree, and keying `workspace_lock` to the
     workspace's own path (matching the convention both `scripts/run_a2web_turn.py` and
@@ -444,26 +444,39 @@ def _places_for(repo: Path, queue: Path | None, workspace: Path | None) -> Place
     tree). Detected by containment rather than by a separate flag: this is the only shape in which
     `resolved_queue` sits inside `resolved_workspace`, since the fully-separate-repositories shape
     below has no reason for one to nest inside the other.
+
+    K D034: `transcripts`, given (`--transcripts-dir`), resolves and overrides whichever `Places`
+    shape was picked above -- one `replace()` regardless of branch, rather than three call sites
+    each threading it through. Omitted, each branch below defaults `transcripts` to its own
+    `ledger`, exactly as before this parameter existed.
     """
     resolved_queue = (queue or repo).resolve()
     resolved_workspace = (workspace or repo).resolve()
     if resolved_queue == resolved_workspace:
-        return Places.local(resolved_queue)
-    if resolved_queue.is_relative_to(resolved_workspace):
-        return Places(
+        places = Places.local(resolved_queue)
+    elif resolved_queue.is_relative_to(resolved_workspace):
+        ledger = resolved_queue / RUNS
+        places = Places(
             queue=resolved_queue,
-            ledger=resolved_queue / RUNS,
+            ledger=ledger,
             queue_lock=resolved_workspace / LOCK,
             workspace=resolved_workspace,
             workspace_lock=resolved_workspace / LOCK,
+            transcripts=ledger,
         )
-    return Places(
-        queue=resolved_queue,
-        ledger=resolved_queue / RUNS,
-        queue_lock=resolved_queue / LOCK,
-        workspace=resolved_workspace,
-        workspace_lock=resolved_workspace / LOCK,
-    )
+    else:
+        ledger = resolved_queue / RUNS
+        places = Places(
+            queue=resolved_queue,
+            ledger=ledger,
+            queue_lock=resolved_queue / LOCK,
+            workspace=resolved_workspace,
+            workspace_lock=resolved_workspace / LOCK,
+            transcripts=ledger,
+        )
+    if transcripts is not None:
+        places = replace(places, transcripts=transcripts.resolve())
+    return places
 
 
 def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
@@ -512,6 +525,15 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
         type=Path,
         default=None,
         help="Defaults to `repo`. Where the agent works, is verified, and commits. See --queue.",
+    )
+    parser.add_argument(
+        "--transcripts-dir",
+        type=Path,
+        default=None,
+        help="Where the executor's raw `*.stream.jsonl` lands (K D034), separately from the "
+        "ledger's `.start`/terminal-record files, which always ride --queue's own commit. Defaults "
+        "to the ledger (today's location, unchanged) -- set this to a directory outside the "
+        "workspace to retain transcripts past the workspace container's own lifetime.",
     )
     parser.add_argument("--owner", default="loop")
     parser.add_argument("--skill", type=Path, default=Path("workflows/turn-skill.md"))
@@ -567,7 +589,7 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
     args = parser.parse_args(argv)
 
     repo = args.repo.resolve()
-    places = _places_for(repo, args.queue, args.workspace)
+    places = _places_for(repo, args.queue, args.workspace, args.transcripts_dir)
     if unattended:
         # D022 §2 granted push for a turn a human is watching. `scheduled_main` (below) is the one
         # caller with `unattended=True`, so this branch is the entire reach of the new default --
@@ -624,11 +646,20 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
         *,
         run_id: str,
         runs_dir: Path,
+        transcripts_dir: Path,
         context: Mapping[str, Any] | None = None,
         invocation: Any = None,
     ) -> Any:
         return claude.run(
-            frame, workspace, limits, run_id=run_id, runs_dir=runs_dir, context=context, invocation=invocation, policy=policy
+            frame,
+            workspace,
+            limits,
+            run_id=run_id,
+            runs_dir=runs_dir,
+            transcripts_dir=transcripts_dir,
+            context=context,
+            invocation=invocation,
+            policy=policy,
         )
 
     report = run_loop(

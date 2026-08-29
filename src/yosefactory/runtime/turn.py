@@ -76,7 +76,7 @@ class TurnError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class Places:
-    """The four roles one `repo: Path` used to play at once, named separately.
+    """The five roles one `repo: Path` used to play at once, named separately.
 
     `queue` — backlog items and questions. `ledger` — turn records, always nested under `queue`
     (the ledger is platform bookkeeping, never the agent's own work, so `commit()` can always reach
@@ -84,6 +84,7 @@ class Places:
     `dirty`, and the destination of the agent's own checkpoint commits, which this module never makes
     and never rewrites — it marks exactly one, `HEAD` at the moment the `done` gate passes, by
     amendment (`_deliver_workspace`), which is the whole of `commit-attribution`'s reach here.
+    `transcripts` — where the raw `*.stream.jsonl` the executor writes lands (K D034); see below.
 
     Two locks, not one, because a single tree made them look like one job: `queue_lock` serializes
     picking and claiming against one backlog; `workspace_lock` serializes agent execution and commits
@@ -94,6 +95,19 @@ class Places:
     role because a queue you own and a workspace you are a guest in are different cases (D022 grants
     push; this is whether a given turn may decline it, not a change to the grant). Default `True`:
     an unstated choice publishes both, exactly as every turn did before these fields existed.
+
+    `transcripts` is never left unset — every constructor below defaults it to `ledger`, today's
+    location, byte for byte, because that is where `runs_dir` has always pointed the executor's
+    transcript write. (A `Path | None` field defaulting itself in `__post_init__` was the first
+    shape tried; `ty` cannot see through that to know the field is never `None` by the time a
+    caller reads it, so every reader would need its own narrowing. Resolving it once, in each
+    constructor, keeps the field itself simply `Path`.) K D034 names the defect this seam exists to
+    fix: under `Places.nested`, `ledger` sits inside the workspace, so `ensure_transcripts_ignored`
+    correctly keeps the transcript from dirtying the gate's tree, but the same exclusion means the
+    transcript is never committed and dies with the workspace's container. A caller that wants
+    transcripts retained somewhere durable and outside the workspace — the runner repository, per
+    D034's "Observability" — sets `transcripts` to that location; every existing caller, having
+    never set it, is unaffected.
     """
 
     queue: Path
@@ -101,22 +115,24 @@ class Places:
     queue_lock: Path
     workspace: Path
     workspace_lock: Path
+    transcripts: Path
     publish_queue: bool = True
     publish_workspace: bool = True
 
     @classmethod
     def local(cls, repo: Path) -> Places:
-        """One repository plays all four roles, exactly as every turn has run until now."""
+        """One repository plays all five roles, exactly as every turn has run until now."""
         return cls(
             queue=repo,
             ledger=repo / RUNS,
             queue_lock=repo / LOCK,
             workspace=repo,
             workspace_lock=repo / LOCK,
+            transcripts=repo / RUNS,
         )
 
     @classmethod
-    def nested(cls, workspace: Path, *, queue_subdir: str = ".factory") -> Places:
+    def nested(cls, workspace: Path, *, queue_subdir: str = ".factory", transcripts: Path | None = None) -> Places:
         """K D033: the queue lives *inside* the workspace's own repository, in a subdirectory --
         not in a repository of its own. One workspace, one commit history, one push target; a
         second workspace's queue is a different repository entirely and can never see this one's
@@ -129,14 +145,21 @@ class Places:
         `queue == workspace`; `_workspace_lock` tests exactly this equality to skip a redundant
         re-lock, and it applies unchanged here because the two paths, though different directories,
         share one working tree.
+
+        `transcripts` (K D034): omitted, it defaults to `ledger` -- today's location, so this
+        parameter is inert until a caller supplies one. A caller that does supply one (typically a
+        directory outside `workspace` entirely, e.g. the runner repository) gets raw transcripts
+        retained there instead of excluded and lost with the workspace's container.
         """
         queue = workspace / queue_subdir
+        ledger = queue / RUNS
         return cls(
             queue=queue,
-            ledger=queue / RUNS,
+            ledger=ledger,
             queue_lock=workspace / LOCK,
             workspace=workspace,
             workspace_lock=workspace / LOCK,
+            transcripts=transcripts if transcripts is not None else ledger,
         )
 
 
@@ -189,6 +212,11 @@ class Executor(Protocol):
     (`backlog.context()`), folded from the item's own log. Kept beside `frame` rather than inside
     it for the same reason `invocation` is kept out: mixing what was *asked* with what was
     *discovered* makes the frame unrecoverable as a record of authored intent.
+
+    K D034: `transcripts_dir` names where the raw `*.stream.jsonl` lands, separately from
+    `runs_dir` (the `.start`/terminal-record stream, which always rides `places.ledger` and the
+    turn's own commit). The two coincide under every caller that has not set `Places.transcripts`
+    -- see `Places.__post_init__` -- so this parameter is inert until one does.
     """
 
     def __call__(
@@ -199,6 +227,7 @@ class Executor(Protocol):
         *,
         run_id: str,
         runs_dir: Path,
+        transcripts_dir: Path,
         context: Mapping[str, Any] | None = None,
         invocation: Invocation | None = None,
     ) -> RunResult: ...
@@ -699,10 +728,14 @@ def take_turn(
     proposal_path = scratch / f"{run_id}.proposal.json"
 
     # Guaranteed before anything is written to the ledger this turn (S237): under `Places.local`,
-    # `places.ledger` nests inside `places.workspace`, the tree `verify.tree_clean` inspects at the
-    # `done` gate. Without this, a raw transcript this turn's own executor writes is an untracked
-    # file the gate counts as the agent's uncommitted work.
-    runs.ensure_transcripts_ignored(places.ledger, places.workspace)
+    # `places.transcripts` (defaulting to `places.ledger`, K D034) nests inside `places.workspace`,
+    # the tree `verify.tree_clean` inspects at the `done` gate. Without this, a raw transcript this
+    # turn's own executor writes is an untracked file the gate counts as the agent's uncommitted
+    # work. Guards `places.transcripts` specifically, not `places.ledger` -- the two diverge exactly
+    # when a caller has pointed transcripts outside the workspace, and it is that configuration
+    # `ensure_transcripts_ignored`'s own no-op (runs_dir not relative to workspace) is meant to
+    # cover.
+    runs.ensure_transcripts_ignored(places.transcripts, places.workspace)
 
     with single_flight(places.queue_lock):
         # Declared before any work, and committed immediately: a turn that dies leaves a marker with
@@ -747,7 +780,13 @@ def take_turn(
         if target is None:
             with _workspace_lock(places):
                 result = executor(
-                    planning_frame, places.workspace, limits, run_id=run_id, runs_dir=places.ledger, invocation=invocation
+                    planning_frame,
+                    places.workspace,
+                    limits,
+                    run_id=run_id,
+                    runs_dir=places.ledger,
+                    transcripts_dir=places.transcripts,
+                    invocation=invocation,
                 )
                 record = _dispose(
                     places,
@@ -811,7 +850,14 @@ def take_turn(
             # tell "this turn made a commit" from "HEAD is whatever an earlier turn left."
             workspace_head_before = _head_sha(places.workspace, dict(os.environ))
             result = executor(
-                frame, places.workspace, limits, run_id=run_id, runs_dir=places.ledger, context=context, invocation=invocation
+                frame,
+                places.workspace,
+                limits,
+                run_id=run_id,
+                runs_dir=places.ledger,
+                transcripts_dir=places.transcripts,
+                context=context,
+                invocation=invocation,
             )
             record = _dispose(
                 places,

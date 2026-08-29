@@ -118,6 +118,7 @@ class BumpPriorityExecutor:
         *,
         run_id: str,
         runs_dir: Path,
+        transcripts_dir: Path,
         context: Mapping[str, Any] | None = None,
         invocation: Invocation | None = None,
     ) -> RunResult:
@@ -128,7 +129,7 @@ class BumpPriorityExecutor:
         return RunResult(
             outcome=RunOutcome.SUCCESS,
             usage=Usage(),
-            transcript_path=runs_dir / f"{run_id}.stream.jsonl",
+            transcript_path=transcripts_dir / f"{run_id}.stream.jsonl",
             exit_code=0,
             dirty=False,
         )
@@ -803,7 +804,7 @@ def test_unattended_entrypoint_does_not_default_to_a_posture_that_denies_tool_ca
 
     def fake_run_loop(places: Places, executor: Any, **kwargs: Any) -> Any:
         captured["isolated_kwarg"] = kwargs["isolated"]
-        executor({"goal": "x"}, tmp_path, kwargs["limits"], run_id="r", runs_dir=tmp_path)
+        executor({"goal": "x"}, tmp_path, kwargs["limits"], run_id="r", runs_dir=tmp_path, transcripts_dir=tmp_path)
         return loop_mod.LoopReport(steps=(), stopped=loop_mod.StopReason.MAX_ITERATIONS, spend_usd=0.0)
 
     monkeypatch.setattr(claude_mod, "run", fake_claude_run)

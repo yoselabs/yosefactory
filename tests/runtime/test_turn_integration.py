@@ -90,12 +90,21 @@ def real_executor(
     *,
     run_id: str,
     runs_dir: Path,
+    transcripts_dir: Path,
     context: Mapping[str, Any] | None = None,
     invocation: Invocation | None = None,
 ) -> RunResult:
     """Matches `turn.Executor` exactly. No `recorder` -- `take_turn` already owns the ledger row."""
     return claude.run(
-        frame, workspace, limits, run_id=run_id, runs_dir=runs_dir, context=context, invocation=invocation, policy=_POLICY
+        frame,
+        workspace,
+        limits,
+        run_id=run_id,
+        runs_dir=runs_dir,
+        transcripts_dir=transcripts_dir,
+        context=context,
+        invocation=invocation,
+        policy=_POLICY,
     )
 
 
@@ -138,6 +147,7 @@ def places(queue: Path, workspace: Path) -> turn.Places:
         queue_lock=queue / turn.LOCK,
         workspace=workspace,
         workspace_lock=workspace / turn.LOCK,
+        transcripts=queue / turn.RUNS,
     )
 
 

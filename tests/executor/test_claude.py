@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
-from yosefactory.executor.claude import PINNED_EFFORT, PINNED_MODEL, build_argv, render
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from yosefactory.executor import claude as claude_module
+from yosefactory.executor.claude import PINNED_EFFORT, PINNED_MODEL, build_argv, render, run
+from yosefactory.protocol.turn import EnforcedBy, Outcome, TurnRecord
+from yosefactory.runtime.config import Guardrails
 from yosefactory.runtime.isolation import IsolationPolicy
 
 FRAME = {"goal": "g", "method": "m", "assumptions": ["a"]}
@@ -105,3 +114,68 @@ def test_every_context_source_renders() -> None:
     assert "use the raw tier" in rendered
     assert "boom" in rendered and "retryable: True" in rendered
     assert "reclaimed" in rendered and "lease expired" in rendered
+
+
+def _stub_govern(*args: Any, **kwargs: Any) -> TurnRecord:
+    """No subprocess: `run`'s own transcript-path selection is what's under test, not the
+    supervisor's process handling (covered live in `tests/executor/test_integration.py`)."""
+    return TurnRecord(
+        run_id="r1",
+        started_at="2026-01-01T00:00:00Z",
+        ended_at="2026-01-01T00:00:01Z",
+        outcome=Outcome.ADVANCED,
+        enforced_by=EnforcedBy.AGENT,
+        dirty=False,
+        isolated=True,
+        note="completed; exit=0",
+    )
+
+
+def test_transcripts_dir_given_writes_the_transcript_there_not_under_runs_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """K D034's own receipt at the executor seam: the raw stream lands wherever `transcripts_dir`
+    points, distinct from `runs_dir` (the ledger's `.start`/terminal-record stream). Fails before
+    this change existed -- `run` took no `transcripts_dir` parameter at all and always wrote under
+    `runs_dir`, so this configuration (the two split apart) was not expressible."""
+    monkeypatch.setattr(claude_module, "govern", _stub_govern)
+    runs_dir = tmp_path / "ledger" / "runs"
+    transcripts_dir = tmp_path / "runner" / "transcripts"
+    transcripts_dir.mkdir(parents=True)
+    # Written *before* `run()` is called: `run`'s own `StreamReader` is constructed against whatever
+    # path it computes for the transcript, and `classify()` polls that path on demand -- so a
+    # terminal event sitting at the right path is how this proves *which* path `run` chose, without
+    # needing a real subprocess to write there.
+    (transcripts_dir / "r1.stream.jsonl").write_text(
+        json.dumps({"type": "result", "usage": {}, "total_cost_usd": 0.0, "num_turns": 1}) + "\n", encoding="utf-8"
+    )
+
+    result = run(
+        FRAME,
+        tmp_path,
+        Guardrails(window=10, wall_clock_seconds=60, turn_ceiling=4, grace_seconds=1, question_deadline_hours=24, max_attempts=3),
+        run_id="r1",
+        runs_dir=runs_dir,
+        transcripts_dir=transcripts_dir,
+    )
+
+    assert result.transcript_path == transcripts_dir / "r1.stream.jsonl"
+    assert not runs_dir.exists()
+
+
+def test_transcripts_dir_omitted_falls_back_to_runs_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Inert by default (K D034): every caller that predates `Places.transcripts` passes only
+    `runs_dir`, and must keep getting exactly the location it always wrote to."""
+    monkeypatch.setattr(claude_module, "govern", _stub_govern)
+    runs_dir = tmp_path / "ledger" / "runs"
+    runs_dir.mkdir(parents=True)
+
+    result = run(
+        FRAME,
+        tmp_path,
+        Guardrails(window=10, wall_clock_seconds=60, turn_ceiling=4, grace_seconds=1, question_deadline_hours=24, max_attempts=3),
+        run_id="r1",
+        runs_dir=runs_dir,
+    )
+
+    assert result.transcript_path == runs_dir / "r1.stream.jsonl"

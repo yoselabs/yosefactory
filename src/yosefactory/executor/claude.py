@@ -261,6 +261,7 @@ def run(
     *,
     run_id: str,
     runs_dir: Path,
+    transcripts_dir: Path | None = None,
     context: Mapping[str, Any] | None = None,
     invocation: Invocation | None = None,
     recorder: Recorder | None = None,
@@ -271,9 +272,14 @@ def run(
 ) -> RunResult:
     """One bounded invocation, and a result derived from the agent's own terminal event.
 
-    The transcript is written inside the run stream rather than into the workspace. That is what
+    The transcript is written inside `transcripts_dir` rather than into the workspace. That is what
     makes `dirty` mean what it claims: the supervisor excludes its own stream by construction, so
     the harness's evidence of a run can never be mistaken for the agent having left work half-done.
+
+    `transcripts_dir` defaults to `runs_dir` (K D034) -- every caller that predates `Places.transcripts`
+    passes only `runs_dir` and gets exactly the location this always wrote to; a caller that wants the
+    raw stream retained somewhere durable, outside `runs_dir`'s own turn-record stream, passes it
+    explicitly (`turn.take_turn` does, always, as `places.transcripts`).
 
     `model`/`effort` default to the pinned values and are always sent (`build_argv`). The
     `RunResult` returned reports `model` from the run's own `system|init` event when one was
@@ -285,7 +291,7 @@ def run(
     conflated with `model`'s.
     """
     policy = policy or IsolationPolicy()
-    transcript = runs_dir / f"{run_id}.stream.jsonl"
+    transcript = (transcripts_dir if transcripts_dir is not None else runs_dir) / f"{run_id}.stream.jsonl"
     reader = StreamReader(transcript)
 
     def verdict() -> Outcome | None:
