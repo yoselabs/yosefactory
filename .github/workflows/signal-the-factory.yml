@@ -1,0 +1,157 @@
+# THE LIVE COPY for this repository, installed 2026-08-30 from
+# `yoselabs/factory-state`'s `templates/signal-the-factory.yml`. Edits belong in the template
+# first, or the next workspace to be onboarded inherits the version without them.
+#
+# `yosefactory` is BOTH the machine and a workspace: the factory works on its own source here,
+# proposing branches under `factory/*` that a human merges. Its row in `take-a-turn.yml` cannot
+# name this repository's trunk, which is the whole of what stops a turn editing the machine every
+# future turn runs from. See `templates/README.md` in `yoselabs/factory-state` for the token's
+# required scope, which is the whole of what makes this safe.
+#
+# D034, "the event is the wake, not the assignment": this tells the factory that something happened
+# on this repository's issues. It does NOT say what to work on. The turn that wakes up runs `pick()`
+# over this repository's own queue (`.factory/`, D033), so a dropped or evicted dispatch costs
+# latency and never work.
+#
+# WHO MAY WAKE IT. Every workspace this factory works in is PUBLIC, and anyone may open an issue or
+# comment on a public repository. `issues:` and `issue_comment:` run in the BASE repository, so
+# before the gate below a stranger's comment woke the factory, became a backlog item, and was
+# worked on Denis's quota. The gate is `.factory/config.json` on THIS repository's default branch:
+# `users.allowed` is the list of logins whose events are worth a dispatch.
+#
+# THIS CHECK IS AN EARLY-OUT, NOT THE SECURITY BOUNDARY. It saves a wake, a runner minute and a
+# clone. It can be walked around: the factory also reaches this repository's issues by polling and
+# by a manual `workflow_dispatch`, neither of which runs this file. The gate that actually holds is
+# in the factory's own runner, at the point where an issue BECOMES a work item --
+# `runner/ingest.py` and `runner/allowlist.py` in `yoselabs/factory-state`, reading this same file.
+# If the two ever disagree, that one is right. Do not weaken it on the strength of this one.
+#
+# THE TOKEN. `FACTORY_DISPATCH_TOKEN` must be a fine-grained PAT scoped to `yoselabs/factory-state`
+# and to NOTHING ELSE. GitHub's `repository_dispatch` endpoint requires `Contents: write`, so that
+# is the one permission it carries and `templates/README.md` says plainly what that therefore lets
+# it do. It cannot read secrets, cannot spend model quota, and cannot reach
+# `CLAUDE_CODE_OAUTH_TOKEN`. `GITHUB_TOKEN` is not an option for the dispatch: GitHub refuses to
+# start a workflow run from an event sent with a repository's own token.
+name: Poke the factory
+
+on:
+  issues:
+    types: [opened, edited, labeled]
+  issue_comment:
+    types: [created]
+
+# One pending signal is enough. A second arrival while one is queued would tell the factory the same
+# thing twice, and the turn re-reads the whole queue anyway.
+concurrency:
+  group: signal-the-factory
+  cancel-in-progress: false
+
+# Read-only, on this repository, and that is new: the allowlist check below reads one file through
+# this repository's own API. Nothing else is granted, and the dispatch still goes out on the PAT --
+# `GITHUB_TOKEN` cannot send one.
+permissions:
+  contents: read
+
+jobs:
+  signal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - id: gate
+        name: Is the actor allowed to queue work here?
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKSPACE: ${{ github.repository }}
+          # The account that CAUSED this event -- the issue's opener, its editor, or the commenter.
+          # Set by GitHub from the authenticated request; it is not part of any payload a caller
+          # writes, so it cannot be spoofed by what someone types into an issue.
+          ACTOR: ${{ github.actor }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          # WHICH COPY OF THE CONFIG COUNTS: the DEFAULT BRANCH, AT ITS TIP, resolved right here.
+          #
+          # This is the whole security property. `issues`/`issue_comment` run in the base
+          # repository, but a workflow that read the config from a ref carried in the event -- or
+          # from a checkout of `github.ref`, or from a hardcoded `main` that someone renamed --
+          # would be reading a file the requester may control. An allowlist a requester can edit in
+          # the same request is not an allowlist.
+          #
+          # So: ask the API what the default branch is called (never assume `main`), then ask for
+          # the file at `?ref=<that branch>`, which GitHub resolves to the branch's tip at the
+          # moment of the call. No `github.event.*` value reaches either request. There is
+          # deliberately no `actions/checkout` in this job at all -- a checkout is a snapshot with a
+          # ref, and both of those are the mistake.
+          #
+          # ABSENT OR MALFORMED MEANS NOBODY. No file, unparseable JSON, an unknown `version`, or an
+          # empty `users.allowed`: no dispatch. Refuse-by-default, matching the runner.
+          #
+          # EXIT 0 EITHER WAY. A stranger commenting on a public repository is ordinary traffic, not
+          # a failure of this repository, and a red check on every drive-by comment is noise on a
+          # page anyone can see. The refusal is a `::warning::` and the job is green.
+          default_branch=$(gh api "repos/${WORKSPACE}" --jq '.default_branch' 2>/dev/null || true)
+          if [ -z "${default_branch}" ]; then
+            echo "::warning::could not resolve ${WORKSPACE}'s default branch; not signalling the factory." >&2
+            echo "allowed=no" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          config=$(gh api \
+            -H "Accept: application/vnd.github.raw" \
+            "repos/${WORKSPACE}/contents/.factory/config.json?ref=${default_branch}" 2>/dev/null || true)
+          if [ -z "${config}" ]; then
+            echo "::warning::no .factory/config.json on ${WORKSPACE}'s default branch '${default_branch}'." >&2
+            echo "::warning::Refuse-by-default: with no allowlist, nobody may queue work, so the factory" >&2
+            echo "::warning::was not signalled. Copy factory-state/templates/factory-config.json there." >&2
+            echo "allowed=no" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          version=$(printf '%s' "${config}" | jq -r '.version // empty' 2>/dev/null || true)
+          if [ "${version}" != "1" ]; then
+            echo "::warning::.factory/config.json on '${default_branch}' is not valid JSON, or declares" >&2
+            echo "::warning::version '${version}' rather than 1. Not signalling the factory." >&2
+            echo "allowed=no" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # `ascii_downcase` on both sides: GitHub logins are case-insensitive, and an operator who
+          # typed `Iorlas` into the file should not have locked themselves out. `-e` makes jq exit
+          # non-zero when the match produces false/null, so an empty list and an absent key are the
+          # same refusal as a name that is simply not there.
+          if printf '%s' "${config}" \
+            | jq -e --arg actor "${ACTOR}" \
+                '[.users.allowed[]? | ascii_downcase] | index($actor | ascii_downcase) != null' \
+                >/dev/null 2>&1; then
+            echo "actor '${ACTOR}' is on ${WORKSPACE}'s allowlist ('${default_branch}' tip)"
+            echo "allowed=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::'${ACTOR}' is not in users.allowed in .factory/config.json on" >&2
+            echo "::warning::'${default_branch}'; the factory was not signalled. This is not an error:" >&2
+            echo "::warning::anyone may open issues here, and only listed accounts queue factory work." >&2
+            echo "allowed=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Tell factory-state there is something to look at
+        if: steps.gate.outputs.allowed == 'yes'
+        env:
+          GH_TOKEN: ${{ secrets.FACTORY_DISPATCH_TOKEN }}
+          # The repository the factory should work in -- this one. Read from the event rather than
+          # written down, so a fork or a rename cannot leave a stale name here.
+          WORKSPACE: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::warning::FACTORY_DISPATCH_TOKEN is not set on ${WORKSPACE}; the factory was not" >&2
+            echo "::warning::signalled. This is not an outage: the factory's poll and a manual dispatch" >&2
+            echo "::warning::both still reach this queue. See factory-state/templates/README.md." >&2
+            exit 0
+          fi
+          # No depth in the payload: a human's signal starts a fresh chain at zero, and only the
+          # factory's own self-retrigger counts against the bound.
+          gh api repos/yoselabs/factory-state/dispatches \
+            -f event_type=signal \
+            -F "client_payload[workspace_repo]=${WORKSPACE}" \
+            && echo "signalled the factory for ${WORKSPACE}" \
+            || echo "::warning::the dispatch failed; the factory was not signalled" >&2
