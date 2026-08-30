@@ -1,0 +1,5 @@
+# Two workers appending to one item's log is a merge git can resolve on its own -- but only because
+# the fold sorts by ts, breaks ties on event_id, and drops duplicate event_ids. Union merge without
+# those three is silent corruption; without union merge, a conflict marker lands inside a data file
+# and the next read fails. The two decisions hold each other up. Do not separate them.
+*.jsonl merge=union

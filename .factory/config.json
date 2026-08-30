@@ -1,0 +1,41 @@
+{
+  "_readme": [
+    "WORKSPACE CONFIGURATION. This is the live copy for this repository -- not a template. It sits",
+    "on the default branch as `.factory/config.json`, which is the only place and the only ref",
+    "either reader looks. The template it was copied from is `templates/factory-config.json` in",
+    "`yoselabs/factory-state`; see `templates/README.md` there for the full argument.",
+    "",
+    "WHY JSON. Two readers have to agree on this file and neither may install anything:",
+    "`.github/workflows/signal-the-factory.yml` reads it in bash (jq, preinstalled on every hosted",
+    "runner) and `runner/allowlist.py` reads it in Python (`json`, stdlib, and `runner/*.py` is",
+    "stdlib-only on purpose). TOML would need `tomllib` on one side and a parser that does not",
+    "exist on the other; YAML needs a dependency on both. JSON is the only format both sides",
+    "already speak. Its one real cost is that it has no comment syntax, which is what this",
+    "`_readme` array is: prose, ignored by both readers, kept in the file because the file is what",
+    "an adopter opens.",
+    "",
+    "WHY AN OBJECT AND NOT A LIST OF NAMES. This is workspace configuration generally. `users` is",
+    "one section of it; the next thing that is per-workspace policy rather than per-factory policy",
+    "gets its own key beside it, and neither reader has to change shape to allow that. `version`",
+    "is here so a future incompatible shape can be refused rather than misread -- both readers",
+    "check it.",
+    "",
+    "WHO MAY QUEUE WORK. `users.allowed` is the complete list of GitHub logins whose issues and",
+    "issue comments this factory will act on. Everyone else may open issues and comment -- these",
+    "are public repositories and that is normal traffic -- and nothing they write becomes a work",
+    "item or spends a token. An EMPTY list, a MISSING file, or a file that does not parse means",
+    "NOBODY is allowed. Refuse-by-default, the same posture the branch allowlist in",
+    "`publish-workspace` takes.",
+    "",
+    "WHICH COPY OF THIS FILE COUNTS. Only the one on the workspace's default branch, at its tip,",
+    "resolved when the check runs. Never the copy on a pull request branch, in a fork, or at any",
+    "ref carried in the event payload -- an allowlist a requester can edit in the same request is",
+    "not an allowlist. Both readers state how they pin this; see the comments there."
+  ],
+  "version": 1,
+  "users": {
+    "allowed": [
+      "iorlas"
+    ]
+  }
+}
