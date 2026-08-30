@@ -42,3 +42,15 @@ class BoardAdapter(Protocol):
         """Set the thread's state-field to closed, naming why. Idempotent -- closing an
         already-closed thread with the same resolution is a no-op, not an error."""
         ...
+
+    def propose(self, item: FoldedLog, ref: str, branch: str) -> str | None:
+        """Open a change proposing `branch` for review against `ref`'s thread, if this forge has
+        such a concept -- GitHub does, Jira does not. The capability is expressed by the return
+        type, not by an exception or a separate probe method: `None` means "this adapter has
+        nothing here," and every caller must already handle it before doing anything with the
+        result, the same way it must handle any other `str | None`. An adapter that always
+        returns `None` is a complete, correct implementation of this method, not a stub.
+
+        Idempotent -- called twice for the same `branch` opens no second change (ADR-0016's
+        marker-write-back pattern: search the board itself for one already open, never a cache)."""
+        ...

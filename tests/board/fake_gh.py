@@ -25,10 +25,13 @@ REPO = "yoselabs/yosefactory-test"
 class FakeGh:
     """An in-memory GitHub issues store, keyed the same way the real API responds."""
 
-    def __init__(self, *, login: str = "denis") -> None:
+    def __init__(self, *, login: str = "denis", default_branch: str = "main") -> None:
         self.issues: dict[int, dict] = {}
         self.comments: dict[int, list[dict]] = {}
+        self.pulls: dict[int, dict] = {}
         self.login = login
+        self.default_branch = default_branch
+        self._next_pr_number = 1
 
     def seed_issue(self, number: int, *, title: str, body: str, created_at: str = "2026-08-24T00:00:00Z") -> None:
         self.issues[number] = {
@@ -45,6 +48,22 @@ class FakeGh:
         path = args[0]
         if path == "user":
             return json.dumps({"login": self.login})
+        if path == f"repos/{REPO}" and "-X" not in args:
+            return json.dumps({"default_branch": self.default_branch})
+        if path == f"repos/{REPO}/pulls" and "--paginate" in args:
+            return json.dumps(list(self.pulls.values()))
+        if path == f"repos/{REPO}/pulls" and "--paginate" not in args:
+            fields = {a.split("=", 1)[0]: a.split("=", 1)[1] for a in args if a.startswith(("title=", "head=", "base="))}
+            number = self._next_pr_number
+            self._next_pr_number += 1
+            self.pulls[number] = {
+                "number": number,
+                "title": fields["title"],
+                "head": {"ref": fields["head"]},
+                "base": {"ref": fields["base"]},
+                "body": input_text,
+            }
+            return json.dumps(self.pulls[number])
         if path == f"repos/{REPO}/issues" and "--paginate" in args:
             return json.dumps(list(self.issues.values()))
         if path.startswith(f"repos/{REPO}/issues/") and path.endswith("/comments") and "--paginate" in args:
