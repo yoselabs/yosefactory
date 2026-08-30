@@ -27,10 +27,7 @@ from yosefactory.runtime.isolation import IsolationPolicy
 from yosefactory.runtime.runs import read_window
 from yosefactory.runtime.supervise import StreamRecorder
 
-pytestmark = [
-    pytest.mark.live,
-    pytest.mark.skipif(shutil.which("claude") is None, reason="claude is not on PATH"),
-]
+_needs_live_claude = pytest.mark.skipif(shutil.which("claude") is None, reason="claude is not on PATH")
 
 
 @pytest.fixture
@@ -58,6 +55,8 @@ def workspace(tmp_path: Path) -> Path:
     return tmp_path
 
 
+@pytest.mark.live
+@_needs_live_claude
 @pytest.mark.usefixtures("require_pinned_claude")
 def test_a_real_run_produces_a_structured_outcome(workspace: Path) -> None:
     """Receipt 1: one bounded, isolated invocation, verdict taken from the agent's own terminal event.
@@ -93,6 +92,8 @@ def test_a_real_run_produces_a_structured_outcome(workspace: Path) -> None:
     assert positions[0].record.enforced_by is EnforcedBy.AGENT
 
 
+@pytest.mark.live
+@_needs_live_claude
 @pytest.mark.usefixtures("require_pinned_claude")
 def test_an_isolated_run_loads_no_host_or_repository_configuration(workspace: Path) -> None:
     """Receipt 3: the posture asserted from the agent's own init event, on a fully configured host.
@@ -130,6 +131,8 @@ def test_an_isolated_run_loads_no_host_or_repository_configuration(workspace: Pa
     assert reader.init.slash_commands == ()
 
 
+@pytest.mark.live
+@_needs_live_claude
 @pytest.mark.usefixtures("require_pinned_claude")
 def test_a_workspace_scoped_run_admits_repo_config_and_excludes_host_config(workspace: Path) -> None:
     """Receipt for `scope-isolation-by-config-source`: the third posture, verified both directions.
@@ -158,6 +161,8 @@ def test_a_workspace_scoped_run_admits_repo_config_and_excludes_host_config(work
     assert reader.init.workspace_scope_leaks == ()
 
 
+@pytest.mark.live
+@_needs_live_claude
 @pytest.mark.usefixtures("require_pinned_claude")
 def test_an_opted_out_run_shows_what_isolation_was_holding_back(workspace: Path) -> None:
     """The control for the receipt above, and the reason the assertion is worth anything.
@@ -182,6 +187,8 @@ def test_an_opted_out_run_shows_what_isolation_was_holding_back(workspace: Path)
     assert reader.init.leaks, "the host loads nothing, so the isolated receipt proves nothing"
 
 
+@pytest.mark.live
+@_needs_live_claude
 @pytest.mark.usefixtures("require_pinned_claude")
 def test_a_run_that_exceeds_its_wall_clock_is_stopped_and_recorded(workspace: Path) -> None:
     """Receipt 2: the harness stop fires, says so, and reports the tree honestly."""
@@ -213,7 +220,7 @@ def test_a_run_that_exceeds_its_wall_clock_is_stopped_and_recorded(workspace: Pa
     assert record.enforced_by is EnforcedBy.HARNESS
 
 
-@pytest.mark.usefixtures("require_pinned_claude")
+@_needs_live_claude
 def test_isolated_invocation_never_reaches_for_bare_mode() -> None:
     """Bare mode buys isolation by making a subscription run unable to authenticate at all."""
     argv = build_argv("hello", IsolationPolicy())
