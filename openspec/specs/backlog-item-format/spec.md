@@ -93,6 +93,7 @@ The following events SHALL be defined, and each SHALL be legal only from the lis
 | `woke` | `snoozed` | `ready` | `cause` |
 | `falsified` | `doing` | `falsified` | `by`, `successor` |
 | `failed` | `claimed`, `doing` | `failed` | `reason`, `attempt`, `retryable` |
+| `retried` | `failed` | `ready` | `cause` |
 | `needs_split` | `doing` | `needs_split` | `children` |
 | `done` | `doing` | `done` | `effects`, `verified_by` |
 | `cancelled` | any non-terminal | `cancelled` | `reason` |
@@ -346,6 +347,14 @@ claims it; the cap makes the failure visible (poisoned, terminal, named) instead
 
 - **WHEN** an item is `claimed` or `doing` and its lease's `expires_at` is still in the future
 - **THEN** no `reclaimed` event is legal against it yet
+
+#### Scenario: A retryable failure under the cap returns to `ready`
+
+- **WHEN** an item is `failed`, its most recent `failed` record carries `retryable: true`, and its
+  `attempt` is below the configured ceiling
+- **THEN** a `retried` event returns it to `ready`
+- **AND** it is eligible for a new claim, and the `attempt` counted for the exhaustion ceiling is
+  unaffected — it is read from `claimed`, which `retried` does not append
 
 #### Scenario: The attempt count survives a return to `ready`
 

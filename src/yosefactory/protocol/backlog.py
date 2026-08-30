@@ -110,6 +110,12 @@ ITEM = Declaration(
             required=(("reason",), ("attempt",), ("retryable",)),
             types={("reason",): str, ("attempt",): int, ("retryable",): bool},
         ),
+        # four-dead-ends / sweep_deadlines: the mirror of `reclaimed` for a `failed` item rather than
+        # a live lease. Carries no `attempt` of its own -- that count lives on `claimed` and survives
+        # every trip back through `ready` already (`backlog.claims()`); `retried` only ever moves the
+        # state, the same division `reclaimed`/`released` already keep between "why we're back" and
+        # "how many times we've tried."
+        "retried": Rule(frozenset({"failed"}), "ready", required=(("cause",),)),
         "needs_split": Rule(frozenset({"doing"}), "needs_split", required=(("children",),)),
         "done": Rule(frozenset({"doing"}), "done", required=(("effects",), ("verified_by",))),
         "cancelled": Rule(ANY_NON_TERMINAL, "cancelled", required=(("reason",),)),
@@ -221,6 +227,11 @@ def failure(item: FoldedLog) -> Mapping[str, Any] | None:
     """The most recent `failed` record, or None. `retryable`/`attempt` live here -- unstick-the-backlog
     is the first reader of either; the format has required both since it was defined."""
     return _last("failed", item)
+
+
+def scheduled_for(item: FoldedLog) -> str | None:
+    """When a `snoozed` item is due to wake, or None. The sweeper `wake_snoozed` is the first reader."""
+    return _last("snoozed", item, key="scheduled_for")
 
 
 def _last(event: str, item: FoldedLog, key: str | None = None) -> Any:

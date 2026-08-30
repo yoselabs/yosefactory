@@ -1442,15 +1442,22 @@ def test_a_single_failed_item_does_not_freeze_planning_forever(repo: Path, limit
     """The regression test S1021 asks for directly: a backlog whose only item is stuck in a
     non-terminal, non-eligible state must not forbid all future work. Before unstick-the-backlog,
     `should_plan` treated `failed` as "in flight" and this turn would have reported `nothing-ready`
-    forever, for $0, exactly as the signal describes."""
-    item = _seed_stuck_item(repo, event="failed", reason="boom", attempt=1, retryable=True)
+    forever, for $0, exactly as the signal describes.
+
+    `attempt` is set at the cap: four-dead-ends' `retry_failed` sweep now returns a *retryable*,
+    *under-cap* `failed` item to `ready` before classification runs, so a failed item under the cap
+    is no longer "stuck" in the sense this test means -- it is picked up and acted on, not planned
+    around, and that is covered separately by `test_a_retried_item_may_be_claimed_in_the_same_turn`.
+    Genuinely stuck here means the sweep must not touch it either, which requires attempt exhaustion.
+    """
+    item = _seed_stuck_item(repo, event="failed", reason="boom", attempt=limits.max_attempts, retryable=True)
 
     executor = FakeExecutor(proposal=[{"event": "created", "loop": "l", "frame": FRAME}])
     record = take(repo, executor, limits)
 
     assert executor.calls, "a stuck item must not forbid planning -- the turn should have plans instead of nothing-ready"
     assert record.outcome is Outcome.ADVANCED
-    assert backlog.load(item).state == "failed"  # the stuck item itself is untouched
+    assert backlog.load(item).state == "failed"  # the stuck item itself is untouched -- exhausted, so not retried
 
 
 def test_a_backlog_of_only_falsified_and_needs_split_items_still_plans(repo: Path, limits: Guardrails) -> None:
@@ -1553,6 +1560,253 @@ def test_a_retryable_failure_under_the_cap_is_not_poisoned(repo: Path, limits: G
     take(repo, executor, limits)
 
     assert backlog.load(item).state == "failed"  # not poisoned -- under the cap and retryable
+
+
+def test_a_snoozed_item_wakes_once_its_schedule_elapses(repo: Path, limits: Guardrails) -> None:
+    """four-dead-ends: `woke` (`snoozed` -> `ready`) has been declared since the format was defined
+    and fired by nothing. This fails without `wake_snoozed`."""
+    from datetime import UTC, datetime
+
+    item = repo / turn.ITEMS / f"{turn.new_item_id()}.jsonl"
+    turn.append(item, backlog.ITEM, CREATED, actor="fixture")
+    turn.append(item, backlog.ITEM, {"event": "snoozed", "scheduled_for": "2026-01-01T00:00:00+00:00"}, actor="fixture")
+
+    woken = turn.wake_snoozed(repo, actor="tester", now=datetime(2026, 1, 2, tzinfo=UTC))
+
+    assert woken == [item]
+    folded = backlog.load(item)
+    assert folded.state == "ready"
+    assert folded.records[-1]["event"] == "woke"
+
+
+def test_a_snoozed_item_not_yet_due_is_left_alone(repo: Path, limits: Guardrails) -> None:
+    from datetime import UTC, datetime
+
+    item = repo / turn.ITEMS / f"{turn.new_item_id()}.jsonl"
+    turn.append(item, backlog.ITEM, CREATED, actor="fixture")
+    turn.append(item, backlog.ITEM, {"event": "snoozed", "scheduled_for": "2026-06-01T00:00:00+00:00"}, actor="fixture")
+
+    woken = turn.wake_snoozed(repo, actor="tester", now=datetime(2026, 1, 2, tzinfo=UTC))
+
+    assert woken == []
+    assert backlog.load(item).state == "snoozed"
+
+
+def test_a_woken_item_may_be_claimed_in_the_same_turn(repo: Path, limits: Guardrails) -> None:
+    """Wired into `take_turn`'s sweep step, not just callable standalone."""
+    from datetime import UTC, datetime
+
+    item = repo / turn.ITEMS / f"{turn.new_item_id()}.jsonl"
+    turn.append(item, backlog.ITEM, CREATED, actor="fixture")
+    turn.append(item, backlog.ITEM, {"event": "snoozed", "scheduled_for": "2026-01-01T00:00:00+00:00"}, actor="fixture")
+
+    executor = FakeExecutor(proposal={"event": "priority_set", "priority": 5})
+    record = take(repo, executor, limits, now=datetime(2026, 1, 2, tzinfo=UTC))
+
+    assert executor.calls, "the woken item should have been eligible again in this same turn"
+    assert record.outcome is Outcome.ADVANCED
+    events = [r["event"] for r in backlog.load(item).records]
+    assert "woke" in events and "claimed" in events
+
+
+def test_a_question_backed_block_times_out_and_unblocks(repo: Path, limits: Guardrails) -> None:
+    """The bound lives on the question, not the item -- `backlog-item-format`'s "one deadline, in
+    one place." Fails without `sweep_deadlines`."""
+    from datetime import UTC, datetime
+
+    item = repo / turn.ITEMS / f"{turn.new_item_id()}.jsonl"
+    turn.append(item, backlog.ITEM, CREATED, actor="fixture")
+    turn.append(item, backlog.ITEM, {"event": "claimed", "owner": "o", "expires_at": "later", "attempt": 1}, actor="fixture")
+    turn.append(item, backlog.ITEM, {"event": "started"}, actor="fixture")
+    qpath = repo / turn.QUESTIONS / "q-timeout-1.jsonl"
+    turn.append(
+        qpath,
+        question.QUESTION,
+        {
+            "event": "asked",
+            "item": item.stem,
+            "kind": "decision",
+            "to": "denis",
+            "text": "which?",
+            "answer_type": "text",
+            "return_to": "doing",
+            "deadline": "2026-01-01T00:00:00+00:00",
+            "on_timeout": "escalate",
+        },
+        actor="fixture",
+    )
+    turn.append(
+        item,
+        backlog.ITEM,
+        {
+            "event": "blocked",
+            "awaiting": {
+                "kind": "question",
+                "ref": "q-timeout-1",
+                "who": "denis",
+                "since": "now",
+                "return_to": "doing",
+                "nudge_at": [],
+            },
+        },
+        actor="fixture",
+    )
+
+    touched = turn.sweep_deadlines(repo, actor="tester", now=datetime(2026, 1, 2, tzinfo=UTC))
+
+    assert set(touched) == {item, qpath}
+    folded_item = backlog.load(item)
+    assert folded_item.state == "doing"
+    assert folded_item.records[-1]["event"] == "unblocked"
+    assert folded_item.records[-1]["resolution"] == "timeout"
+    folded_q = question.load(qpath)
+    assert folded_q.state == "timed_out"
+    assert folded_q.records[-1]["policy"] == "escalate"
+
+
+def test_an_item_kind_block_times_out_using_its_own_bound(repo: Path, limits: Guardrails) -> None:
+    from datetime import UTC, datetime
+
+    item = repo / turn.ITEMS / f"{turn.new_item_id()}.jsonl"
+    turn.append(item, backlog.ITEM, CREATED, actor="fixture")
+    turn.append(item, backlog.ITEM, {"event": "claimed", "owner": "o", "expires_at": "later", "attempt": 1}, actor="fixture")
+    turn.append(item, backlog.ITEM, {"event": "started"}, actor="fixture")
+    turn.append(
+        item,
+        backlog.ITEM,
+        {
+            "event": "blocked",
+            "awaiting": {
+                "kind": "item",
+                "ref": "itm-other",
+                "who": "denis",
+                "since": "now",
+                "return_to": "doing",
+                "nudge_at": [],
+                "deadline": "2026-01-01T00:00:00+00:00",
+                "on_timeout": "default:proceed",
+            },
+        },
+        actor="fixture",
+    )
+
+    touched = turn.sweep_deadlines(repo, actor="tester", now=datetime(2026, 1, 2, tzinfo=UTC))
+
+    assert touched == [item]
+    folded = backlog.load(item)
+    assert folded.state == "doing"
+    assert folded.records[-1]["event"] == "unblocked"
+    assert folded.records[-1]["resolution"] == "timeout"
+
+
+def test_an_abandon_policy_terminates_instead_of_unblocking(repo: Path, limits: Guardrails) -> None:
+    from datetime import UTC, datetime
+
+    item = repo / turn.ITEMS / f"{turn.new_item_id()}.jsonl"
+    turn.append(item, backlog.ITEM, CREATED, actor="fixture")
+    turn.append(item, backlog.ITEM, {"event": "claimed", "owner": "o", "expires_at": "later", "attempt": 1}, actor="fixture")
+    turn.append(item, backlog.ITEM, {"event": "started"}, actor="fixture")
+    turn.append(
+        item,
+        backlog.ITEM,
+        {
+            "event": "blocked",
+            "awaiting": {
+                "kind": "item",
+                "ref": "itm-other",
+                "who": "denis",
+                "since": "now",
+                "return_to": "doing",
+                "nudge_at": [],
+                "deadline": "2026-01-01T00:00:00+00:00",
+                "on_timeout": "abandon:no longer needed",
+            },
+        },
+        actor="fixture",
+    )
+
+    turn.sweep_deadlines(repo, actor="tester", now=datetime(2026, 1, 2, tzinfo=UTC))
+
+    folded = backlog.load(item)
+    assert folded.state == "abandoned"
+    assert folded.terminal
+    assert "no longer needed" in folded.records[-1]["reason"]
+
+
+def test_a_deadline_not_yet_elapsed_leaves_the_block_alone(repo: Path, limits: Guardrails) -> None:
+    from datetime import UTC, datetime
+
+    item = seed_item(repo, state="blocked")
+
+    touched = turn.sweep_deadlines(repo, actor="tester", now=datetime(2026, 1, 2, tzinfo=UTC))
+
+    assert touched == []
+    assert backlog.load(item).state == "blocked"
+
+
+def test_a_retryable_failed_item_returns_to_ready_under_the_cap(repo: Path, limits: Guardrails) -> None:
+    """No event moved `failed` -> `ready` before this change. Fails without `retry_failed`."""
+    item = seed_item(repo)
+    turn.append(item, backlog.ITEM, {"event": "claimed", "owner": "o", "expires_at": "later", "attempt": 1}, actor="fixture")
+    turn.append(item, backlog.ITEM, {"event": "started"}, actor="fixture")
+    turn.append(item, backlog.ITEM, {"event": "failed", "reason": "flaky", "attempt": 1, "retryable": True}, actor="fixture")
+
+    retried = turn.retry_failed(repo, actor="tester", max_attempts=limits.max_attempts)
+
+    assert retried == [item]
+    folded = backlog.load(item)
+    assert folded.state == "ready"
+    assert folded.records[-1]["event"] == "retried"
+
+
+def test_a_non_retryable_or_exhausted_failure_is_not_retried(repo: Path, limits: Guardrails) -> None:
+    non_retryable = seed_item(repo)
+    turn.append(
+        non_retryable, backlog.ITEM, {"event": "claimed", "owner": "o", "expires_at": "later", "attempt": 1}, actor="fixture"
+    )
+    turn.append(non_retryable, backlog.ITEM, {"event": "started"}, actor="fixture")
+    # `retryable: false` would already have been poisoned by `_poison_if_exhausted` in production;
+    # appended directly here (bypassing that path) to prove `retry_failed` itself honours the field
+    # defensively, not merely because it never sees the case in practice.
+    turn.append(
+        non_retryable, backlog.ITEM, {"event": "failed", "reason": "bad", "attempt": 1, "retryable": False}, actor="fixture"
+    )
+
+    exhausted = repo / turn.ITEMS / f"{turn.new_item_id()}.jsonl"
+    turn.append(exhausted, backlog.ITEM, CREATED, actor="fixture")
+    turn.append(
+        exhausted, backlog.ITEM, {"event": "claimed", "owner": "o", "expires_at": "later", "attempt": 1}, actor="fixture"
+    )
+    turn.append(exhausted, backlog.ITEM, {"event": "started"}, actor="fixture")
+    turn.append(
+        exhausted,
+        backlog.ITEM,
+        {"event": "failed", "reason": "flaky", "attempt": limits.max_attempts, "retryable": True},
+        actor="fixture",
+    )
+
+    retried = turn.retry_failed(repo, actor="tester", max_attempts=limits.max_attempts)
+
+    assert retried == []
+    assert backlog.load(non_retryable).state == "failed"
+    assert backlog.load(exhausted).state == "failed"
+
+
+def test_a_retried_item_may_be_claimed_in_the_same_turn(repo: Path, limits: Guardrails) -> None:
+    item = seed_item(repo)
+    turn.append(item, backlog.ITEM, {"event": "claimed", "owner": "o", "expires_at": "later", "attempt": 1}, actor="fixture")
+    turn.append(item, backlog.ITEM, {"event": "started"}, actor="fixture")
+    turn.append(item, backlog.ITEM, {"event": "failed", "reason": "flaky", "attempt": 1, "retryable": True}, actor="fixture")
+
+    executor = FakeExecutor(proposal={"event": "priority_set", "priority": 5})
+    record = take(repo, executor, limits)
+
+    assert executor.calls, "the retried item should have been eligible again in this same turn"
+    assert record.outcome is Outcome.ADVANCED
+    folded = backlog.load(item)
+    events = [r["event"] for r in folded.records]
+    assert "retried" in events
+    assert backlog.claims(folded) == 2  # the retry itself did not spend an extra claim
 
 
 def test_a_sweeps_writes_are_committed_with_the_turn_and_do_not_dirty_the_tree(repo: Path, limits: Guardrails) -> None:
