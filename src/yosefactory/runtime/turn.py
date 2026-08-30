@@ -328,7 +328,9 @@ def eligible(item: FoldedLog) -> bool:
     item may carry any number of `gate_rejected` records while remaining `doing` -- nothing acted on
     that until now. The second case resumes the existing lease (`take_turn` skips the claim step for
     it) rather than flowing back through `ready`, which is the only way `attempt` stays unmoved.
-    Waking a snoozed item is a sweeper's job and there is no sweeper.
+    Waking a snoozed item is a sweeper's job (`wake_snoozed`, four-dead-ends) -- it runs in the same
+    pre-classification step as `apply_answers`/`reclaim_expired`, so a woken item is `ready` and
+    already admitted by the check above before this function is next consulted.
     """
     if item.state == "ready":
         return True
@@ -344,13 +346,14 @@ def in_flight(item: FoldedLog) -> bool:
 def should_plan(backlog_items: Sequence[FoldedLog]) -> bool:
     """Plan when nothing is ready and nothing is live in-flight.
 
-    Only `claimed`/`doing` suppress planning -- unstick-the-backlog / S1021. `failed`, `falsified`,
-    `needs_split`, `blocked`, `snoozed` do NOT: none of them has a bound that resolves on its own
-    today (no sweeper reads `blocked`'s deadline or `snoozed`'s `scheduled_for`), so treating them
-    as "in flight" was the freeze itself -- one stuck item forbidding all future work, forever, for
-    free. A backlog holding only such litter is now planned around exactly like an empty backlog
-    already is: bounded by `LoopBound.max_iterations`, not by this predicate.
-    See `decisions/0012-lease-reclaim-and-should-plan-narrowed-to-in-flight.md`.
+    Only `claimed`/`doing` suppress planning -- unstick-the-backlog / S1021, kept unchanged by
+    four-dead-ends even though `blocked`, `snoozed` and retryable `failed` now have working sweepers
+    (`sweep_deadlines`, `wake_snoozed`, `retry_failed`): a bound that resolves *eventually* is still
+    not "in flight" in the sense this predicate means, and widening it back would reopen the freeze
+    S1021 found -- one item with a bound that has not fired yet would again forbid all future work.
+    `falsified`/`needs_split` still have no route back at all. A backlog holding only such litter is
+    planned around exactly like an empty backlog already is: bounded by `LoopBound.max_iterations`,
+    not by this predicate. See `decisions/0012-lease-reclaim-and-should-plan-narrowed-to-in-flight.md`.
     """
     return not any(in_flight(item) for item in backlog_items)
 
@@ -468,6 +471,115 @@ def reclaim_expired(repo: Path, *, actor: str, now: datetime, max_attempts: int)
                 {"event": "reclaimed", "reason": "lease expired", "expired_owner": owner, "expired_attempt": attempt},
                 actor=actor,
             )
+        touched.append(path)
+    return touched
+
+
+def wake_snoozed(repo: Path, *, actor: str, now: datetime) -> list[Path]:
+    """Wake every `snoozed` item whose `scheduled_for` has passed. Same deterministic, agent-free
+    sweep as `apply_answers`/`reclaim_expired` -- no model call decides whether a clock has passed.
+
+    four-dead-ends: `woke` (`snoozed` -> `ready`) has been declared since the format was defined and
+    fired by nothing (`eligible()`'s own docstring used to say so). This is the sweeper.
+    """
+    touched: list[Path] = []
+    for path in sorted((repo / ITEMS).glob("*.jsonl")):
+        item = backlog.load(path)
+        if item.state != "snoozed":
+            continue
+        due = backlog.scheduled_for(item)
+        if due is None or now < datetime.fromisoformat(str(due)):
+            continue
+        append(path, backlog.ITEM, {"event": "woke", "cause": "scheduled_for elapsed"}, actor=actor)
+        touched.append(path)
+    return touched
+
+
+def sweep_deadlines(repo: Path, *, actor: str, now: datetime) -> list[Path]:
+    """Resolve every `blocked` item whose bound has elapsed.
+
+    The bound is read from wherever `backlog-item-format`'s "Blocked means blocked until" says it
+    lives: the block's own `awaiting.deadline`/`on_timeout` for `kind: item`, or the linked question
+    (`ref`) for `kind: question`/`kind: request` -- never a second copy kept on the item.
+
+    `escalate` and `default:<x>` both resolve the block the same way the format's own "The deadline
+    fires" scenario states, without branching on policy: `unblocked` with `resolution: "timeout"`,
+    returning to the `return_to` stored at block time. Only `abandon:<reason>` diverges -- there is no
+    `return_to` worth resuming behind a deliberate give-up, so the item goes straight to `abandoned`
+    instead. For a question-backed block, the question itself is closed first (`timed_out`, carrying
+    the policy and, for `default:<x>`, the supplied answer) so it stops reading as open.
+
+    `nudge_at` (a list of pre-deadline reminder points) is deliberately not fired here: this
+    repository has no notification channel for a sweep to write through (`grep` for one before this
+    change found none), and inventing a fake delivery would be worse than the gap it papers over. It
+    stays a recorded intent, unacted on, until a channel exists to act through.
+    """
+    touched: list[Path] = []
+    for path in sorted((repo / ITEMS).glob("*.jsonl")):
+        item = backlog.load(path)
+        if item.state != "blocked":
+            continue
+        block = backlog.awaiting(item)
+        if block is None:
+            continue
+        question_path: Path | None = None
+        if block.get("kind") == "item":
+            deadline_raw = block.get("deadline")
+            policy = block.get("on_timeout")
+        else:
+            question_path = repo / QUESTIONS / f"{block.get('ref')}.jsonl"
+            if not question_path.exists():
+                continue
+            asked = question.load(question_path)
+            if question.outcome(asked) is not None:
+                continue  # already closed -- `apply_answers` resolves this one, not this sweep
+            deadline_raw = question.deadline(asked)
+            policy = question.on_timeout(asked)
+        if deadline_raw is None or policy is None or now < datetime.fromisoformat(str(deadline_raw)):
+            continue
+        if question_path is not None:
+            answer = policy.split(":", 1)[1] if policy.startswith("default:") else None
+            append(
+                question_path,
+                question.QUESTION,
+                {"event": "timed_out", "policy": policy, "answer": answer},
+                actor=actor,
+            )
+            touched.append(question_path)
+        if policy.startswith("abandon:"):
+            append(
+                path,
+                backlog.ITEM,
+                {"event": "abandoned", "reason": f"blocked deadline elapsed: {policy.split(':', 1)[1]}"},
+                actor=actor,
+            )
+        else:
+            append(path, backlog.ITEM, {"event": "unblocked", "resolution": "timeout"}, actor=actor)
+        touched.append(path)
+    return touched
+
+
+def retry_failed(repo: Path, *, actor: str, max_attempts: int) -> list[Path]:
+    """Return every retryable `failed` item to `ready`, under the same cap `_poison_if_exhausted`
+    already enforces on the other side.
+
+    Any item still sitting in `failed` (not `poisoned`) was, by construction, `retryable: true` and
+    under `max_attempts` at the moment it failed -- `_poison_if_exhausted` poisons every other case
+    immediately, in the same turn the `failed` event lands. The check here is defensive, not
+    load-bearing, against that invariant changing later. `retried` carries no `attempt` of its own:
+    the count lives on `claimed` and survives every trip back through `ready` already
+    (`backlog.claims()`), and this sweep does not touch it -- an item that has exhausted its budget
+    must not become eligible again by another door.
+    """
+    touched: list[Path] = []
+    for path in sorted((repo / ITEMS).glob("*.jsonl")):
+        item = backlog.load(path)
+        if item.state != "failed":
+            continue
+        last = backlog.failure(item)
+        if last is None or last.get("retryable") is not True or int(last.get("attempt", 0)) >= max_attempts:
+            continue
+        append(path, backlog.ITEM, {"event": "retried", "cause": "retryable failure under the attempt cap"}, actor=actor)
         touched.append(path)
     return touched
 
@@ -754,9 +866,28 @@ def take_turn(
         # landed on disk and were never named in any commit's pathspec.
         unblocked_ids = apply_answers(places.queue, actor=owner)
         reclaimed_paths = reclaim_expired(places.queue, actor=owner, now=started, max_attempts=limits.max_attempts)
-        swept = [places.queue / ITEMS / f"{item_id}.jsonl" for item_id in unblocked_ids] + reclaimed_paths
+        # four-dead-ends: three more agent-free sweeps, same step, same commit -- run after the two
+        # above so each sees what the earlier ones already moved (`sweep_deadlines` must not act on
+        # an item `apply_answers` just unblocked; `retry_failed` must not act on one `reclaim_expired`
+        # just poisoned). Every sweep re-reads the item fresh, so this ordering is a read-time fact,
+        # not a hidden shared-state dependency.
+        woken_paths = wake_snoozed(places.queue, actor=owner, now=started)
+        deadline_paths = sweep_deadlines(places.queue, actor=owner, now=started)
+        retried_paths = retry_failed(places.queue, actor=owner, max_attempts=limits.max_attempts)
+        swept = (
+            [places.queue / ITEMS / f"{item_id}.jsonl" for item_id in unblocked_ids]
+            + reclaimed_paths
+            + woken_paths
+            + deadline_paths
+            + retried_paths
+        )
         if swept:
-            commit(places.queue, swept, f"sweep({run_id}): {len(swept)} item(s) unblocked or reclaimed", run_id=run_id)
+            commit(
+                places.queue,
+                swept,
+                f"sweep({run_id}): {len(swept)} item(s) unblocked, reclaimed, woken, deadlined or retried",
+                run_id=run_id,
+            )
         present = items(places.queue)
         target = pick([item for item in present if eligible(item)])
 

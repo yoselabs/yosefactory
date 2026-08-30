@@ -44,10 +44,11 @@ ADR-0015's own choice that a gate rejection stays retryable within the same atte
 (`backlog-item-format`'s "`gate_rejected` never resets or reclassifies the item" carries the
 transition-level guarantee this reads). Whether planning is additionally suppressed when no item is
 eligible is a separate question, answered by "Only live claims suppress planning" below — the two
-SHALL NOT be conflated into one non-terminal check, because a non-terminal state with no route back
-to `ready` (`failed`, `falsified`, `needs_split`) or with a route back nothing yet fires (`blocked`,
-`snoozed`, absent the sweeper `eligible()`'s own docstring says does not exist) is not "happening" in
-any sense that justifies withholding all future work.
+SHALL NOT be conflated into one non-terminal check, because a non-terminal state with no route back to
+`ready` at all (`falsified`, `needs_split`) or with a route back that only fires on a later turn's
+sweep, not this one's classification (`blocked`, `snoozed`, retryable `failed` — see "Three more dead
+ends are swept before classification" below) is not "happening" in any sense that justifies
+withholding all future work.
 
 #### Scenario: Empty backlog selects planning
 
@@ -185,6 +186,65 @@ along.
 - **THEN** every path the sweep touched is present in the same commit the turn's own outcome is
   recorded in
 - **AND** none of those paths appears as an uncommitted change in the tree afterward
+
+### Requirement: Three more dead ends are swept before classification, same step, same commit
+
+In the same pre-classification, agent-free step as the answer/lease sweeps above, a turn SHALL also:
+
+- wake every `snoozed` item whose `scheduled_for` has passed, appending `woke` (`snoozed` -> `ready`)
+- resolve every `blocked` item whose bound has elapsed — read from the block's own `awaiting.deadline`/
+  `on_timeout` for `kind: item`, or from the linked question for `kind: question`/`kind: request` —
+  appending `unblocked` (`resolution: "timeout"`) for an `escalate` or `default:<x>` policy, or
+  `abandoned` for an `abandon:<reason>` policy; a question-backed block also closes its question with
+  `timed_out` first
+- return every retryable `failed` item under the attempt ceiling to `ready`, appending `retried`
+
+No sweep in this requirement SHALL invoke an agent or consult anything but the repository's own
+records and the clock. Every path any of them touches SHALL be included among the paths this turn's
+eventual commit stages, exactly as the answer/lease sweeps already are.
+
+**Reason, carried with the rule:** all three states were reachable, non-terminal, and had nothing
+that moved an item out of them — `woke` was declared and fired by nothing; `blocked`'s `deadline`/
+`on_timeout` were written and read by nothing; a retryable `failed` item had no route back to `ready`
+at all. `should_plan` (above) already stopped treating them as "in flight" so one stuck item could not
+freeze the factory (ADR-0012) — correct, but it means they had been accumulating silently instead of
+loudly. These sweeps are what actually closes the loop `should_plan`'s narrowing only stopped from
+blocking.
+
+#### Scenario: A snoozed item wakes on its own schedule
+
+- **WHEN** a turn starts and a `snoozed` item's `scheduled_for` is in the past
+- **THEN** the sweep appends `woke`, returning the item to `ready`
+- **AND** the same turn may pick that item for its own claim if it ranks highest
+
+#### Scenario: A question-backed block times out and unblocks
+
+- **WHEN** a turn starts and an item is blocked on a question (`kind: question` or `kind: request`)
+  whose `deadline` has passed with no answer, whatever its `on_timeout` policy
+- **THEN** the question is closed with `timed_out`, carrying the policy and, for `default:<x>`, the
+  supplied answer
+- **AND** the item is appended `unblocked` with `resolution: "timeout"`, returning to the `return_to`
+  stored when it blocked
+
+#### Scenario: An item-kind block times out using its own bound
+
+- **WHEN** a turn starts and an item is blocked on another item (`kind: item`) whose own
+  `awaiting.deadline` has passed
+- **THEN** the sweep resolves it the same way, reading the bound from the block itself rather than a
+  question
+
+#### Scenario: An abandon policy does not resume anything
+
+- **WHEN** a blocked item's elapsed deadline carries `on_timeout: abandon:<reason>`
+- **THEN** the item is appended `abandoned`, naming the reason, instead of `unblocked`
+- **AND** it does not return to `return_to` — it is terminal
+
+#### Scenario: A retryable failure returns to ready under the cap
+
+- **WHEN** a turn starts and a `failed` item's most recent failure carries `retryable: true` with
+  `attempt` below `Guardrails.max_attempts`
+- **THEN** the sweep appends `retried`, returning the item to `ready`
+- **AND** the item's `attempt` count, read from `claimed`, is unaffected
 
 ### Requirement: The agent proposes exactly one typed event
 
