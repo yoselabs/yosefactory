@@ -123,8 +123,33 @@ class GitHubIssuesAdapter:
         return str(json.loads(out)["number"])
 
     def project(self, item: FoldedLog, ref: str) -> None:
-        title, body = self._render(item)
-        self._api([f"repos/{self.repo}/issues/{ref}", "-X", "PATCH", "-f", f"title={title}", "-F", "body=@-"], input_text=body)
+        """Title is fully disposable and rendered fresh every call -- GitHub keeps no title
+        history a human could lose. Body is not: a human can (and does) write specification text
+        into an issue's body, and GitHub keeps no body history either, so overwriting it
+        unconditionally with a rendered stub destroys that text irrecoverably. Measured live on
+        `yoselabs/yosefactory`: two issues carrying hand-written specs were reduced to the marker
+        line and a goal sentence by an ordinary projection run.
+
+        State no longer needs a body line -- the title already carries `[state]` -- so the only
+        thing this method still owns in the body is the item marker `_find_ref` depends on
+        (design.md D2). Read the current body first: if the marker is already there, this is an
+        update to an issue this adapter (or a prior projection) already authored, and the body is
+        left untouched, byte for byte. If it is missing -- the one legitimate case is `ingest()`'s
+        create path (board-projection/inbox spec: "marker written back before ingest returns"),
+        projecting a freshly-adopted, markerless, possibly human-authored issue -- the marker is
+        prepended and everything the issue already carried is kept.
+        """
+        title, _ = self._render(item)
+        current = json.loads(self._api([f"repos/{self.repo}/issues/{ref}"]))
+        body = current.get("body") or ""
+        if _extract_item_id(body) is not None:
+            self._api([f"repos/{self.repo}/issues/{ref}", "-X", "PATCH", "-f", f"title={title}"])
+            return
+        new_body = f"{_marker_line(item.id)}\n\n{body}" if body else f"{_marker_line(item.id)}\n"
+        self._api(
+            [f"repos/{self.repo}/issues/{ref}", "-X", "PATCH", "-f", f"title={title}", "-F", "body=@-"],
+            input_text=new_body,
+        )
 
     def comment(self, ref: str, body: str) -> None:
         self._api([f"repos/{self.repo}/issues/{ref}/comments", "-F", "body=@-"], input_text=body)
@@ -201,7 +226,12 @@ class GitHubIssuesAdapter:
     # -- rendering -----------------------------------------------------------------------------
 
     def _render(self, item: FoldedLog) -> tuple[str, str]:
+        """The body half is only ever used by `open()`'s create path -- a fresh issue has no
+        human text yet, so the rendered stub is all there is. `project()` never calls this for
+        its own body write (see `project()`); state is carried by the title alone (`[state]
+        goal`), so the body no longer restates it -- a body-line copy would go stale the moment
+        `project()` stops touching an already-marked issue's body, which is now always."""
         goal = str(frame(item).get("goal", ""))
         title = f"[{item.state}] {goal[:80]}" if goal else f"[{item.state}] {item.id}"
-        body = f"{_marker_line(item.id)}\nState: {item.state}\n\n{goal}\n"
+        body = f"{_marker_line(item.id)}\n\n{goal}\n"
         return title, body
