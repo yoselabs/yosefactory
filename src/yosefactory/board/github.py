@@ -53,6 +53,7 @@ class GitHubIssuesAdapter:
             raise ValueError(f"repo must be 'owner/name', got {repo!r}")
         self.repo = repo
         self.identity: str | None = None  # resolved on first read; see `_ensure_identity`
+        self._default_branch_cache: str | None = None  # resolved on first read; see `_default_branch`
 
     # -- gh plumbing -----------------------------------------------------------------------
 
@@ -160,6 +161,48 @@ class GitHubIssuesAdapter:
             return
         self.comment(ref, f"closed: {resolution}")
         self._api([f"repos/{self.repo}/issues/{ref}", "-X", "PATCH", "-f", "state=closed"])
+
+    def propose(self, item: FoldedLog, ref: str, branch: str) -> str | None:
+        """The PR is a projection, not the truth: `Closes #<ref>` makes *merging* the PR close
+        the issue as GitHub's own side effect, but the item's own log -- not the PR's state -- is
+        what a `done` event is read from. A PR closed without merging, a deleted branch, or a
+        human closing the issue by hand all leave the item's log exactly as it was; nothing here
+        promotes the PR to authoritative over it.
+
+        Idempotence mirrors `open()`'s: search the repo's own pulls for one already proposed from
+        `branch` (design.md D2 -- no cache) before creating a second."""
+        existing = self._find_pr(branch)
+        if existing is not None:
+            return existing
+        title, _ = self._render(item)
+        body = f"Closes #{ref}\n"
+        out = self._api(
+            [
+                f"repos/{self.repo}/pulls",
+                "-f",
+                f"title={title}",
+                "-f",
+                f"head={branch}",
+                "-f",
+                f"base={self._default_branch()}",
+                "-F",
+                "body=@-",
+            ],
+            input_text=body,
+        )
+        return str(json.loads(out)["number"])
+
+    def _find_pr(self, branch: str) -> str | None:
+        args = [f"repos/{self.repo}/pulls", "--paginate", "-X", "GET", "-f", "state=all", "-f", "per_page=100"]
+        for pull in self._paginated_json_array(args):
+            if pull.get("head", {}).get("ref") == branch:
+                return str(pull["number"])
+        return None
+
+    def _default_branch(self) -> str:
+        if self._default_branch_cache is None:
+            self._default_branch_cache = json.loads(self._api([f"repos/{self.repo}"]))["default_branch"]
+        return self._default_branch_cache
 
     def list_events(self, since: str | None) -> Sequence[Event]:
         """No *self*-filter here, deliberately -- this adapter never excludes its own credential's

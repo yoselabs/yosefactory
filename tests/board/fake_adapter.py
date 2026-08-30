@@ -61,6 +61,11 @@ class FakeAdapter:
         thread.closed = True
         thread.resolution = resolution
 
+    def propose(self, item: FoldedLog, ref: str, branch: str) -> str | None:
+        """Models a forge with no pull-request concept (Jira, e.g.) -- always `None`, the
+        degradation path every `BoardAdapter` caller must already handle."""
+        return None
+
     def list_events(self, since: str | None) -> list[Event]:
         pending = [event for event in self.queued_events if since is None or event.ts > since]
         return sorted(pending, key=lambda event: event.ts)
