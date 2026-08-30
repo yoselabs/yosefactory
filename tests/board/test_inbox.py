@@ -98,7 +98,7 @@ def test_set_priority_is_applied(repo: Path) -> None:
     adapter = FakeAdapter()
     adapter.queued_events = [_event("e1", "set_priority", {"priority": 7, "item_id": "itm-a", "ref": "1"})]
 
-    results = ingest(repo, adapter, actor="board")
+    results = ingest(repo, adapter, actor="board", allowed_actors=frozenset({"denis"}))
 
     assert [r.result for r in results] == ["applied"]
     assert backlog.priority(backlog.load(item_path)) == 7
@@ -109,7 +109,7 @@ def test_cancel_is_applied(repo: Path) -> None:
     adapter = FakeAdapter()
     adapter.queued_events = [_event("e1", "cancel", {"reason": "wrong item", "item_id": "itm-a", "ref": "1"})]
 
-    ingest(repo, adapter, actor="board")
+    ingest(repo, adapter, actor="board", allowed_actors=frozenset({"denis"}))
 
     assert backlog.load(item_path).state == "cancelled"
 
@@ -119,7 +119,7 @@ def test_answer_unblocks_via_apply_answers(repo: Path) -> None:
     adapter = FakeAdapter()
     adapter.queued_events = [_event("e1", "answer", {"answer": "yes", "item_id": "itm-a", "ref": "1"})]
 
-    results = ingest(repo, adapter, actor="board")
+    results = ingest(repo, adapter, actor="board", allowed_actors=frozenset({"denis"}))
     assert [r.result for r in results] == ["applied"]
 
     moved = turn.apply_answers(repo, actor="board")
@@ -133,7 +133,7 @@ def test_rejection_is_visible_on_thread_and_does_not_raise(repo: Path) -> None:
     ref = adapter.open(backlog.load(repo / turn.ITEMS / "itm-done.jsonl"))
     adapter.queued_events = [_event("e1", "set_priority", {"priority": 9, "item_id": "itm-done", "ref": ref})]
 
-    results = ingest(repo, adapter, actor="board")
+    results = ingest(repo, adapter, actor="board", allowed_actors=frozenset({"denis"}))
 
     assert results[0].result == "rejected"
     assert "illegal" in results[0].detail.lower() or "terminal" in results[0].detail.lower()
@@ -145,7 +145,7 @@ def test_unknown_item_is_rejected(repo: Path) -> None:
     adapter = FakeAdapter()
     adapter.queued_events = [_event("e1", "set_priority", {"priority": 1, "item_id": "itm-does-not-exist", "ref": None})]
 
-    results = ingest(repo, adapter, actor="board")
+    results = ingest(repo, adapter, actor="board", allowed_actors=frozenset({"denis"}))
 
     assert results[0].result == "rejected"
     assert "not found" in results[0].detail
@@ -159,10 +159,39 @@ def test_one_rejection_does_not_block_the_rest_of_the_batch(repo: Path) -> None:
         _event("e2", "set_priority", {"priority": 5, "item_id": "itm-a", "ref": "1"}, ts="2026-08-17T00:00:01Z"),
     ]
 
-    results = ingest(repo, adapter, actor="board")
+    results = ingest(repo, adapter, actor="board", allowed_actors=frozenset({"denis"}))
 
     assert {r.result for r in results} == {"rejected", "applied"}
     assert backlog.priority(backlog.load(item_path)) == 5
+
+
+def test_disallowed_author_produces_no_item_and_no_consumed_record(repo: Path) -> None:
+    adapter = FakeAdapter()
+    adapter.threads["1"] = Thread(item_id="")
+    payload = {"title": "g", "body": "m", "ref": "1"}
+    adapter.queued_events = [Event(event_id="e1", ts="2026-08-30T00:00:00Z", actor="stranger", type="create", payload=payload)]
+
+    results = ingest(repo, adapter, actor="board", allowed_actors=frozenset({"denis"}))
+
+    assert results == []
+    assert not list((repo / turn.ITEMS).glob("*.jsonl"))
+    consumed_path = repo / CONSUMED_LOG
+    assert not consumed_path.exists()
+    assert not adapter.threads["1"].comments  # no reply -- a refused author is not told anything
+
+    # Adding the login later makes the same event ingestable, with nothing to unwind.
+    results = ingest(repo, adapter, actor="board", allowed_actors=frozenset({"denis", "stranger"}))
+    assert [r.result for r in results] == ["applied"]
+
+
+def test_allowed_author_matches_case_insensitively(repo: Path) -> None:
+    _seed_ready_item(repo, "itm-a")
+    adapter = FakeAdapter()
+    adapter.queued_events = [_event("e1", "set_priority", {"priority": 1, "item_id": "itm-a", "ref": "1"})]
+
+    results = ingest(repo, adapter, actor="board", allowed_actors=frozenset({"DENIS"}))
+
+    assert [r.result for r in results] == ["applied"]
 
 
 def test_idempotent_by_event_id(repo: Path) -> None:
@@ -170,8 +199,8 @@ def test_idempotent_by_event_id(repo: Path) -> None:
     adapter = FakeAdapter()
     adapter.queued_events = [_event("e1", "set_priority", {"priority": 3, "item_id": "itm-a", "ref": "1"})]
 
-    first = ingest(repo, adapter, actor="board")
-    second = ingest(repo, adapter, actor="board")  # same event still "queued" (fake never drains)
+    first = ingest(repo, adapter, actor="board", allowed_actors=frozenset({"denis"}))
+    second = ingest(repo, adapter, actor="board", allowed_actors=frozenset({"denis"}))  # same event still "queued" (fake never drains)
 
     assert len(first) == 1
     assert len(second) == 0  # already consumed -- not re-applied
@@ -190,7 +219,7 @@ def test_applied_command_is_a_real_commit(repo: Path) -> None:
 
     adapter = FakeAdapter()
     adapter.queued_events = [_event("e1", "set_priority", {"priority": 7, "item_id": "itm-a", "ref": "1"})]
-    ingest(repo, adapter, actor="board")
+    ingest(repo, adapter, actor="board", allowed_actors=frozenset({"denis"}))
 
     after = git(repo, "rev-parse", "HEAD")
     assert after != before  # a new commit landed
@@ -205,7 +234,7 @@ def test_rejected_command_still_commits_the_consumed_log(repo: Path) -> None:
     adapter.queued_events = [_event("e1", "set_priority", {"priority": 1, "item_id": "itm-missing", "ref": None})]
     before = git(repo, "rev-parse", "HEAD")
 
-    ingest(repo, adapter, actor="board")
+    ingest(repo, adapter, actor="board", allowed_actors=frozenset({"denis"}))
 
     after = git(repo, "rev-parse", "HEAD")
     assert after != before
@@ -217,7 +246,7 @@ def test_consumed_log_is_append_only_on_disk(repo: Path) -> None:
     adapter = FakeAdapter()
     adapter.queued_events = [_event("e1", "set_priority", {"priority": 1, "item_id": "itm-a", "ref": "1"})]
 
-    ingest(repo, adapter, actor="board")
+    ingest(repo, adapter, actor="board", allowed_actors=frozenset({"denis"}))
 
     consumed_path = repo / CONSUMED_LOG
     assert consumed_path.exists()
@@ -234,7 +263,7 @@ def test_create_command_makes_a_new_item_with_a_degenerate_frame(repo: Path) -> 
     payload = {"title": "fix the flaky login test", "body": "it fails on CI about 1/10 runs", "ref": "1"}
     adapter.queued_events = [_event("e1", "create", payload)]
 
-    results = ingest(repo, adapter, actor="board")
+    results = ingest(repo, adapter, actor="board", allowed_actors=frozenset({"denis"}))
 
     assert [r.result for r in results] == ["applied"]
     item_id = results[0].item_id
@@ -255,7 +284,7 @@ def test_create_from_a_thin_issue_still_produces_a_legal_frame(repo: Path) -> No
     adapter.threads["1"] = Thread(item_id="")
     adapter.queued_events = [_event("e1", "create", {"title": "wifi keeps dropping", "body": "", "ref": "1"})]
 
-    results = ingest(repo, adapter, actor="board")
+    results = ingest(repo, adapter, actor="board", allowed_actors=frozenset({"denis"}))
 
     assert [r.result for r in results] == ["applied"]
     item = backlog.load(repo / turn.ITEMS / f"{results[0].item_id}.jsonl")
@@ -271,7 +300,7 @@ def test_create_stamps_the_marker_back_onto_the_source_thread(repo: Path) -> Non
     adapter.threads["1"] = Thread(item_id="")
     adapter.queued_events = [_event("e1", "create", {"title": "g", "body": "m", "ref": "1"})]
 
-    results = ingest(repo, adapter, actor="board")
+    results = ingest(repo, adapter, actor="board", allowed_actors=frozenset({"denis"}))
 
     thread = adapter.threads["1"]
     assert thread.title  # project() wrote something derived from the new item
@@ -293,7 +322,7 @@ def test_rejected_create_leaves_no_item_file_and_is_visible_on_the_thread(repo: 
 
     monkeypatch.setattr(inbox_module, "turn_append", _boom)
 
-    results = ingest(repo, adapter, actor="board")
+    results = ingest(repo, adapter, actor="board", allowed_actors=frozenset({"denis"}))
 
     assert results[0].result == "rejected"
     assert not list((repo / turn.ITEMS).glob("*.jsonl"))  # no item file was left behind
@@ -306,8 +335,8 @@ def test_create_is_idempotent_by_event_id(repo: Path) -> None:
     adapter.threads["1"] = Thread(item_id="")
     adapter.queued_events = [_event("e1", "create", {"title": "g", "body": "m", "ref": "1"})]
 
-    first = ingest(repo, adapter, actor="board")
-    second = ingest(repo, adapter, actor="board")  # same event still "queued" (fake never drains)
+    first = ingest(repo, adapter, actor="board", allowed_actors=frozenset({"denis"}))
+    second = ingest(repo, adapter, actor="board", allowed_actors=frozenset({"denis"}))  # same event still "queued" (fake never drains)
 
     assert len(first) == 1
     assert len(second) == 0  # already consumed -- not re-created

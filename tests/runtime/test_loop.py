@@ -693,7 +693,7 @@ def test_board_config_requires_a_positive_poll_interval() -> None:
     from tests.board.fake_adapter import FakeAdapter
 
     with pytest.raises(loop_mod.LoopError):
-        loop_mod.BoardConfig(adapter=FakeAdapter(), poll_seconds=0)
+        loop_mod.BoardConfig(adapter=FakeAdapter(), allowed_actors=frozenset({"denis"}), poll_seconds=0)
 
 
 def test_a_board_command_is_applied_but_never_invokes_the_executor_directly(
@@ -721,7 +721,7 @@ def test_a_board_command_is_applied_but_never_invokes_the_executor_directly(
 
     adapter = FakeAdapter()
     adapter.queued_events = [_board_priority_event(item_path.stem, "1")]
-    board = loop_mod.BoardConfig(adapter=adapter, poll_seconds=1)
+    board = loop_mod.BoardConfig(adapter=adapter, allowed_actors=frozenset({"denis"}), poll_seconds=1)
     clock = FakeClock(now=datetime(2026, 1, 1, tzinfo=UTC))
 
     report = run_loop(
@@ -770,7 +770,7 @@ def test_a_board_command_surfaces_as_a_turn_only_through_external_event(
     from tests.board.fake_adapter import FakeAdapter
 
     adapter = FakeAdapter()
-    board = loop_mod.BoardConfig(adapter=adapter, poll_seconds=1)
+    board = loop_mod.BoardConfig(adapter=adapter, allowed_actors=frozenset({"denis"}), poll_seconds=1)
 
     def plant_board_command() -> None:
         if clock.sleeps == 1:  # only once -- the first idle wait after the startup turn
@@ -815,7 +815,7 @@ def test_board_polling_has_its_own_cadence_independent_of_wake_poll_seconds(
             return super().list_events(since)
 
     adapter = CountingAdapter()
-    board = loop_mod.BoardConfig(adapter=adapter, poll_seconds=100)
+    board = loop_mod.BoardConfig(adapter=adapter, allowed_actors=frozenset({"denis"}), poll_seconds=100)
     clock = FakeClock(now=datetime(2026, 1, 1, tzinfo=UTC))
 
     run_loop(
@@ -842,7 +842,7 @@ def test_a_completed_turns_outcome_is_projected_to_the_board(places: Places, lim
     from tests.board.fake_adapter import FakeAdapter
 
     adapter = FakeAdapter()
-    board = loop_mod.BoardConfig(adapter=adapter, poll_seconds=60)
+    board = loop_mod.BoardConfig(adapter=adapter, allowed_actors=frozenset({"denis"}), poll_seconds=60)
     executor = BumpPriorityExecutor()
     clock = FakeClock(now=datetime(2026, 1, 1, tzinfo=UTC))
 
@@ -883,7 +883,7 @@ def test_the_board_reflects_pre_existing_queue_state_before_the_first_turn(
     from tests.board.fake_adapter import FakeAdapter
 
     adapter = FakeAdapter()
-    board = loop_mod.BoardConfig(adapter=adapter, poll_seconds=60)
+    board = loop_mod.BoardConfig(adapter=adapter, allowed_actors=frozenset({"denis"}), poll_seconds=60)
     clock = FakeClock(now=datetime(2026, 1, 1, tzinfo=UTC))
 
     run_loop(

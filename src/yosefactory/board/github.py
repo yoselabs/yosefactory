@@ -137,17 +137,24 @@ class GitHubIssuesAdapter:
         self._api([f"repos/{self.repo}/issues/{ref}", "-X", "PATCH", "-f", "state=closed"])
 
     def list_events(self, since: str | None) -> Sequence[Event]:
-        """No login-based actor guard, deliberately -- see the module docstring's own correction.
+        """No *self*-filter here, deliberately -- this adapter never excludes its own credential's
+        login from the events it returns.
 
         A comment is a command only if it parses as one (`parse_command`), and every comment this
         adapter itself posts (`comment()`'s rejections, `close()`'s resolution note) is free text
         that never starts with `/`, so `parse_command` already excludes them regardless of who
-        posted them. A login check would be redundant *and* wrong on any single-account setup --
-        Denis's own operator session and the adapter's credential can be the same GitHub identity,
-        which is exactly this change's own live-test setup and a realistic early-deployment shape
-        before a separate bot account exists. Found live: an earlier version filtered by login and
-        silently ate every test command because the test posted as the same account the adapter
-        reads as.
+        posted them. A self-login check would be redundant *and* wrong on any single-account
+        setup -- Denis's own operator session and the adapter's credential can be the same GitHub
+        identity, which is exactly this change's own live-test setup and a realistic early-
+        deployment shape before a separate bot account exists. Found live: an earlier version
+        filtered by login and silently ate every test command because the test posted as the same
+        account the adapter reads as.
+
+        This is not precedent against an *allowlist* -- a caller-supplied set of who is permitted
+        to originate commands at all, unrelated to which login this adapter authenticates as. That
+        check lives one layer up, in `board.inbox.ingest()`'s required `allowed_actors`: every
+        `Event` this method returns still carries its real `actor`, unfiltered, so `ingest()` can
+        apply that gate itself.
         """
         events: list[Event] = []
         for issue in self._issues():

@@ -150,14 +150,26 @@ def _apply_create(repo: Path, payload: dict[str, Any], *, actor: str) -> tuple[s
     return item_id, f"created {item_id} from tracker issue", item_path
 
 
-def ingest(repo: Path, adapter: BoardAdapter, *, actor: str) -> list[IngestResult]:
+def ingest(repo: Path, adapter: BoardAdapter, *, actor: str, allowed_actors: frozenset[str]) -> list[IngestResult]:
     """Apply every unconsumed board command. Never raises on a single command's own rejection.
 
     Every event, applied or rejected, is committed before this returns (board-projection/inbox:
     "a command's effect is committed to git, not left in the working tree") -- one `run_id` shared
     across the whole call, so an `ingest()` pass reads as one platform action in `git log`, the
     same way one `take_turn` call is one action regardless of how many paths it touches.
+
+    `allowed_actors` is required, with no default: workspaces are public repositories, and without
+    an allowlist a stranger's issue or comment becomes a work item an agent spends quota on. This
+    is deliberately not the login-based *self*-filter `GitHubIssuesAdapter.list_events` rejects --
+    that was about excluding the adapter's own credential, which breaks when the operator and the
+    bot share one account. This is the opposite check: an explicit set of *who is allowed in at
+    all*, unrelated to which login the adapter itself authenticates as. Matching is
+    case-insensitive (GitHub logins are not case-sensitive). A refused event is skipped before it
+    is recorded as consumed or acted on in any way -- no item, no comment, no label -- so adding a
+    login to the allowlist later makes that person's existing events ingestable with nothing to
+    unwind.
     """
+    allowed_casefolded = {login.casefold() for login in allowed_actors}
     path = _consumed_path(repo)
     consumed_ids, since = _load_consumed(path)
     results: list[IngestResult] = []
@@ -165,6 +177,8 @@ def ingest(repo: Path, adapter: BoardAdapter, *, actor: str) -> list[IngestResul
     for event in adapter.list_events(since):
         if event.event_id in consumed_ids:
             continue  # already processed in a prior run over an overlapping window
+        if event.actor.casefold() not in allowed_casefolded:
+            continue  # not an allowed author -- never recorded as consumed, never commented on
         ref = event.payload.get("ref")
 
         if event.type == "create":

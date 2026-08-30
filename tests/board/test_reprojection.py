@@ -181,7 +181,7 @@ def test_rejected_command_is_a_visible_reply_on_the_thread(repo: Path) -> None:
 
     results: list = []
     for _ in range(10):
-        results = ingest(repo, adapter, actor="board-acid-test")
+        results = ingest(repo, adapter, actor="board-acid-test", allowed_actors=frozenset({BOARD_REPO.split("/")[0]}))
         if results:
             break
         time.sleep(2)

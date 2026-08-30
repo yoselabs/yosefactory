@@ -160,9 +160,17 @@ class BoardConfig:
     `actor` is the git actor board-originated commits are recorded under, distinct from the
     loop's own `owner` -- so a later reader of `git log` can tell "Denis typed this on his phone"
     from "the loop decided this," even though both end up as ordinary commits in the same queue.
+
+    `allowed_actors` is required, with no default, because it is threaded straight through to
+    `ingest()`'s own required `allowed_actors` (board/inbox.py: workspaces are public, so an
+    ungated intake turns a stranger's issue into a work item). Resolving *where* the allowlist
+    comes from -- a config file, a flag -- is this constructor's caller's job, not this
+    dataclass's or `ingest()`'s: `BoardAdapter` exists precisely to keep forge-specific lookups
+    (a default branch, a `.factory/config.json`) out of this interface.
     """
 
     adapter: BoardAdapter
+    allowed_actors: frozenset[str]
     actor: str = "board"
     poll_seconds: int = 60
 
@@ -358,7 +366,7 @@ def run_loop(
         now = now_fn()
         if last_board_poll is not None and (now - last_board_poll).total_seconds() < board.poll_seconds:
             return
-        ingest(places.queue, board.adapter, actor=board.actor)
+        ingest(places.queue, board.adapter, actor=board.actor, allowed_actors=board.allowed_actors)
         last_board_poll = now
 
     def project_to_board() -> None:
@@ -553,6 +561,15 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
     parser.add_argument("--board-poll-seconds", type=int, default=60, help="Ignored unless --board-repo is given.")
     parser.add_argument("--board-actor", default="board", help="Ignored unless --board-repo is given.")
     parser.add_argument(
+        "--board-allowed-actor",
+        action="append",
+        default=None,
+        metavar="LOGIN",
+        help="A GitHub login permitted to originate board commands (repeatable). Required if "
+        "--board-repo is given -- ingest() takes no default allowlist, since workspaces are "
+        "public and an ungated intake turns a stranger's issue into a work item.",
+    )
+    parser.add_argument(
         "--publish",
         action="store_true",
         help="Reopen the push grant for an unattended invocation (scheduled_main). Ignored on the "
@@ -608,8 +625,14 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
     if args.board_repo is not None:
         from yosefactory.board.github import GitHubIssuesAdapter
 
+        if not args.board_allowed_actor:
+            parser.error("--board-allowed-actor is required (repeatable) when --board-repo is given")
+
         board_config = BoardConfig(
-            adapter=GitHubIssuesAdapter(args.board_repo), actor=args.board_actor, poll_seconds=args.board_poll_seconds
+            adapter=GitHubIssuesAdapter(args.board_repo),
+            allowed_actors=frozenset(args.board_allowed_actor),
+            actor=args.board_actor,
+            poll_seconds=args.board_poll_seconds,
         )
 
     def executor(
