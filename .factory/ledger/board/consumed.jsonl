@@ -1,2 +1,3 @@
 {"actor": "iorlas", "board_ts": "2026-08-17T05:16:47Z", "consumed_at": "2026-08-30T18:40:29.516436+00:00", "detail": "item 'itm-20260817T051620Z-8e9d657b' not found", "event_id": "gh-comment-5312146729", "result": "rejected", "type": "set_priority"}
 {"actor": "iorlas", "board_ts": "2026-08-30T18:40:09Z", "consumed_at": "2026-08-30T18:40:30.749823+00:00", "detail": "created itm-20260830T184030Z-940096f9 from tracker issue", "event_id": "gh-issue-create-3", "result": "applied", "type": "create"}
+{"actor": "iorlas", "board_ts": "2026-08-30T19:43:19Z", "consumed_at": "2026-08-30T19:45:24.626853+00:00", "detail": "created itm-20260830T194523Z-4fba85f5 from tracker issue", "event_id": "gh-issue-create-4", "result": "applied", "type": "create"}
