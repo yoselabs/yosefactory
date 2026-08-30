@@ -2,7 +2,7 @@
 
 This module is data plus small readers. The fold lives in `eventlog` and knows nothing about items.
 
-`terminal` is a predicate over five states, never a state of its own — architecture.md §3. If it were
+`terminal` is a predicate over six states, never a state of its own — architecture.md §3. If it were
 a state, something would have to write it, and every finished item would then have two
 representations of the same fact.
 """
@@ -35,7 +35,7 @@ STATES = frozenset(
     }
 )
 
-TERMINAL = frozenset({"done", "cancelled", "poison", "duplicate", "abandoned"})
+TERMINAL = frozenset({"done", "cancelled", "poison", "duplicate", "abandoned", "falsified"})
 
 _AWAITING_KIND = "question|request|item"
 _ON_TIMEOUT = r"escalate|default:.+|abandon:.+"

@@ -16,7 +16,7 @@ def test_falsified_item_stays_readable() -> None:
     item = backlog.load(FIXTURES / "itm-0007.jsonl")
 
     assert item.state == "falsified"
-    assert item.terminal is False
+    assert item.terminal is True
 
     frame = backlog.frame(item)
     assert frame["goal"] == "Cut a2web cold-start fetch latency below 400ms"

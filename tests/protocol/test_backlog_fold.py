@@ -140,6 +140,52 @@ def test_a_poisoned_item_is_terminal_and_only_reachable_from_failed() -> None:
         fold(CREATED, CLAIMED, STARTED, poisoned)
 
 
+# ADR-0022: `falsified` joins `TERMINAL` -- a closed-with-a-pointer-forward record, structurally
+# identical to `duplicate`. Nothing may act against a falsified item except `note`.
+
+FALSIFIED = {
+    "event_id": "e4",
+    "ts": "2026-08-14T09:05:00Z",
+    "actor": "t1",
+    "event": "falsified",
+    "by": "disproven by the 38ms result",
+    "successor": "itm-successor",
+}
+
+
+def test_a_falsified_item_is_terminal() -> None:
+    item = fold(CREATED, CLAIMED, STARTED, FALSIFIED)
+
+    assert item.state == "falsified"
+    assert item.terminal is True
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        {"event": "cancelled", "reason": "superseded"},
+        {"event": "duplicate", "survivor": "itm-0002"},
+        {"event": "abandoned", "reason": "no longer worth it"},
+        {"event": "priority_set", "priority": 5},
+        {"event": "frame_amended", "frame": {"goal": "new goal"}},
+    ],
+)
+def test_events_from_any_non_terminal_are_illegal_once_falsified(event: dict) -> None:
+    record = {"event_id": "e5", "ts": "2026-08-14T09:06:00Z", "actor": "t1", **event}
+
+    with pytest.raises(LogError, match="illegal from terminal state 'falsified'"):
+        fold(CREATED, CLAIMED, STARTED, FALSIFIED, record)
+
+
+def test_a_note_is_still_legal_after_falsified() -> None:
+    note = {"event_id": "e5", "ts": "2026-08-14T09:06:00Z", "actor": "t1", "event": "note", "body": "seen on the board"}
+
+    item = fold(CREATED, CLAIMED, STARTED, FALSIFIED, note)
+
+    assert item.state == "falsified"
+    assert item.terminal is True
+
+
 def test_claims_counts_the_whole_history_not_just_the_current_lease() -> None:
     """`lease()` reads `None` once an item is back to `ready` (`released` or `reclaimed`), so a
     claim-attempt computation keyed off it alone always restarts at zero -- unstick-the-backlog /
