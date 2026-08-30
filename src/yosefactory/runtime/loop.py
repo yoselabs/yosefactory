@@ -565,9 +565,11 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
         action="append",
         default=None,
         metavar="LOGIN",
-        help="A GitHub login permitted to originate board commands (repeatable). Required if "
-        "--board-repo is given -- ingest() takes no default allowlist, since workspaces are "
-        "public and an ungated intake turns a stranger's issue into a work item.",
+        help="A GitHub login permitted to originate board commands (repeatable). Overrides the "
+        "workspace's own <repo>/.factory/config.json when given; otherwise --board-repo requires "
+        "that file, loaded through protocol.workspace_config -- ingest() takes no default "
+        "allowlist, since workspaces are public and an ungated intake turns a stranger's issue "
+        "into a work item.",
     )
     parser.add_argument(
         "--publish",
@@ -625,12 +627,27 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
     if args.board_repo is not None:
         from yosefactory.board.github import GitHubIssuesAdapter
 
-        if not args.board_allowed_actor:
-            parser.error("--board-allowed-actor is required (repeatable) when --board-repo is given")
+        if args.board_allowed_actor:
+            board_allowed_actors = frozenset(args.board_allowed_actor)
+        else:
+            # `--board-allowed-actor` not given: fall back to the workspace's own config rather
+            # than defaulting to an open allowlist. `repo` is already the caller's resolved
+            # checkout (which ref counts is the caller's rule, not this module's -- see
+            # `protocol.workspace_config`), so the local `.factory/config.json` there is read
+            # exactly like any other file in the workspace.
+            from yosefactory.protocol.workspace_config import WorkspaceConfigError
+            from yosefactory.protocol.workspace_config import load as load_workspace_config
+
+            try:
+                board_allowed_actors = load_workspace_config(repo / ".factory" / "config.json").allowed_actors
+            except WorkspaceConfigError as exc:
+                parser.error(
+                    f"--board-allowed-actor was not given and the workspace config could not supply one: {exc}"
+                )
 
         board_config = BoardConfig(
             adapter=GitHubIssuesAdapter(args.board_repo),
-            allowed_actors=frozenset(args.board_allowed_actor),
+            allowed_actors=board_allowed_actors,
             actor=args.board_actor,
             poll_seconds=args.board_poll_seconds,
         )
