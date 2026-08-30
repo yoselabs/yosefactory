@@ -752,6 +752,16 @@ def test_the_skill_stays_short() -> None:
     assert words < 120, "S098: a 1,500-word prompt performed worse than a 103-word one"
 
 
+def test_the_skill_still_teaches_the_commit_precondition() -> None:
+    """Regression only: guards the instruction's presence, not that an agent obeys it. The
+    harness's own `Co-Authored-By: Claude` line died silently this same way once — a prose
+    convention nothing asserted (`orchestration.md`, "Commit attribution")."""
+    text = Path("workflows/turn-skill.md").read_text(encoding="utf-8")
+
+    assert "commit" in text.lower()
+    assert "git add -a" in text.lower(), "the forbidden blanket-stage form must be named, not implied"
+
+
 # 9. Acceptance
 
 

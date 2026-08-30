@@ -112,6 +112,15 @@ expected type(s). `unblocked`'s `resolution` is declared as either a string (the
 case) or a mapping (the answer case): both are legal shapes for the same field, and only a third
 shape is rejected.
 
+**`done`'s two carried fields are not the whole precondition.** Proposing `done` SHALL find the
+workspace's git tree already clean — the agent's own work committed before the proposal is written,
+not after. The agent commits with explicit pathspecs naming the files it changed. `git add -A` (or
+any other blanket stage) SHALL NOT be used: it stages the whole tree indiscriminately, including the
+platform's own bookkeeping, which under a nested queue (D033) lives inside the workspace itself at
+`<workspace>/.factory/` — a directory the agent's own commit must never claim as its own. A `done`
+proposed against an uncommitted tree is refused at the gate (`gate_rejected`), regardless of whether
+the underlying work is correct.
+
 #### Scenario: An unknown event fails loudly
 
 - **WHEN** a log contains an event named `archived`, which is not in the vocabulary
@@ -155,6 +164,21 @@ shape is rejected.
 - **THEN** reading the item fails and names the field, the value, and the expected type
 - **AND** the same posture applies to any other event whose carried field has a declared type, the
   same way a malformed `on_timeout` fails wherever it appears
+
+#### Scenario: A `done` proposal requires the workspace already committed
+
+- **WHEN** an agent proposes `done` while the workspace's git tree has an uncommitted change
+- **THEN** the verification gate refuses it and the item receives `gate_rejected`, not `done`
+- **AND** this holds even when the uncommitted change is exactly the correct, finished work — the
+  gate does not distinguish "forgot to commit" from "did the wrong thing"
+
+#### Scenario: The agent's own commit does not sweep the platform's bookkeeping
+
+- **WHEN** an agent commits its own work before proposing `done` in a workspace using a nested queue
+  (`<workspace>/.factory/`, D033)
+- **THEN** the agent's commit names only the files it changed, by explicit pathspec
+- **AND** the agent does not use `git add -A` or any other blanket stage that would include
+  `.factory/` in a commit the agent authors
 
 ### Requirement: The frame
 
