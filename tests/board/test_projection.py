@@ -56,6 +56,23 @@ def test_terminal_item_is_closed(tmp_path: Path) -> None:
     assert adapter.threads[refs["itm-done"]].resolution == "done"
 
 
+def test_falsified_item_is_closed(tmp_path: Path) -> None:
+    """ADR-0022: `falsified` joined `TERMINAL`, so the board's close path now fires for it too."""
+    (tmp_path / turn.ITEMS).mkdir(parents=True, exist_ok=True)
+    path = tmp_path / turn.ITEMS / "itm-falsified.jsonl"
+    turn.append(path, backlog.ITEM, {"event": "created", "loop": "l", "frame": FRAME}, actor="denis")
+    claim = {"event": "claimed", "owner": "o", "expires_at": "2099-01-01T00:00:00+00:00", "attempt": 1}
+    turn.append(path, backlog.ITEM, claim, actor="o")
+    turn.append(path, backlog.ITEM, {"event": "started"}, actor="o")
+    turn.append(path, backlog.ITEM, {"event": "falsified", "by": "disproven", "successor": "itm-successor"}, actor="o")
+    adapter = FakeAdapter()
+
+    refs = project_all(tmp_path, adapter)
+
+    assert adapter.threads[refs["itm-falsified"]].closed
+    assert adapter.threads[refs["itm-falsified"]].resolution == "falsified"
+
+
 def test_reprojection_after_destruction_matches(tmp_path: Path) -> None:
     """The acid test's own shape, against the fake -- see test_reprojection.py for the live one."""
     _seed_item(tmp_path, "itm-a")

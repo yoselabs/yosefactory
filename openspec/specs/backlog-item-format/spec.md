@@ -58,7 +58,7 @@ Replay order SHALL be deterministic and independent of the order lines happen to
 
 An item SHALL at all times be in exactly one of: `ready`, `claimed`, `doing`, `blocked`, `falsified`, `failed`, `done`, `cancelled`, `duplicate`, `needs_split`, `snoozed`, `poison`, `abandoned`.
 
-`terminal` SHALL be a derived predicate, not a state: an item is terminal when its state is one of `done`, `cancelled`, `poison`, `duplicate`, `abandoned` ([[architecture.md §3]]).
+`terminal` SHALL be a derived predicate, not a state: an item is terminal when its state is one of `done`, `cancelled`, `poison`, `duplicate`, `abandoned`, `falsified` ([[architecture.md §3]]).
 
 No event SHALL be accepted against an item that is already terminal, except `note`.
 
@@ -195,7 +195,7 @@ The frame SHALL be amended only by appending a `frame_amended` event carrying th
 
 ### Requirement: Falsification emits a successor and loses nothing
 
-A `falsified` event SHALL carry `by` — what falsified the item, in full, not a reference to something outside the log — and `successor`, the id of the item created to carry the work forward ([[D019]]).
+A `falsified` event SHALL carry `by` — what falsified the item, in full, not a reference to something outside the log — and `successor`, the id of the item created to carry the work forward ([[D019]]). The falsified item is terminal; the successor carries the work onward.
 
 The successor's `created` event SHALL carry `predecessor`, the falsified item's id, and SHALL carry the falsification as input to its own frame.
 
@@ -204,7 +204,7 @@ Both links SHALL be written by appending. Neither item's earlier lines are touch
 #### Scenario: The falsified item and its successor round-trip
 
 - **WHEN** an item is falsified and its successor created
-- **THEN** the falsified item reads as state `falsified`, with its original frame, its full trail, and `successor` pointing at the new item
+- **THEN** the falsified item reads as state `falsified`, terminal, with its original frame, its full trail, and `successor` pointing at the new item
 - **AND** the successor reads as state `ready`, with `predecessor` pointing back and its frame naming what falsified the predecessor
 - **AND** following `successor` forward and `predecessor` back returns to the item started from
 - **AND** no field present before the falsification is absent after it
