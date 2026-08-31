@@ -298,7 +298,7 @@ def run(
     """
     policy = policy or IsolationPolicy()
     transcript = (transcripts_dir if transcripts_dir is not None else runs_dir) / f"{run_id}.stream.jsonl"
-    reader = StreamReader(transcript, sink=trace_sink)
+    reader = StreamReader(transcript, sink=trace_sink, workspace_root=str(workspace))
 
     def verdict() -> Outcome | None:
         reader.poll()

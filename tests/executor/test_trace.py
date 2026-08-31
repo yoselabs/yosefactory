@@ -7,6 +7,7 @@ own convention): `assistant`/`user`/`result`, never invented keys.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from yosefactory.executor.stream import StreamReader
@@ -210,6 +211,33 @@ def test_replaying_a_saved_stream_reproduces_the_same_lines(tmp_path: Path) -> N
         return sunk
 
     assert replay() == replay()
+
+
+def test_replaying_reproduces_the_same_lines_from_two_different_working_directories(tmp_path: Path) -> None:
+    """Relativisation travels with the stream (`workspace_root`), never re-derived from the ambient
+    process's own repo root -- the defect this pair of directories reproduces."""
+    events = [CONTAINER_PATH_CALL, READ_RESULT]
+    path = tmp_path / "s.stream.jsonl"
+    path.write_text("".join(json.dumps(e) + "\n" for e in events), encoding="utf-8")
+
+    here, elsewhere = tmp_path / "here", tmp_path / "elsewhere"
+    here.mkdir()
+    elsewhere.mkdir()
+
+    def replay_from(cwd: Path) -> list[str]:
+        previous = Path.cwd()
+        os.chdir(cwd)
+        try:
+            sunk: list[str] = []
+            StreamReader(path, sink=sunk.append, workspace_root="/data/workspace").poll()
+            return sunk
+        finally:
+            os.chdir(previous)
+
+    lines_a = replay_from(here)
+    lines_b = replay_from(elsewhere)
+    assert lines_a == lines_b
+    assert lines_a == [" 0:00  \U0001f4d6 read  src/yosefactory/executor/stream.py"]
 
 
 def test_stream_reader_sink_is_none_by_default_and_verdict_logic_is_unaffected(tmp_path: Path) -> None:

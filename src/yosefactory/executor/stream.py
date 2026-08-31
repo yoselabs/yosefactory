@@ -135,8 +135,15 @@ class StreamReader:
     # -- it observes every event `consume()` already parses, and touches none of the state
     # `classify()`/`turns_taken()` read.
     sink: Callable[[str], None] | None = None
+    # The traced run's own workspace, threaded to `Tracer` for path relativisation -- not the
+    # rendering process's, which is a different place whenever this reader replays a saved stream
+    # from outside the run's own container. `None` keeps `Tracer`'s own container-mount fallback.
+    workspace_root: str | None = None
     _offset: int = field(default=0, repr=False)
-    _tracer: Tracer = field(default_factory=Tracer, repr=False)
+    _tracer: Tracer = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._tracer = Tracer() if self.workspace_root is None else Tracer(workspace_root=self.workspace_root)
 
     def poll(self) -> None:
         """Consume whole lines written since the last call. Safe to call when the file is absent."""
