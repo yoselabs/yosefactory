@@ -17,6 +17,17 @@ boundary between one attempt and the next. `current_stream` is the tool trace fo
 attempt (in progress or just finished); earlier attempts collapse to their `gate_rejected` report
 text, since a past attempt's own stream is not this function's to read unless the caller passes one
 in via `prior_streams`.
+
+The status bar's `in / out` figure is the *last turn's* token usage, not a sum across the run.
+`terminal.usage` (the `result` event) is a running total over every API call the session made; on a
+context that gets re-sent and re-read every turn, summing `cache_read_input_tokens` across turns
+counts the same tokens once per turn and grows with turn count alone -- a 66-turn run reads "6033K
+in" against "27K out", a ratio that says how long the run was, not how full the context got. The
+last turn's own `usage` block (`input_tokens + cache_creation_input_tokens + cache_read_input_tokens`
+against that same call's `output_tokens`) is the size of the context as it stood when the run ended,
+in the same unit on both sides of the `/` -- what a reader can sanity-check the window against.
+Total cost across the run is already reported separately (`total_cost_usd`), which is the right place
+for "how much did this consume" to live.
 """
 
 from __future__ import annotations
@@ -200,20 +211,18 @@ def _status_bar(stream_path: Path, workspace_root: str | None) -> str:
     reader = StreamReader(stream_path, workspace_root=workspace_root)
     reader.poll()
     terminal: dict[str, Any] = reader.terminal or {}
-    usage: dict[str, Any] = terminal.get("usage") or {}
+    usage: dict[str, Any] = reader.last_usage  # the last API call's own usage -- see module docstring
     turns = int(terminal.get("num_turns") or reader.turns)
     cost = float(terminal.get("total_cost_usd") or 0.0)
     duration_ms = terminal.get("duration_ms")
     elapsed = _format_duration(duration_ms) if isinstance(duration_ms, (int, float)) else "?:??"
     model = (reader.init.model if reader.init else "") or "unknown model"
-    # `usage.input_tokens` alone is the *uncached* remainder, routinely two orders of magnitude
-    # below what was actually sent -- most of a long run's input rides on cache reads/writes.
-    input_total = (
+    context_size = (
         int(usage.get("input_tokens") or 0)
         + int(usage.get("cache_creation_input_tokens") or 0)
         + int(usage.get("cache_read_input_tokens") or 0)
     )
-    in_tok = _format_tokens(input_total)
+    in_tok = _format_tokens(context_size)
     out_tok = _format_tokens(int(usage.get("output_tokens") or 0))
     return (
         f"{_ROBOT} {model} · \U0001f4ca {turns} turns · \U0001f4ac {in_tok} in / {out_tok} out "
