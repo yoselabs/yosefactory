@@ -130,6 +130,11 @@ class StreamReader:
     rate_limited: bool = False
     init: InitFacts | None = None
     terminal: dict[str, Any] | None = None
+    # The most recent `assistant` message's own `usage` block -- one API call's actual token counts,
+    # not a running total. `terminal.usage` sums every call the session made, so on a long run its
+    # `cache_read_input_tokens` counts the same re-read context once per turn and grows with turn
+    # count; this is the size of the context as of the last call, which does not.
+    last_usage: dict[str, Any] = field(default_factory=dict)
     # A sink, not a hardcoded print: `None` is silent (every existing caller, every test), and a
     # caller that wants a live trace passes a callable. Kept independent of the verdict logic below
     # -- it observes every event `consume()` already parses, and touches none of the state
@@ -172,6 +177,10 @@ class StreamReader:
             self.terminal = event
         elif kind == "rate_limit_event":
             self.rate_limited = True
+        elif kind == "assistant":
+            usage = event.get("message", {}).get("usage")
+            if isinstance(usage, dict):
+                self.last_usage = usage
         elif kind == "system":
             subtype = event.get("subtype")
             if subtype == "post_turn_summary":

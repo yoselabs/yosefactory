@@ -22,7 +22,10 @@ READ_CALL = {
 BASH_CALL = {
     "type": "assistant",
     "timestamp": "2026-08-31T00:00:11.000Z",
-    "message": {"content": [{"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "make check"}}]},
+    "message": {
+        "content": [{"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "make check"}}],
+        "usage": {"input_tokens": 2, "cache_creation_input_tokens": 998, "cache_read_input_tokens": 84000, "output_tokens": 634},
+    },
 }
 BASH_RESULT = {
     "type": "user",
@@ -141,7 +144,7 @@ def test_renders_a_real_stream_and_ledger_under_the_cap(tmp_path: Path) -> None:
     assert "claude-sonnet-5" in body
     assert "12 turns" in body
     assert "$0.42" in body
-    assert "85K in / 23K out" in body
+    assert "85K in / 634 out" in body
 
 
 def test_completed_attempt_collapsed_current_attempt_open(tmp_path: Path) -> None:
@@ -227,9 +230,38 @@ def test_missing_stream_does_not_raise(tmp_path: Path) -> None:
     assert "(no tool calls)" in body
 
 
-def test_input_tokens_include_cache_reads_in_the_same_unit_as_output(tmp_path: Path) -> None:
-    """Measured off a real run: `usage.input_tokens` alone was 132 against 5.9M cache-read tokens --
-    almost all of the real input rides on the cache, and the status bar must count it in."""
+def test_input_tokens_report_the_last_turn_not_a_cumulative_sum(tmp_path: Path) -> None:
+    """Regression for the pattern behind #17 and #21: `usage.input_tokens` alone under-counted (#17),
+    then summing every turn's `cache_read_input_tokens` into it over-counted -- the same re-read
+    context gets billed and counted again each turn, so the total grows with turn count alone (a
+    66-turn run read "6033K in / 27K out"). The status bar reports the last call's own usage instead,
+    so a long run's figure reflects how full the context got, not how many turns it took."""
+    early_call = {
+        "type": "assistant",
+        "timestamp": "2026-08-31T00:00:03.000Z",
+        "message": {
+            "content": [{"type": "tool_use", "id": "t1", "name": "Read", "input": {"file_path": "src/x.py"}}],
+            "usage": {
+                "input_tokens": 2,
+                "cache_creation_input_tokens": 16_466,
+                "cache_read_input_tokens": 24_310,
+                "output_tokens": 148,
+            },
+        },
+    }
+    last_call = {
+        "type": "assistant",
+        "timestamp": "2026-08-31T00:05:00.000Z",
+        "message": {
+            "content": [{"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "make check"}}],
+            "usage": {
+                "input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 98_000,
+                "output_tokens": 634,
+            },
+        },
+    }
     result_event = {
         **RESULT_EVENT,
         "usage": {
@@ -239,11 +271,13 @@ def test_input_tokens_include_cache_reads_in_the_same_unit_as_output(tmp_path: P
             "output_tokens": 26_982,
         },
     }
-    stream = _write_stream(tmp_path / "s.stream.jsonl", [INIT_EVENT, READ_CALL, result_event])
+    stream = _write_stream(tmp_path / "s.stream.jsonl", [INIT_EVENT, early_call, last_call, result_event])
 
     body = trace_comment.render(stream, None)
 
-    assert "6033K in" in body
+    assert "98K in / 634 out" in body
+    assert "6033K" not in body
+    assert "5942K" not in body
 
 
 def test_done_item_renders_a_closed_banner(tmp_path: Path) -> None:
