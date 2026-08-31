@@ -13,15 +13,31 @@ which is what lets a milestone-comment renderer trust it after the run is long g
 Tool *content*, not tool names: `read src/x.py`, not `Read`. Everything here truncates -- a tool
 input can carry an arbitrary string, and truncation is the only defence this module offers against
 printing a secret that happened to be a bash argument or a file's contents.
+
+Paths print repo-relative (`src/x.py`, not `/data/workspace/src/x.py`) -- the container bind mount
+is the same eleven characters on every line and means nothing to a reader who never had it mounted.
+A path outside the repo root (`/app/...`, the image's own tree) is left alone: it is a genuinely
+different place, not the same tree with a different prefix, and collapsing the two would make them
+indistinguishable.
+
+The `→` line after a bash call states a *shape*, not whatever text happened to come last -- the
+last line of a `sed -n` dump is usually a closing paren, not an answer. In order: a non-empty
+`stderr` wins outright (the error, not the last line of unrelated stdout); failing that, a test-count
+line (`495 passed, 11 deselected in 15.01s`) anywhere in the output wins over whatever follows it;
+failing that, a `grep`/`find`-shaped command reports a match count with the first match shown;
+failing that, multi-line output reports its line count; a single line is shown as-is.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
+
+from yosefactory.paths import RepoRootNotFound, repo_root
 
 _TEXT_LIMIT = 100
 _COMMAND_LIMIT = 100
@@ -35,6 +51,9 @@ _ICONS = {
     "write": "\U0001f527 write ",
     "bash": "\U0001f9ea bash  ",
 }
+
+_TEST_COUNT_RE = re.compile(r"\d+ (?:passed|failed|error|skipped|deselected|warning)s?\b")
+_SEARCH_CMD_RE = re.compile(r"(?:^|[|;&]|\s)(?:grep|rg|find)\b")
 
 
 def _parse_ts(raw: Any) -> datetime | None:
@@ -51,8 +70,19 @@ def _truncate(text: str, limit: int) -> str:
     return collapsed if len(collapsed) <= limit else collapsed[: limit - 1] + "…"
 
 
+def _relativize(path: str) -> str:
+    try:
+        root = str(repo_root())
+    except RepoRootNotFound:
+        return path
+    if path == root:
+        return "."
+    prefix = root if root.endswith("/") else root + "/"
+    return path[len(prefix) :] if path.startswith(prefix) else path
+
+
 def _diff_size(structured_patch: Any) -> str | None:
-    if not isinstance(structured_patch, list):
+    if not isinstance(structured_patch, list) or not structured_patch:
         return None
     added = removed = 0
     for hunk in structured_patch:
@@ -68,13 +98,39 @@ def _diff_size(structured_patch: Any) -> str | None:
     return f"(+{added} -{removed})"
 
 
+def _write_size(content: Any) -> str | None:
+    if not isinstance(content, str) or not content:
+        return None
+    kib = len(content.encode("utf-8")) / 1024
+    if kib >= 1:
+        return f"{kib:.1f}KB"
+    lines = content.count("\n") + (0 if content.endswith("\n") else 1)
+    return f"{lines} line{'' if lines == 1 else 's'}"
+
+
+def _bash_summary(command: str, stdout: str, stderr: str) -> str | None:
+    if stderr.strip():
+        return _truncate(stderr.strip().splitlines()[0], _RESULT_LIMIT)
+    lines = [line for line in stdout.splitlines() if line.strip()]
+    if not lines:
+        return None
+    for line in reversed(lines):
+        if _TEST_COUNT_RE.search(line):
+            return _truncate(line.strip(), _RESULT_LIMIT)
+    if len(lines) > 1 and _SEARCH_CMD_RE.search(command):
+        return _truncate(f"{len(lines)} matches: {lines[0]}", _RESULT_LIMIT)
+    if len(lines) > 1:
+        return _truncate(f"{len(lines)} lines", _RESULT_LIMIT)
+    return _truncate(lines[0], _RESULT_LIMIT)
+
+
 def _tool_line(name: str, tool_input: Mapping) -> str:
     lname = name.lower()
     icon = _ICONS.get(lname, "\U0001f529 tool  ")
     if lname == "read":
-        return f"{icon}{_truncate(str(tool_input.get('file_path', '')), _PATH_LIMIT)}"
+        return f"{icon}{_truncate(_relativize(str(tool_input.get('file_path', ''))), _PATH_LIMIT)}"
     if lname in ("edit", "multiedit", "write"):
-        return f"{icon}{_truncate(str(tool_input.get('file_path', '')), _PATH_LIMIT)}"
+        return f"{icon}{_truncate(_relativize(str(tool_input.get('file_path', ''))), _PATH_LIMIT)}"
     if lname == "bash":
         return f"{icon}{_truncate(str(tool_input.get('command', '')), _COMMAND_LIMIT)}"
     summary = _truncate(json.dumps(tool_input, default=str), _COMMAND_LIMIT) if tool_input else ""
@@ -142,16 +198,22 @@ class Tracer:
                 break
         if not isinstance(tool_use_id, str) or tool_use_id not in self._pending:
             return []
-        name, _tool_input = self._pending.pop(tool_use_id)
+        name, tool_input = self._pending.pop(tool_use_id)
         lname = name.lower()
         result = event.get("tool_use_result")
         offset = self._offset(ts)
         if lname == "bash" and isinstance(result, dict):
-            out = str(result.get("stdout") or result.get("stderr") or "").strip().splitlines()
-            if not out:
+            command = str(tool_input.get("command", ""))
+            stdout = str(result.get("stdout") or "")
+            stderr = str(result.get("stderr") or "")
+            summary = _bash_summary(command, stdout, stderr)
+            if summary is None:
                 return []
-            return [f"{offset}        → {_truncate(out[-1], _RESULT_LIMIT)}"]
-        if lname in ("edit", "multiedit", "write") and isinstance(result, dict):
+            return [f"{offset}        → {summary}"]
+        if lname == "write" and isinstance(result, dict):
+            size = _write_size(result.get("content"))
+            return [f"{offset}        → {size}"] if size else []
+        if lname in ("edit", "multiedit") and isinstance(result, dict):
             size = _diff_size(result.get("structuredPatch"))
             if size:
                 return [f"{offset}        → {size}"]

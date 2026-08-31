@@ -209,6 +209,25 @@ def test_missing_stream_does_not_raise(tmp_path: Path) -> None:
     assert "(no tool calls)" in body
 
 
+def test_input_tokens_include_cache_reads_in_the_same_unit_as_output(tmp_path: Path) -> None:
+    """Measured off a real run: `usage.input_tokens` alone was 132 against 5.9M cache-read tokens --
+    almost all of the real input rides on the cache, and the status bar must count it in."""
+    result_event = {
+        **RESULT_EVENT,
+        "usage": {
+            "input_tokens": 132,
+            "cache_creation_input_tokens": 90_948,
+            "cache_read_input_tokens": 5_942_261,
+            "output_tokens": 26_982,
+        },
+    }
+    stream = _write_stream(tmp_path / "s.stream.jsonl", [INIT_EVENT, READ_CALL, result_event])
+
+    body = trace_comment.render(stream, None)
+
+    assert "6033K in" in body
+
+
 def test_done_item_renders_a_closed_banner(tmp_path: Path) -> None:
     stream = _write_stream(tmp_path / "s.stream.jsonl", [INIT_EVENT, READ_CALL, RESULT_EVENT])
     item = _write_item(

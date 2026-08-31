@@ -17,6 +17,61 @@ READ_CALL = {
     "timestamp": "2026-08-31T00:00:03.000Z",
     "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Read", "input": {"file_path": "src/x.py"}}]},
 }
+CONTAINER_PATH_CALL = {
+    "type": "assistant",
+    "timestamp": "2026-08-31T00:00:03.000Z",
+    "message": {
+        "content": [
+            {
+                "type": "tool_use",
+                "id": "t1c",
+                "name": "Read",
+                "input": {"file_path": "/data/workspace/src/yosefactory/executor/stream.py"},
+            }
+        ]
+    },
+}
+APP_PATH_CALL = {
+    "type": "assistant",
+    "timestamp": "2026-08-31T00:00:03.000Z",
+    "message": {
+        "content": [
+            {
+                "type": "tool_use",
+                "id": "t1a",
+                "name": "Read",
+                "input": {"file_path": "/app/openspec/specs/backlog-item-format/spec.md"},
+            }
+        ]
+    },
+}
+SED_CALL = {
+    "type": "assistant",
+    "timestamp": "2026-08-31T00:00:07.000Z",
+    "message": {"content": [{"type": "tool_use", "id": "t4", "name": "Bash", "input": {"command": "sed -n '1,400p' src/x.py"}}]},
+}
+SED_RESULT = {
+    "type": "user",
+    "timestamp": "2026-08-31T00:00:09.000Z",
+    "message": {"content": [{"type": "tool_result", "tool_use_id": "t4", "content": "..."}]},
+    "tool_use_result": {"stdout": "\n".join(f"line {i}" for i in range(312)), "stderr": ""},
+}
+WRITE_CALL = {
+    "type": "assistant",
+    "timestamp": "2026-08-31T05:26:00.000Z",
+    "message": {"content": [{"type": "tool_use", "id": "t5", "name": "Write", "input": {"file_path": "out/scratch.json", "content": "x"}}]},
+}
+WRITE_RESULT = {
+    "type": "user",
+    "timestamp": "2026-08-31T05:26:01.000Z",
+    "message": {"content": [{"type": "tool_result", "tool_use_id": "t5", "content": "written"}]},
+    "tool_use_result": {
+        "type": "create",
+        "filePath": "out/scratch.json",
+        "content": "line one\nline two\nline three\n",
+        "structuredPatch": [],
+    },
+}
 READ_RESULT = {
     "type": "user",
     "timestamp": "2026-08-31T00:00:04.000Z",
@@ -52,9 +107,7 @@ EDIT_RESULT = {
     "type": "user",
     "timestamp": "2026-08-31T00:00:11.500Z",
     "message": {"content": [{"type": "tool_result", "tool_use_id": "t3", "content": "edited"}]},
-    "tool_use_result": {
-        "structuredPatch": [{"lines": ["-old one", "-old two", "+new one", " context", "+new two", "+new three"]}]
-    },
+    "tool_use_result": {"structuredPatch": [{"lines": ["-old one", "-old two", "+new one", " context", "+new two", "+new three"]}]},
 }
 TEXT_EVENT = {
     "type": "assistant",
@@ -76,6 +129,32 @@ def test_read_call_shows_path_not_tool_name() -> None:
     assert len(lines) == 1
     assert "src/x.py" in lines[0]
     assert "Read" not in lines[0]
+
+
+def test_a_path_inside_the_workspace_mount_prints_repo_relative() -> None:
+    lines = Tracer().render(CONTAINER_PATH_CALL)
+    assert lines == [" 0:00  \U0001f4d6 read  src/yosefactory/executor/stream.py"]
+
+
+def test_a_path_outside_the_repo_root_is_left_alone() -> None:
+    lines = Tracer().render(APP_PATH_CALL)
+    assert lines == [" 0:00  \U0001f4d6 read  /app/openspec/specs/backlog-item-format/spec.md"]
+
+
+def test_a_sed_dump_result_reports_its_line_count_not_its_last_line() -> None:
+    tracer = Tracer()
+    tracer.render(SED_CALL)
+    lines = tracer.render(SED_RESULT)
+    assert lines == [" 0:02        → 312 lines"]
+
+
+def test_a_whole_file_write_reports_its_size_never_plus_zero_minus_zero() -> None:
+    tracer = Tracer()
+    tracer.render(WRITE_CALL)
+    lines = tracer.render(WRITE_RESULT)
+    assert len(lines) == 1
+    assert "(+0 -0)" not in lines[0]
+    assert "3 lines" in lines[0]
 
 
 def test_bash_shows_the_command_and_a_result_line() -> None:
