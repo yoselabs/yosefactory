@@ -21,11 +21,13 @@ Only whole lines are parsed — a half-written final line is a partial write, no
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from yosefactory.executor.outcome import FailureKind, RunOutcome
+from yosefactory.executor.trace import Tracer
 
 _AUTH_STATUSES = frozenset({401, 403})
 _RATE_LIMIT_STATUS = 429
@@ -128,7 +130,13 @@ class StreamReader:
     rate_limited: bool = False
     init: InitFacts | None = None
     terminal: dict[str, Any] | None = None
+    # A sink, not a hardcoded print: `None` is silent (every existing caller, every test), and a
+    # caller that wants a live trace passes a callable. Kept independent of the verdict logic below
+    # -- it observes every event `consume()` already parses, and touches none of the state
+    # `classify()`/`turns_taken()` read.
+    sink: Callable[[str], None] | None = None
     _offset: int = field(default=0, repr=False)
+    _tracer: Tracer = field(default_factory=Tracer, repr=False)
 
     def poll(self) -> None:
         """Consume whole lines written since the last call. Safe to call when the file is absent."""
@@ -171,6 +179,9 @@ class StreamReader:
                     permission_mode=str(event.get("permissionMode", "")),
                     model=str(event.get("model", "")),
                 )
+        if self.sink is not None:
+            for rendered in self._tracer.render(event):
+                self.sink(rendered)
 
     def turns_taken(self) -> int:
         self.poll()
