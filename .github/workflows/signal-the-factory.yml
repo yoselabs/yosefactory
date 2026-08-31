@@ -139,6 +139,20 @@ jobs:
           # The repository the factory should work in -- this one. Read from the event rather than
           # written down, so a fork or a rename cannot leave a stale name here.
           WORKSPACE: ${{ github.repository }}
+          # WHAT THE FACTORY PUTS IN ITS RUN NAME, AND NOTHING MORE. The dispatch still does not
+          # name an assignment (D034): the turn reads the whole queue and may legitimately work on
+          # something other than the issue that woke it. These three exist so the factory's Actions
+          # list says WHICH REPOSITORY AND WHICH ISSUE knocked, instead of forty identical rows
+          # reading "Take a turn". They are observability, and nothing downstream decides anything
+          # on them -- a factory running against a workspace with an older copy of this file simply
+          # falls back to naming the workspace.
+          #
+          # Read from the event, like `WORKSPACE` above, and passed through the environment rather
+          # than interpolated into the script: an issue title is arbitrary text a stranger may have
+          # typed, and `${{ }}` inside a `run:` block is textual substitution into a shell.
+          WORKSPACE_NAME: ${{ github.event.repository.name }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
         shell: bash
         run: |
           set -uo pipefail
@@ -150,8 +164,15 @@ jobs:
           fi
           # No depth in the payload: a human's signal starts a fresh chain at zero, and only the
           # factory's own self-retrigger counts against the bound.
+          #
+          # `-f` for the title, never `-F`: `-F` interprets a leading `@` as "read this file" and
+          # coerces a value that looks like a number or a boolean. An issue title is arbitrary text
+          # and must arrive as the string it is. `-F` is right for the issue number, which is one.
           gh api repos/yoselabs/factory-state/dispatches \
             -f event_type=signal \
             -F "client_payload[workspace_repo]=${WORKSPACE}" \
-            && echo "signalled the factory for ${WORKSPACE}" \
+            -f "client_payload[workspace_name]=${WORKSPACE_NAME}" \
+            -F "client_payload[issue_number]=${ISSUE_NUMBER:-0}" \
+            -f "client_payload[issue_title]=${ISSUE_TITLE:-}" \
+            && echo "signalled the factory for ${WORKSPACE} (#${ISSUE_NUMBER:-?})" \
             || echo "::warning::the dispatch failed; the factory was not signalled" >&2
