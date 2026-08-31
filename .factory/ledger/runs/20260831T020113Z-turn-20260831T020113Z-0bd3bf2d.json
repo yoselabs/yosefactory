@@ -1,0 +1,15 @@
+{
+  "run_id": "turn-20260831T020113Z-0bd3bf2d",
+  "started_at": "2026-08-31T02:01:13.784951+00:00",
+  "ended_at": "2026-08-31T02:05:02.209653+00:00",
+  "outcome": "advanced",
+  "enforced_by": "agent",
+  "dirty": true,
+  "isolated": false,
+  "note": "itm-20260831T015953Z-54ad7487: done -> done",
+  "failure_kind": null,
+  "blocked_kind": null,
+  "model": "claude-sonnet-5",
+  "effort": "medium",
+  "workspace_commit": "6913beb2db91d177ce0ff43dc73e3b8aba118423"
+}
