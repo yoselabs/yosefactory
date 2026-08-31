@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -269,6 +269,7 @@ def run(
     turn_ceiling: int | None = None,
     model: str = PINNED_MODEL,
     effort: str = PINNED_EFFORT,
+    trace_sink: Callable[[str], None] | None = None,
 ) -> RunResult:
     """One bounded invocation, and a result derived from the agent's own terminal event.
 
@@ -289,10 +290,15 @@ def run(
     (measured: absent from `init`, from every `assistant` message, and from the terminal `result`),
     so it is always recorded from what was requested -- a weaker receipt, stated as such rather than
     conflated with `model`'s.
+
+    `trace_sink`, when given, is called with one rendered line (`executor.trace`) per tool call and
+    per terminal event, live, as `govern`'s loop below polls this same reader for `turns_taken`/
+    `verdict`. Left `None` -- every caller before this parameter existed -- the run stays exactly as
+    silent as it always was.
     """
     policy = policy or IsolationPolicy()
     transcript = (transcripts_dir if transcripts_dir is not None else runs_dir) / f"{run_id}.stream.jsonl"
-    reader = StreamReader(transcript)
+    reader = StreamReader(transcript, sink=trace_sink)
 
     def verdict() -> Outcome | None:
         reader.poll()
