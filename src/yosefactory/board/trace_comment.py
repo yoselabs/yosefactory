@@ -201,7 +201,14 @@ def _status_bar(stream_path: Path) -> str:
     duration_ms = terminal.get("duration_ms")
     elapsed = _format_duration(duration_ms) if isinstance(duration_ms, (int, float)) else "?:??"
     model = (reader.init.model if reader.init else "") or "unknown model"
-    in_tok = _format_tokens(int(usage.get("input_tokens") or 0))
+    # `usage.input_tokens` alone is the *uncached* remainder, routinely two orders of magnitude
+    # below what was actually sent -- most of a long run's input rides on cache reads/writes.
+    input_total = (
+        int(usage.get("input_tokens") or 0)
+        + int(usage.get("cache_creation_input_tokens") or 0)
+        + int(usage.get("cache_read_input_tokens") or 0)
+    )
+    in_tok = _format_tokens(input_total)
     out_tok = _format_tokens(int(usage.get("output_tokens") or 0))
     return (
         f"{_ROBOT} {model} · \U0001f4ca {turns} turns · \U0001f4ac {in_tok} in / {out_tok} out "
