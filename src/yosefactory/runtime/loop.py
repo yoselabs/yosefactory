@@ -663,6 +663,12 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
         context: Mapping[str, Any] | None = None,
         invocation: Any = None,
     ) -> Any:
+        def trace_sink(line: str) -> None:
+            # Plain stdout, live: what a human watching the container by hand sees is what GitHub
+            # Actions captures too. The caller decorates (`::group::` and friends); this prints.
+            sys.stdout.write(line + "\n")
+            sys.stdout.flush()
+
         return claude.run(
             frame,
             workspace,
@@ -673,6 +679,7 @@ def main(argv: Sequence[str] | None = None, *, unattended: bool = False) -> int:
             context=context,
             invocation=invocation,
             policy=policy,
+            trace_sink=trace_sink,
         )
 
     report = run_loop(
