@@ -202,6 +202,24 @@ def test_no_ledger_records_still_renders_trace_and_status_bar(tmp_path: Path) ->
     assert "$0.42" in body
 
 
+def test_workspace_root_relativizes_paths_outside_the_container(tmp_path: Path) -> None:
+    """Reproducibility (#15): `render()` composes a comment from outside the run's own container,
+    so it must be told the run's workspace rather than guessing from wherever it is invoked."""
+    absolute_read = {
+        "type": "assistant",
+        "timestamp": "2026-08-31T00:00:03.000Z",
+        "message": {
+            "content": [{"type": "tool_use", "id": "t1", "name": "Read", "input": {"file_path": "/ci/checkout/src/x.py"}}]
+        },
+    }
+    stream = _write_stream(tmp_path / "s.stream.jsonl", [INIT_EVENT, absolute_read, RESULT_EVENT])
+
+    body = trace_comment.render(stream, None, workspace_root="/ci/checkout")
+
+    assert "src/x.py" in body
+    assert "/ci/checkout" not in body
+
+
 def test_missing_stream_does_not_raise(tmp_path: Path) -> None:
     body = trace_comment.render(tmp_path / "absent.stream.jsonl", None)
 

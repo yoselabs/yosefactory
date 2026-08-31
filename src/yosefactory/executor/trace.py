@@ -37,12 +37,14 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from yosefactory.paths import RepoRootNotFound, repo_root
-
 _TEXT_LIMIT = 100
 _COMMAND_LIMIT = 100
 _RESULT_LIMIT = 80
 _PATH_LIMIT = 100
+
+# The container's bind mount, fixed regardless of where the *rendering* process happens to sit.
+# Relied on only as a fallback when no `workspace_root` travels with the stream -- see `Tracer`.
+_CONTAINER_MOUNT = "/data/workspace"
 
 _ICONS = {
     "read": "\U0001f4d6 read  ",
@@ -70,11 +72,7 @@ def _truncate(text: str, limit: int) -> str:
     return collapsed if len(collapsed) <= limit else collapsed[: limit - 1] + "…"
 
 
-def _relativize(path: str) -> str:
-    try:
-        root = str(repo_root())
-    except RepoRootNotFound:
-        return path
+def _relativize(path: str, root: str) -> str:
     if path == root:
         return "."
     prefix = root if root.endswith("/") else root + "/"
@@ -124,13 +122,13 @@ def _bash_summary(command: str, stdout: str, stderr: str) -> str | None:
     return _truncate(lines[0], _RESULT_LIMIT)
 
 
-def _tool_line(name: str, tool_input: Mapping) -> str:
+def _tool_line(name: str, tool_input: Mapping, root: str) -> str:
     lname = name.lower()
     icon = _ICONS.get(lname, "\U0001f529 tool  ")
     if lname == "read":
-        return f"{icon}{_truncate(_relativize(str(tool_input.get('file_path', ''))), _PATH_LIMIT)}"
+        return f"{icon}{_truncate(_relativize(str(tool_input.get('file_path', '')), root), _PATH_LIMIT)}"
     if lname in ("edit", "multiedit", "write"):
-        return f"{icon}{_truncate(_relativize(str(tool_input.get('file_path', ''))), _PATH_LIMIT)}"
+        return f"{icon}{_truncate(_relativize(str(tool_input.get('file_path', '')), root), _PATH_LIMIT)}"
     if lname == "bash":
         return f"{icon}{_truncate(str(tool_input.get('command', '')), _COMMAND_LIMIT)}"
     summary = _truncate(json.dumps(tool_input, default=str), _COMMAND_LIMIT) if tool_input else ""
@@ -139,8 +137,16 @@ def _tool_line(name: str, tool_input: Mapping) -> str:
 
 @dataclass
 class Tracer:
-    """Stateful renderer: one instance per run. Call `render()` with every event, in order."""
+    """Stateful renderer: one instance per run. Call `render()` with every event, in order.
 
+    `workspace_root` is the traced run's own workspace, not the rendering process's -- those agree
+    only when the tracer happens to run inside the same container the run did, which does not hold
+    for `board.trace_comment`, replaying a saved stream from wherever it is invoked. Left unset, only
+    the fixed container bind mount (`_CONTAINER_MOUNT`) is recognised, since that much is constant
+    across every run regardless of who replays it.
+    """
+
+    workspace_root: str = _CONTAINER_MOUNT
     _anchor: datetime | None = field(default=None, repr=False)
     _pending: dict[str, tuple[str, dict]] = field(default_factory=dict, repr=False)
 
@@ -187,7 +193,7 @@ class Tracer:
                 tool_id = block.get("id")
                 if isinstance(tool_id, str):
                     self._pending[tool_id] = (name, tool_input)
-                lines.append(f"{offset}  {_tool_line(name, tool_input)}")
+                lines.append(f"{offset}  {_tool_line(name, tool_input, self.workspace_root)}")
         return lines
 
     def _render_tool_result(self, event: dict[str, Any], ts: datetime | None) -> list[str]:

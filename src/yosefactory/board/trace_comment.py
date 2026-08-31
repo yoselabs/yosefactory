@@ -86,6 +86,7 @@ def render(
     prior_streams: Mapping[int, Path] | None = None,
     max_attempts: int = 3,
     body_limit: int = BODY_LIMIT,
+    workspace_root: str | None = None,
 ) -> str:
     """Pure and offline: reads `current_stream` (and `prior_streams`, if given) from disk, folds
     `item`'s own log for milestone boundaries, and returns a markdown body under `body_limit` bytes.
@@ -93,11 +94,15 @@ def render(
     `item` may be `None` -- an item seeded by hand carries no log yet -- in which case the body is
     the current attempt's trace and status bar alone, with no milestone history. Never raises: a
     missing or unreadable stream renders as an empty trace, not an exception.
+
+    `workspace_root` is the *traced run's own* workspace -- this renderer runs after the run, from
+    wherever a comment is being composed, which is never the run's own container. Left `None`, paths
+    relativize against the fixed container bind mount only (`executor.trace._CONTAINER_MOUNT`).
     """
     attempts = _attempts(item, current_stream, prior_streams or {})
-    sections = [_section_for(a, item) for a in attempts]
+    sections = [_section_for(a, item, workspace_root) for a in attempts]
     banner = _banner(item, attempts, max_attempts)
-    status = _status_bar(current_stream)
+    status = _status_bar(current_stream, workspace_root)
     return _fit(banner, sections, status, body_limit)
 
 
@@ -141,8 +146,8 @@ def _banner(item: FoldedLog | None, attempts: list[_Attempt], max_attempts: int)
     return f"{icon} {state.replace('_', ' ')}"
 
 
-def _section_for(attempt: _Attempt, item: FoldedLog | None) -> _Section:
-    lines = _trace_lines(attempt.stream) if attempt.stream is not None else []
+def _section_for(attempt: _Attempt, item: FoldedLog | None, workspace_root: str | None) -> _Section:
+    lines = _trace_lines(attempt.stream, workspace_root) if attempt.stream is not None else []
     tool_count = _count_tool_calls(attempt.stream) if attempt.stream is not None else 0
     if not lines and attempt.report:
         lines = [f"  {wrapped}" for wrapped in textwrap.wrap(attempt.report, width=100) or [attempt.report]]
@@ -165,9 +170,9 @@ def _section_for(attempt: _Attempt, item: FoldedLog | None) -> _Section:
 # -- stream reads --------------------------------------------------------------------------------
 
 
-def _trace_lines(stream_path: Path) -> list[str]:
+def _trace_lines(stream_path: Path, workspace_root: str | None) -> list[str]:
     lines: list[str] = []
-    StreamReader(stream_path, sink=lines.append).poll()
+    StreamReader(stream_path, sink=lines.append, workspace_root=workspace_root).poll()
     return lines
 
 
@@ -191,8 +196,8 @@ def _count_tool_calls(stream_path: Path) -> int:
     return count
 
 
-def _status_bar(stream_path: Path) -> str:
-    reader = StreamReader(stream_path)
+def _status_bar(stream_path: Path, workspace_root: str | None) -> str:
+    reader = StreamReader(stream_path, workspace_root=workspace_root)
     reader.poll()
     terminal: dict[str, Any] = reader.terminal or {}
     usage: dict[str, Any] = terminal.get("usage") or {}
